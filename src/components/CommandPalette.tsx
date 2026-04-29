@@ -1,0 +1,306 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { commands, type CommandSpec } from "../actions";
+import { useStore } from "../store";
+import { search } from "../ipc";
+import { setEditorGoto } from "../editorState";
+
+interface PaletteEntry {
+  key: string;
+  label: string;
+  hint?: string;
+  category: string;
+  run: () => void | Promise<void>;
+}
+
+interface Props {
+  open: boolean;
+  onClose: () => void;
+  /**
+   * Optional initial query — used when the user opens the palette via a
+   * specific shortcut that wants a particular mode (e.g. Ctrl+Shift+F
+   * pre-fills "? " for text-search).
+   */
+  initialQuery?: string;
+}
+
+function fuzzy(query: string, text: string): boolean {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  const t = text.toLowerCase();
+  let i = 0;
+  for (const ch of q) {
+    const idx = t.indexOf(ch, i);
+    if (idx === -1) return false;
+    i = idx + 1;
+  }
+  return true;
+}
+
+function relPath(path: string, root: string): string {
+  const p = path.replace(/\\/g, "/");
+  const r = root.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
+  return p.startsWith(r) ? p.slice(r.length) : p;
+}
+
+export function CommandPalette({ open, onClose, initialQuery }: Props) {
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const recent = useStore((s) => s.recent);
+  const openIds = useStore((s) => s.openIds);
+  const activeId = useStore((s) => s.activeId);
+  const setActive = useStore((s) => s.setActiveWorkspace);
+  const openWs = useStore((s) => s.openWorkspace);
+  const ws = useStore((s) =>
+    s.activeId ? s.loaded[s.activeId] : null,
+  );
+
+  const [files, setFiles] = useState<string[]>([]);
+  const [textHits, setTextHits] = useState<
+    { path: string; line: number; col: number; text: string }[]
+  >([]);
+  const [searching, setSearching] = useState(false);
+
+  const trimmed = query.trimStart();
+  const mode: "search" | "commands" | "default" =
+    trimmed.startsWith("?")
+      ? "search"
+      : trimmed.startsWith(">")
+        ? "commands"
+        : "default";
+  const subQuery =
+    mode === "search"
+      ? trimmed.slice(1).trim()
+      : mode === "commands"
+        ? trimmed.slice(1).trim()
+        : trimmed;
+
+  // On open: reset, focus, lazy-fetch files for current workspace.
+  useEffect(() => {
+    if (!open) return;
+    setQuery(initialQuery ?? "");
+    setIndex(0);
+    requestAnimationFrame(() => inputRef.current?.focus());
+    if (ws) {
+      void search
+        .listFiles(ws.meta.root, 5000)
+        .then((list) => setFiles(list))
+        .catch(() => setFiles([]));
+    }
+  }, [open, initialQuery, ws]);
+
+  // Debounced text search.
+  useEffect(() => {
+    if (!open || mode !== "search" || !ws) {
+      setTextHits([]);
+      setSearching(false);
+      return;
+    }
+    if (subQuery.length < 1) {
+      setTextHits([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const root = ws.meta.root;
+    const handle = window.setTimeout(async () => {
+      try {
+        const hits = await search.searchText(root, subQuery, false, 200);
+        setTextHits(hits);
+      } catch {
+        setTextHits([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 220);
+    return () => window.clearTimeout(handle);
+  }, [open, mode, subQuery, ws]);
+
+  const entries: PaletteEntry[] = useMemo(() => {
+    if (!open) return [];
+    const out: PaletteEntry[] = [];
+    const wsRoot = ws?.meta.root;
+
+    if (mode === "search") {
+      for (const h of textHits) {
+        out.push({
+          key: `hit:${h.path}:${h.line}:${h.col}`,
+          label: h.text.trim().slice(0, 200),
+          hint: `${wsRoot ? relPath(h.path, wsRoot) : h.path}:${h.line}`,
+          category: "Match",
+          run: async () => {
+            if (activeId) {
+              await useStore.getState().openFile(activeId, h.path);
+              setEditorGoto(h.line, h.col);
+            }
+          },
+        });
+      }
+      return out;
+    }
+
+    if (mode === "default" || mode === "commands") {
+      if (mode === "default") {
+        for (const id of openIds) {
+          out.push({
+            key: "switch:" + id,
+            label: "Switch to workspace",
+            hint: id === activeId ? "(active)" : id,
+            category: "Workspace",
+            run: () => void setActive(id),
+          });
+        }
+        for (const w of recent) {
+          if (openIds.includes(w.id)) continue;
+          out.push({
+            key: "open-recent:" + w.id,
+            label: `Open recent: ${w.name}`,
+            hint: w.root,
+            category: "Workspace",
+            run: () => void openWs(w.root),
+          });
+        }
+        if (activeId && wsRoot) {
+          for (const f of files) {
+            out.push({
+              key: "file:" + f,
+              label: relPath(f, wsRoot),
+              hint: undefined,
+              category: "File",
+              run: async () => {
+                await useStore.getState().openFile(activeId, f);
+              },
+            });
+          }
+        }
+      }
+      for (const c of commands as CommandSpec[]) {
+        out.push({
+          key: c.id,
+          label: c.label,
+          hint: c.accel,
+          category: c.category,
+          run: c.run,
+        });
+      }
+    }
+    return out;
+  }, [
+    open,
+    mode,
+    textHits,
+    files,
+    openIds,
+    recent,
+    activeId,
+    setActive,
+    openWs,
+    ws,
+  ]);
+
+  const filtered = useMemo(() => {
+    if (mode === "search") return entries; // already filtered server-side
+    if (!subQuery) return entries.slice(0, 200);
+    return entries
+      .filter(
+        (e) =>
+          fuzzy(subQuery, e.label) ||
+          (e.hint && fuzzy(subQuery, e.hint)) ||
+          fuzzy(subQuery, e.category),
+      )
+      .slice(0, 200);
+  }, [entries, subQuery, mode]);
+
+  useEffect(() => {
+    if (index >= filtered.length) setIndex(0);
+  }, [filtered, index]);
+
+  if (!open) return null;
+
+  const activate = (idx: number) => {
+    const item = filtered[idx];
+    if (!item) return;
+    onClose();
+    void item.run();
+  };
+
+  const placeholder =
+    mode === "search"
+      ? "Search file contents…"
+      : mode === "commands"
+        ? "Run a command…"
+        : "Type ? to search content,  > for commands,  or just a file/command name…";
+
+  return (
+    <>
+      <div className="palette-backdrop" onMouseDown={onClose} />
+      <div className="palette" role="dialog" aria-label="Command palette">
+        <div className="palette-input-row">
+          {mode !== "default" && (
+            <span className={`palette-mode mode-${mode}`}>
+              {mode === "search" ? "Search" : "Command"}
+            </span>
+          )}
+          <input
+            ref={inputRef}
+            className="palette-input"
+            value={query}
+            placeholder={placeholder}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setIndex(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                onClose();
+              } else if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setIndex((i) => Math.min(filtered.length - 1, i + 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setIndex((i) => Math.max(0, i - 1));
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                activate(index);
+              }
+            }}
+          />
+        </div>
+        {mode === "search" && (
+          <div className="palette-status">
+            {searching
+              ? "Searching…"
+              : subQuery
+                ? `${textHits.length} match${textHits.length === 1 ? "" : "es"}`
+                : "Type to search file contents"}
+          </div>
+        )}
+        <div className="palette-list">
+          {filtered.length === 0 && (
+            <div className="palette-empty">
+              {mode === "search" && subQuery && !searching
+                ? "No matches"
+                : mode === "search"
+                  ? ""
+                  : "No matches"}
+            </div>
+          )}
+          {filtered.map((e, i) => (
+            <button
+              key={e.key}
+              className={`palette-item ${i === index ? "active" : ""}`}
+              onMouseEnter={() => setIndex(i)}
+              onClick={() => activate(i)}
+            >
+              <span className="palette-item-cat">{e.category}</span>
+              <span className="palette-item-label">{e.label}</span>
+              {e.hint && (
+                <span className="palette-item-hint">{e.hint}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}

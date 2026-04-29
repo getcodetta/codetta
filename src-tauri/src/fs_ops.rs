@@ -8,6 +8,23 @@ pub struct DirEntry {
     pub is_dir: bool,
 }
 
+const HEAVY_DIRS: &[&str] = &[
+    "node_modules",
+    ".git",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    ".cache",
+    "out",
+    ".venv",
+    "__pycache__",
+];
+
+const MAX_READ_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB
+const BINARY_PROBE_BYTES: usize = 8 * 1024;
+
 #[tauri::command]
 pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     let p = Path::new(&path);
@@ -19,13 +36,15 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
             Err(_) => continue,
         };
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') && name != ".gitignore" && name != ".env.example" {
-            // skip dotfiles by default; user can toggle later
+        let is_dir = meta.is_dir();
+        if is_dir && HEAVY_DIRS.iter().any(|h| h.eq_ignore_ascii_case(&name)) {
+            // Still show the dir but it won't be auto-traversed; users can expand it manually.
+            // We still include it so users who *want* to look inside can.
         }
         out.push(DirEntry {
             name,
             path: entry.path().to_string_lossy().into_owned(),
-            is_dir: meta.is_dir(),
+            is_dir,
         });
     }
     out.sort_by(|a, b| match (a.is_dir, b.is_dir) {
@@ -36,17 +55,53 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     Ok(out)
 }
 
+fn looks_binary(buf: &[u8]) -> bool {
+    // Heuristic: if there's a NUL in the first probe, treat as binary
+    buf.iter().take(BINARY_PROBE_BYTES).any(|b| *b == 0)
+}
+
 #[tauri::command]
 pub fn read_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    let p = Path::new(&path);
+    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_READ_BYTES {
+        return Err(format!(
+            "File is too large to open in editor ({} MiB > {} MiB).",
+            meta.len() / (1024 * 1024),
+            MAX_READ_BYTES / (1024 * 1024)
+        ));
+    }
+    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
+    if looks_binary(&bytes) {
+        return Err("File appears to be binary.".to_string());
+    }
+    String::from_utf8(bytes).map_err(|_| "File is not valid UTF-8.".to_string())
+}
+
+fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let mut tmp = path.to_path_buf();
+    let mut name = tmp
+        .file_name()
+        .map(|s| s.to_os_string())
+        .unwrap_or_default();
+    name.push(".lcp.tmp");
+    tmp.set_file_name(name);
+    std::fs::write(&tmp, contents)?;
+    // std::fs::rename atomically replaces the target on Windows (>=2019/Rust >=1.49) and Unix.
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
 pub fn write_file(path: String, contents: String) -> Result<(), String> {
-    if let Some(parent) = PathBuf::from(&path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, contents).map_err(|e| e.to_string())
+    write_atomic(Path::new(&path), contents.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -72,4 +127,16 @@ pub fn create_dir(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn path_exists(path: String) -> bool {
     Path::new(&path).exists()
+}
+
+#[tauri::command]
+pub fn create_file(path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if p.exists() {
+        return Err("File already exists".to_string());
+    }
+    std::fs::write(&p, "").map_err(|e| e.to_string())
 }

@@ -23,3 +23,8 @@ dirs = "5"
 uuid = { version = "1", features = ["v4", "serde"] }
 parking_lot = "0.12"
 anyhow = "1"
+notify = "6"
+notify-debouncer-mini = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"

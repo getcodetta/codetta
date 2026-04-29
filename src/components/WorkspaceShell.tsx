@@ -1,66 +1,333 @@
-import { useState } from "react";
-import { FileTree } from "./FileTree";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { EditorPane } from "./EditorPane";
-import { TerminalPane } from "./TerminalPane";
-import { useStore } from "../store";
+import { TerminalCore } from "./TerminalCore";
+import { PaneNode } from "./PaneNode";
+import { SidebarStack } from "./SidebarStack";
+import { AIChatPanel } from "./AIChatPanel";
+import {
+  findTabsPaneByTab,
+  termKey,
+  useStore,
+  type PaneId,
+  type TerminalLocation,
+} from "../store";
+import { pty, type ShellOption } from "../ipc";
 
-export function WorkspaceShell() {
-  const recent = useStore((s) => s.recent);
-  const activeId = useStore((s) => s.activeId);
-  const active = recent.find((w) => w.id === activeId);
-  const [sidebarW, setSidebarW] = useState(240);
-  const [termH, setTermH] = useState(220);
+interface Props {
+  wsId: string;
+  isActive: boolean;
+}
 
-  if (!active) return null;
+interface ShellDropdownProps {
+  anchor: HTMLElement | null;
+  shells: ShellOption[];
+  onClose: () => void;
+  onPick: (shell?: ShellOption) => void;
+}
+
+function ShellDropdown({ anchor, shells, onClose, onPick }: ShellDropdownProps) {
+  if (!anchor) return null;
+  const rect = anchor.getBoundingClientRect();
+  const style: React.CSSProperties = {
+    position: "fixed",
+    top: rect.bottom + 2,
+    right: Math.max(8, window.innerWidth - rect.right),
+    left: "auto",
+  };
+  return createPortal(
+    <>
+      <div className="menu-overlay" onClick={onClose} />
+      <div className="menu-dropdown shell-dropdown" style={style}>
+        <button className="menu-item" onClick={() => onPick()}>
+          <span className="menu-item-label">Default shell</span>
+        </button>
+        {shells.length > 0 && <div className="menu-separator" />}
+        {shells.map((sh) => (
+          <button
+            key={sh.id}
+            className="menu-item"
+            onClick={() => onPick(sh)}
+            title={sh.path}
+          >
+            <span className="menu-item-label">{sh.label}</span>
+            <span className="menu-item-accel">{sh.id}</span>
+          </button>
+        ))}
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+export function WorkspaceShell({ wsId, isActive }: Props) {
+  const ws = useStore((s) => s.loaded[wsId]);
+  const setTermH = useStore((s) => s.setTermH);
+  const setBottomVisible = useStore((s) => s.setBottomVisible);
+  const addTerminal = useStore((s) => s.addTerminal);
+  const setAIPanelW = useStore((s) => s.setAIPanelW);
+  const setAIPanelVisible = useStore((s) => s.setAIPanelVisible);
+
+  const [paneContainers, setPaneContainers] = useState<
+    Record<PaneId, HTMLElement>
+  >({});
+  const [shells, setShells] = useState<ShellOption[]>([]);
+  const [addOpen, setAddOpen] = useState<"bottom" | null>(null);
+  const bottomAddBtnRef = useRef<HTMLButtonElement>(null);
+
+  const registerContainer = useCallback(
+    (paneId: PaneId, node: HTMLElement | null) => {
+      setPaneContainers((prev) => {
+        const cur = prev[paneId];
+        if (node === cur) return prev;
+        if (!node) {
+          if (!(paneId in prev)) return prev;
+          const { [paneId]: _drop, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [paneId]: node };
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    let alive = true;
+    pty
+      .availableShells()
+      .then((s) => {
+        if (alive) setShells(s);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const spawnTerminal = (location: TerminalLocation, shell?: ShellOption) => {
+    setAddOpen(null);
+    addTerminal(
+      wsId,
+      location,
+      shell
+        ? { path: shell.path, args: shell.args, label: shell.label }
+        : undefined,
+    );
+  };
+
+  const autoCreatedRef = useRef(false);
+  useEffect(() => {
+    if (!ws || autoCreatedRef.current) return;
+    autoCreatedRef.current = true;
+    if (Object.keys(ws.terminals).length === 0) {
+      addTerminal(wsId, "bottom");
+    }
+  }, [ws, wsId, addTerminal]);
+
+  if (!ws) return null;
+  const layout = ws.layout;
 
   return (
-    <div className="shell">
-      <div className="sidebar" style={{ width: sidebarW }}>
-        <div className="sidebar-header">{active.name}</div>
-        <FileTree key={active.id} root={active.root} />
-      </div>
-      <div
-        className="vsplit"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          const startX = e.clientX;
-          const startW = sidebarW;
-          const onMove = (ev: MouseEvent) => {
-            setSidebarW(Math.max(140, Math.min(600, startW + ev.clientX - startX)));
-          };
-          const onUp = () => {
-            window.removeEventListener("mousemove", onMove);
-            window.removeEventListener("mouseup", onUp);
-          };
-          window.addEventListener("mousemove", onMove);
-          window.addEventListener("mouseup", onUp);
-        }}
-      />
+    <div
+      className="shell"
+      style={{ display: isActive ? "flex" : "none" }}
+      data-ws-id={wsId}
+      data-sidebar-side={layout.sidebarSide}
+    >
+      {layout.sidebarVisible && <SidebarStack wsId={wsId} ws={ws} />}
+      {layout.aiPanelVisible && (
+        <>
+          <div
+            className="vsplit ai-vsplit"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startW = layout.aiPanelW;
+              const onMove = (ev: MouseEvent) => {
+                setAIPanelW(wsId, startW - (ev.clientX - startX));
+              };
+              const onUp = () => {
+                window.removeEventListener("mousemove", onMove);
+                window.removeEventListener("mouseup", onUp);
+              };
+              window.addEventListener("mousemove", onMove);
+              window.addEventListener("mouseup", onUp);
+            }}
+          />
+          <div
+            className="ai-side-panel"
+            style={{ width: layout.aiPanelW }}
+          >
+            <div className="ai-side-panel-header">
+              <span className="ai-side-panel-title">🤖 AI Chat</span>
+              <button
+                className="ai-side-panel-close"
+                onClick={() => setAIPanelVisible(wsId, false)}
+                title="Hide AI panel"
+              >
+                ×
+              </button>
+            </div>
+            <div className="ai-side-panel-body">
+              <AIChatPanel wsId={wsId} root={ws.meta.root} />
+            </div>
+          </div>
+        </>
+      )}
       <div className="main-col">
         <div className="editor-area">
-          <EditorPane />
+          <PaneNode
+            wsId={wsId}
+            ws={ws}
+            pane={layout.editorRoot}
+            registerContainer={registerContainer}
+            rootPaneId={layout.editorRoot.id}
+          />
         </div>
-        <div
-          className="hsplit"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            const startY = e.clientY;
-            const startH = termH;
-            const onMove = (ev: MouseEvent) => {
-              setTermH(Math.max(80, Math.min(600, startH - (ev.clientY - startY))));
-            };
-            const onUp = () => {
-              window.removeEventListener("mousemove", onMove);
-              window.removeEventListener("mouseup", onUp);
-            };
-            window.addEventListener("mousemove", onMove);
-            window.addEventListener("mouseup", onUp);
-          }}
-        />
-        <div className="terminal-area" style={{ height: termH }}>
-          <TerminalPane key={active.id} cwd={active.root} />
-        </div>
+        {layout.bottomVisible && layout.bottomRoot && (
+          <>
+            <div
+              className="hsplit"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const startY = e.clientY;
+                const startH = layout.termH;
+                const onMove = (ev: MouseEvent) => {
+                  setTermH(
+                    wsId,
+                    Math.max(80, Math.min(800, startH - (ev.clientY - startY))),
+                  );
+                };
+                const onUp = () => {
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }}
+            />
+            <div className="bottom-area" style={{ height: layout.termH }}>
+              <PaneNode
+                wsId={wsId}
+                ws={ws}
+                pane={layout.bottomRoot}
+                registerContainer={registerContainer}
+                rootPaneId={layout.bottomRoot.id}
+                rightSlotForRoot={
+                  <>
+                    <button
+                      ref={bottomAddBtnRef}
+                      className="tab-add"
+                      title="New terminal"
+                      onClick={() =>
+                        setAddOpen(addOpen === "bottom" ? null : "bottom")
+                      }
+                    >
+                      + Term ▾
+                    </button>
+                    <button
+                      className="tab-add"
+                      title="Hide panel"
+                      onClick={() => setBottomVisible(wsId, false)}
+                    >
+                      ▾
+                    </button>
+                  </>
+                }
+              />
+            </div>
+          </>
+        )}
+        {(!layout.bottomVisible || !layout.bottomRoot) && (
+          <button
+            className="show-bottom"
+            onClick={() => {
+              setBottomVisible(wsId, true);
+              if (!layout.bottomRoot) addTerminal(wsId, "bottom");
+            }}
+            title="Show panel"
+          >
+            ▴ Panel
+          </button>
+        )}
       </div>
+
+      {addOpen === "bottom" && (
+        <ShellDropdown
+          anchor={bottomAddBtnRef.current}
+          shells={shells}
+          onClose={() => setAddOpen(null)}
+          onPick={(sh) => spawnTerminal("bottom", sh)}
+        />
+      )}
+
+      {/* File editors: one per pane that has an active file tab. */}
+      {(() => {
+        const overlays: React.ReactNode[] = [];
+        const visit = (pane: typeof layout.editorRoot) => {
+          if (pane.kind === "tabs") {
+            const active = pane.active;
+            if (active && active.startsWith("file:")) {
+              const path = active.slice(5);
+              const container = paneContainers[pane.id];
+              if (container && ws.files[path]) {
+                overlays.push(
+                  createPortal(
+                    <EditorPane
+                      key={pane.id + ":" + path}
+                      wsId={wsId}
+                      path={path}
+                    />,
+                    container,
+                    pane.id + ":" + path,
+                  ),
+                );
+              }
+            }
+          } else {
+            visit(pane.first);
+            visit(pane.second);
+          }
+        };
+        visit(layout.editorRoot);
+        if (layout.bottomRoot && layout.bottomVisible) {
+          visit(layout.bottomRoot);
+        }
+        return <>{overlays}</>;
+      })()}
+
+      {/* Terminals: one TerminalCore per terminal, portal-ed to its current pane's container. */}
+      {Object.values(ws.terminals).map((t) => {
+        const tabKeyStr = termKey(t.id);
+        const editorPane = findTabsPaneByTab(layout.editorRoot, tabKeyStr);
+        const bottomPane = layout.bottomRoot
+          ? findTabsPaneByTab(layout.bottomRoot, tabKeyStr)
+          : null;
+        const pane = editorPane ?? bottomPane;
+        const inBottom = !editorPane && !!bottomPane;
+        const container = pane ? (paneContainers[pane.id] ?? null) : null;
+        const visible =
+          isActive &&
+          !!pane &&
+          pane.active === tabKeyStr &&
+          (inBottom ? layout.bottomVisible : true);
+        return (
+          <TerminalCore
+            key={t.id}
+            termId={t.id}
+            cwd={ws.meta.root}
+            container={container}
+            visible={visible}
+            shellPath={t.shell?.path}
+            shellArgs={t.shell?.args}
+            title={t.title}
+            ptyId={t.ptyId}
+            onPtyIdChange={(id) =>
+              useStore.getState().setTerminalPtyId(wsId, t.id, id)
+            }
+          />
+        );
+      })}
     </div>
   );
 }

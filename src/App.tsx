@@ -1,27 +1,278 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "./store";
+import { startFsBusOnce } from "./fsBus";
+import { runCommand } from "./actions";
+import { bootstrapTheme } from "./theme";
+import { onPaletteOpen, openPalette } from "./paletteBus";
 import { WorkspacePicker } from "./components/WorkspacePicker";
 import { WorkspaceShell } from "./components/WorkspaceShell";
-import { TitleBar } from "./components/TitleBar";
+import { TopBar } from "./components/TopBar";
+import { ActivityBar } from "./components/ActivityBar";
+import { CommandPalette } from "./components/CommandPalette";
+import { DragGhost } from "./components/DragGhost";
+import { StatusBar } from "./components/StatusBar";
+import { Toasts } from "./components/Toast";
+import { DiffModal } from "./components/DiffModal";
+import { Splash } from "./components/Splash";
+import { RecentFilesOverlay } from "./components/RecentFilesOverlay";
+import { getRecentFiles } from "./recentFiles";
+import { useEditorState } from "./editorState";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Dialog } from "./components/Dialog";
+import { SettingsModal } from "./components/SettingsModal";
 import "./App.css";
 
 function App() {
   const hydrate = useStore((s) => s.hydrate);
   const hydrated = useStore((s) => s.hydrated);
+  const openIds = useStore((s) => s.openIds);
   const activeId = useStore((s) => s.activeId);
+  const loaded = useStore((s) => s.loaded);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteInitial, setPaletteInitial] = useState("");
+  const [recentOverlayOpen, setRecentOverlayOpen] = useState(false);
+  const [recentSelected, setRecentSelected] = useState(0);
+  const [recentList, setRecentList] = useState<string[]>([]);
 
   useEffect(() => {
+    bootstrapTheme();
+    startFsBusOnce();
     void hydrate();
   }, [hydrate]);
 
+  // Reflect active workspace + file in the OS window title.
+  const editorState = useEditorState();
+  useEffect(() => {
+    const ws = activeId ? loaded[activeId]?.meta : null;
+    const file = editorState.filePath;
+    let title = "Lite Coder Pro";
+    if (ws && file) {
+      const base = file.replace(/\\/g, "/").split("/").pop() ?? file;
+      title = `${base} — ${ws.name} — Lite Coder Pro`;
+    } else if (ws) {
+      title = `${ws.name} — Lite Coder Pro`;
+    }
+    getCurrentWindow()
+      .setTitle(title)
+      .catch(() => {});
+  }, [activeId, loaded, editorState.filePath]);
+
+  useEffect(() => {
+    return onPaletteOpen((initial) => {
+      setPaletteInitial(initial);
+      setPaletteOpen(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    for (const id of openIds) {
+      const meta = loaded[id]?.meta;
+      if (!meta) continue;
+      void invoke("fs_watch_start", {
+        wsId: id,
+        root: meta.root,
+      }).catch(() => {});
+    }
+  }, [openIds, loaded]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (!ctrl) return;
+      const k = e.key;
+      // Command palette
+      if (k === "p" || k === "P") {
+        e.preventDefault();
+        if (paletteOpen) {
+          setPaletteOpen(false);
+        } else {
+          setPaletteInitial("");
+          setPaletteOpen(true);
+        }
+        return;
+      }
+      // Map shortcuts to commands
+      const lower = k.toLowerCase();
+      if (lower === "s" && !e.shiftKey) {
+        e.preventDefault();
+        runCommand("file.save");
+      } else if (lower === "s" && e.shiftKey) {
+        e.preventDefault();
+        runCommand("file.save_all");
+      } else if (lower === "o" && !e.shiftKey) {
+        e.preventDefault();
+        runCommand("file.open_folder");
+      } else if (lower === "o" && e.shiftKey) {
+        e.preventDefault();
+        runCommand("edit.goto_symbol");
+      } else if (lower === "w" && e.shiftKey) {
+        e.preventDefault();
+        runCommand("file.close_workspace");
+      } else if (lower === "b" && !e.shiftKey) {
+        e.preventDefault();
+        runCommand("view.toggle_sidebar");
+      } else if (lower === "j" && !e.shiftKey) {
+        e.preventDefault();
+        runCommand("view.toggle_panel");
+      } else if (lower === "e" && e.shiftKey) {
+        e.preventDefault();
+        runCommand("view.files");
+      } else if (lower === "g" && e.shiftKey) {
+        e.preventDefault();
+        runCommand("view.source_control");
+      } else if (lower === "f" && e.shiftKey) {
+        e.preventDefault();
+        openPalette("? ");
+      } else if (lower === "t" && e.shiftKey) {
+        e.preventDefault();
+        runCommand("view.todos");
+      } else if (lower === "r" && !e.shiftKey) {
+        e.preventDefault();
+        runCommand("view.reload");
+      } else if (k === "`") {
+        e.preventDefault();
+        runCommand("terminal.new_bottom");
+      } else if (lower === "g" && !e.shiftKey) {
+        e.preventDefault();
+        runCommand("edit.goto_line");
+      } else if ((k === "=" || k === "+") && !e.shiftKey) {
+        e.preventDefault();
+        runCommand("view.zoom_in");
+      } else if (k === "-") {
+        e.preventDefault();
+        runCommand("view.zoom_out");
+      } else if (k === "0") {
+        e.preventDefault();
+        runCommand("view.zoom_reset");
+      } else if (lower === "i" && e.shiftKey) {
+        e.preventDefault();
+        runCommand("edit.format_document");
+      } else if (k === ",") {
+        e.preventDefault();
+        runCommand("view.settings");
+      }
+    }
+    // Alt+Z: word wrap toggle (no Ctrl).
+    function onAltKey(e: KeyboardEvent) {
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        runCommand("edit.toggle_word_wrap");
+      }
+    }
+
+    // Ctrl+Tab / Ctrl+Shift+Tab: recent-files cycling overlay.
+    // The overlay opens on first press, advances on subsequent presses while
+    // Ctrl is held, and commits on Ctrl release.
+    function onTabKey(e: KeyboardEvent) {
+      if (e.key !== "Tab" || !(e.ctrlKey || e.metaKey)) return;
+      const wsId = useStore.getState().activeId;
+      if (!wsId) return;
+      const list = getRecentFiles(wsId);
+      if (list.length < 2) return;
+      e.preventDefault();
+      setRecentList(list);
+      const len = list.length;
+      setRecentOverlayOpen((wasOpen) => {
+        setRecentSelected((cur) => {
+          if (!wasOpen) {
+            return e.shiftKey ? len - 1 : 1;
+          }
+          const delta = e.shiftKey ? -1 : 1;
+          return ((cur + delta) % len + len) % len;
+        });
+        return true;
+      });
+    }
+    function onCtrlUp(e: KeyboardEvent) {
+      if (e.key === "Control" || e.key === "Meta") {
+        // Use functional update to read latest state without subscribing.
+        setRecentOverlayOpen((open) => {
+          if (!open) return false;
+          // Activate the selected file.
+          setRecentSelected((idx) => {
+            setRecentList((list) => {
+              const wsId = useStore.getState().activeId;
+              const path = list[idx];
+              if (wsId && path) {
+                void useStore.getState().openFile(wsId, path);
+              }
+              return list;
+            });
+            return idx;
+          });
+          return false;
+        });
+      }
+    }
+    function onEsc(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setRecentOverlayOpen((open) => (open ? false : open));
+      }
+    }
+
+    window.addEventListener("keydown", onAltKey);
+    window.addEventListener("keydown", onTabKey);
+    window.addEventListener("keyup", onCtrlUp);
+    window.addEventListener("keydown", onEsc);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onAltKey);
+      window.removeEventListener("keydown", onTabKey);
+      window.removeEventListener("keyup", onCtrlUp);
+      window.removeEventListener("keydown", onEsc);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [paletteOpen]);
+
   if (!hydrated) {
-    return <div className="boot">Loading…</div>;
+    return <Splash />;
   }
 
   return (
     <div className="app">
-      <TitleBar />
-      {activeId ? <WorkspaceShell /> : <WorkspacePicker />}
+      <TopBar onOpenPalette={() => setPaletteOpen(true)} />
+      <div
+        className="shell-stack"
+        data-sidebar-side={
+          activeId ? (loaded[activeId]?.layout.sidebarSide ?? "left") : "left"
+        }
+      >
+        <ActivityBar />
+        <div className="workspace-area">
+          {openIds.length === 0 ? (
+            <WorkspacePicker />
+          ) : (
+            openIds.map((id) => (
+              <WorkspaceShell
+                key={id}
+                wsId={id}
+                isActive={id === activeId}
+              />
+            ))
+          )}
+        </div>
+      </div>
+      <StatusBar onOpenPalette={() => setPaletteOpen(true)} />
+      <CommandPalette
+        open={paletteOpen}
+        initialQuery={paletteInitial}
+        onClose={() => setPaletteOpen(false)}
+      />
+      <DragGhost />
+      <Toasts />
+      <DiffModal />
+      <Dialog />
+      <SettingsModal />
+      <RecentFilesOverlay
+        open={recentOverlayOpen}
+        files={recentList}
+        selectedIndex={recentSelected}
+        workspaceRoot={
+          activeId ? loaded[activeId]?.meta.root : undefined
+        }
+        onSelect={(i) => setRecentSelected(i)}
+      />
     </div>
   );
 }

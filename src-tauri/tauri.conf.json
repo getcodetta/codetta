@@ -17,8 +17,9 @@
         "height": 800,
         "minWidth": 800,
         "minHeight": 500,
-        "decorations": true,
-        "resizable": true
+        "decorations": false,
+        "resizable": true,
+        "shadow": true
       }
     ],
     "security": {
@@ -28,12 +29,32 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Bishal",
+    "copyright": "Copyright © 2026 Bishal",
+    "category": "DeveloperTool",
+    "shortDescription": "Lightweight desktop code editor with multi-workspace, multi-terminal, and integrated git.",
+    "longDescription": "Lite Coder Pro is a Tauri-based desktop code editor: Monaco editor, xterm.js terminals, multi-workspace tabs, file watcher, and integrated source control.",
+    "homepage": "https://github.com/suppledigital/lite-coder-pro",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "both",
+        "displayLanguageSelector": false,
+        "languages": ["English"],
+        "compression": "lzma",
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "Lite Coder Pro"
+      }
+    }
   }
 }

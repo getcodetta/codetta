@@ -1,0 +1,2431 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  chatStream,
+  ping,
+  pullStream,
+  type ChatMessage,
+  type ToolCall,
+  type ToolDef,
+} from "../ai";
+import {
+  hasApiKey,
+  invalidateClaudeCodeCache,
+  listAllModels,
+  listAllCloudModels,
+  makeQualifiedModel,
+  parseQualifiedModel,
+  warmupOllamaModel,
+  type ProviderModel,
+} from "../providers";
+import { openSettings } from "../settingsBus";
+import { useStore, parseKey, findPaneById } from "../store";
+import { useEditorState, getActiveEditor } from "../editorState";
+import {
+  error as toastError,
+  info as toastInfo,
+  success as toastSuccess,
+} from "../notify";
+import { confirm as dialogConfirm } from "../dialog";
+import {
+  loadSessions,
+  saveSession,
+  deleteSession,
+  newSessionId,
+  deriveTitle,
+  type ChatSession,
+} from "../chatHistory";
+import { search, pty, fs } from "../ipc";
+import { MarkdownPreview } from "./MarkdownPreview";
+import { ModelBrowser } from "./ModelBrowser";
+import {
+  permissionFor,
+  rememberToolAlways,
+  rememberToolPath,
+  extractPathArg,
+} from "../toolPermissions";
+
+interface SlashCommand {
+  name: string;
+  hint: string;
+  // When provided, the command rewrites the input to this prompt.
+  prompt?: string;
+  // When provided, runs an in-app action (clear, new, etc.).
+  action?: "new" | "clear" | "tree" | "terminal" | "file";
+  /** Whether the user is expected to type an argument after the name. */
+  takesArg?: boolean;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { name: "/explain", hint: "Explain what this code does", prompt: "Explain what this code does, step by step." },
+  { name: "/bugs", hint: "Find bugs or logic errors", prompt: "Are there bugs or logic errors here? Be specific and reference line numbers if possible." },
+  { name: "/refactor", hint: "Suggest a refactor", prompt: "Suggest a refactor that improves readability or correctness. Show the proposed change." },
+  { name: "/tests", hint: "Write unit tests", prompt: "Suggest unit tests for the functions here. Show example test code." },
+  { name: "/types", hint: "Improve type annotations", prompt: "Suggest type annotations or improvements to existing types." },
+  { name: "/docs", hint: "Add JSDoc / docstrings", prompt: "Add concise JSDoc/docstring comments for the exported functions and types." },
+  { name: "/summary", hint: "Summarize this code", prompt: "Summarize the responsibilities of this code in 3-5 bullets." },
+  { name: "/tree", hint: "Attach project file tree to the next message", action: "tree" },
+  { name: "/file", hint: "/file <path> — attach a specific file's contents", action: "file", takesArg: true },
+  { name: "/terminal", hint: "Attach the active terminal's output", action: "terminal" },
+  { name: "/new", hint: "Start a new chat", action: "new" },
+  { name: "/clear", hint: "Clear current chat", action: "clear" },
+];
+
+interface Props {
+  wsId: string;
+  root: string;
+}
+
+const OLLAMA_DOWNLOAD = "https://ollama.com/download";
+const SUGGESTED_MODELS = [
+  "qwen2.5-coder:7b",
+  "qwen2.5-coder:3b",
+  "llama3.2:3b",
+  "phi3:mini",
+];
+const STORAGE_KEY = "lcp.ollama.lastModel";
+
+// Pull all fenced code blocks out of a message body. Returns the raw inner
+// text of each block (no fences). Falls back to the whole message if no
+// fences are present.
+function extractCodeBlocks(text: string): string[] {
+  const out: string[] = [];
+  const re = /```[a-zA-Z0-9_+-]*\n([\s\S]*?)```/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    out.push(m[1].replace(/\n$/, ""));
+  }
+  return out;
+}
+
+// Same but with the language tag.
+function extractTaggedCodeBlocks(
+  text: string,
+): { lang: string; code: string }[] {
+  const out: { lang: string; code: string }[] = [];
+  const re = /```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    out.push({
+      lang: (m[1] ?? "").toLowerCase(),
+      code: m[2].replace(/\n$/, ""),
+    });
+  }
+  return out;
+}
+
+const SHELL_LANGS = new Set([
+  "bash",
+  "sh",
+  "shell",
+  "zsh",
+  "fish",
+  "powershell",
+  "ps1",
+  "pwsh",
+  "cmd",
+  "bat",
+  "console",
+]);
+
+function isShellLang(lang: string): boolean {
+  return SHELL_LANGS.has(lang);
+}
+
+// Best-guess "if you had to read 6 files to grok this codebase, which?"
+// Picks manifests, entry points, central state/store files, and any README.
+function pickPriorityFiles(allFiles: string[]): string[] {
+  const norm = (p: string) => p.replace(/\\/g, "/");
+  const files = allFiles.map(norm);
+  const picked: string[] = [];
+  const tryAdd = (p: string | undefined) => {
+    if (p && !picked.includes(p)) picked.push(p);
+  };
+  const find = (re: RegExp) => files.find((f) => re.test(f));
+  const findAll = (re: RegExp) => files.filter((f) => re.test(f));
+
+  // Manifests / build configs
+  tryAdd(find(/^package\.json$/));
+  tryAdd(find(/^Cargo\.toml$/));
+  tryAdd(find(/^pyproject\.toml$/));
+  tryAdd(find(/^go\.mod$/));
+  // README
+  tryAdd(find(/^README(\.md)?$/i));
+  // Frontend entry points
+  tryAdd(find(/^src\/main\.(tsx?|jsx?)$/));
+  tryAdd(find(/^src\/index\.(tsx?|jsx?)$/));
+  tryAdd(find(/^src\/App\.(tsx?|jsx?)$/));
+  // Build configs
+  tryAdd(find(/^vite\.config\.(ts|js)$/));
+  tryAdd(find(/^next\.config\.(ts|js|mjs)$/));
+  // State / store
+  tryAdd(find(/^src\/store(\.(ts|js))?$/));
+  tryAdd(find(/^src\/store\/index\.(ts|js)$/));
+  // Backend entry points
+  tryAdd(find(/^src-tauri\/src\/main\.rs$/));
+  tryAdd(find(/^src-tauri\/src\/lib\.rs$/));
+  tryAdd(find(/^src-tauri\/tauri\.conf\.json$/));
+  // If we still have room, pull a couple of top-level src files.
+  if (picked.length < 8) {
+    for (const f of findAll(/^src\/[^/]+\.(tsx?|jsx?)$/)) {
+      if (picked.length >= 8) break;
+      tryAdd(f);
+    }
+  }
+  return picked;
+}
+
+// Strip stale tool-result messages from a persisted chat session. Old
+// sessions may contain "Unknown tool: X" rows from before we learned to
+// skip the local tool-execution loop for agentic providers (Claude Code).
+function cleanStaleToolMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.filter((m) => {
+    if (m.role !== "tool") return true;
+    if (/^Unknown tool:/i.test(m.content)) return false;
+    return true;
+  });
+}
+
+// While streaming, the model may have an unclosed ``` fence. The markdown
+// renderer expects balanced fences, so synthesize a closing one.
+function balanceFences(text: string): string {
+  const fences = (text.match(/```/g) ?? []).length;
+  return fences % 2 === 0 ? text : text + "\n```";
+}
+
+// Split assistant content into thinking blocks + visible reply.
+// Models like DeepSeek, qwen3 emit <think>...</think> tags during reasoning.
+function splitThinking(content: string): {
+  thinking: string;
+  visible: string;
+} {
+  const thinkParts: string[] = [];
+  const visible = content.replace(
+    /<think>([\s\S]*?)<\/think>\s*/gi,
+    (_full, inner) => {
+      thinkParts.push((inner ?? "").trim());
+      return "";
+    },
+  );
+  return { thinking: thinkParts.join("\n\n"), visible };
+}
+
+// Fallback: some models emit tool calls as plain JSON in the content stream
+// instead of using Ollama's native `tool_calls` field. Detect that pattern,
+// extract the calls, and return them along with the cleaned-up content.
+function parseInlineToolCalls(
+  content: string,
+  knownTools: Set<string>,
+): { calls: ToolCall[]; remaining: string } {
+  const calls: ToolCall[] = [];
+  let remaining = content;
+
+  // Strip optional ```json fences and <tool_call>...</tool_call> wrappers.
+  remaining = remaining.replace(
+    /```(?:json|tool[a-z_]*)?\n([\s\S]*?)```/gi,
+    (_m, body) => body,
+  );
+  remaining = remaining.replace(
+    /<tool_call>([\s\S]*?)<\/tool_call>/gi,
+    (_m, body) => body,
+  );
+
+  // Extra-loose fallback for small models that emit just the bare tool name
+  // (e.g. "list_files" on its own line, or "list_files()" / "list_files{}").
+  // Replace those with a real JSON tool call so the brace walker below picks
+  // them up. Only applied for known argument-less tools to limit false hits.
+  const NULLARY = ["list_files", "read_terminal"];
+  for (const name of NULLARY) {
+    if (!knownTools.has(name)) continue;
+    const re = new RegExp(
+      `(^|\\n)\\s*${name}\\s*(?:\\(\\s*\\)|\\{\\s*\\})?\\s*(?=\\n|$)`,
+      "gi",
+    );
+    remaining = remaining.replace(
+      re,
+      `\n{"name":"${name}","arguments":{}}\n`,
+    );
+  }
+
+  // Match JSON objects of shape {"name":"...","arguments":{...}} and
+  // {"tool":"...","arguments":{...}} and {"function":"...","parameters":{...}}.
+  // We scan the string for `{` and try to parse from there to the matching `}`.
+  const out: string[] = [];
+  let i = 0;
+  while (i < remaining.length) {
+    const ch = remaining[i];
+    if (ch !== "{") {
+      out.push(ch);
+      i++;
+      continue;
+    }
+    // Try to find the matching closing brace, tracking strings/escapes.
+    let depth = 0;
+    let j = i;
+    let inStr = false;
+    let escape = false;
+    while (j < remaining.length) {
+      const c = remaining[j];
+      if (escape) {
+        escape = false;
+      } else if (c === "\\") {
+        escape = true;
+      } else if (inStr) {
+        if (c === '"') inStr = false;
+      } else if (c === '"') {
+        inStr = true;
+      } else if (c === "{") {
+        depth++;
+      } else if (c === "}") {
+        depth--;
+        if (depth === 0) {
+          j++;
+          break;
+        }
+      }
+      j++;
+    }
+    if (depth !== 0) {
+      // No matching brace — bail out, keep rest as text.
+      out.push(remaining.slice(i));
+      break;
+    }
+    const candidate = remaining.slice(i, j);
+    try {
+      const obj = JSON.parse(candidate) as Record<string, unknown>;
+      const fnName =
+        typeof obj.name === "string"
+          ? obj.name
+          : typeof obj.tool === "string"
+            ? obj.tool
+            : typeof obj.function === "string"
+              ? obj.function
+              : null;
+      if (fnName && knownTools.has(fnName)) {
+        const rawArgs =
+          (obj.arguments as unknown) ??
+          (obj.parameters as unknown) ??
+          (obj.input as unknown) ??
+          {};
+        let args: Record<string, unknown> = {};
+        if (rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs)) {
+          args = rawArgs as Record<string, unknown>;
+        } else if (typeof rawArgs === "string") {
+          try {
+            const parsed = JSON.parse(rawArgs);
+            if (parsed && typeof parsed === "object")
+              args = parsed as Record<string, unknown>;
+          } catch {
+            /* keep empty */
+          }
+        }
+        calls.push({ function: { name: fnName, arguments: args } });
+        i = j; // skip the JSON
+        continue;
+      }
+    } catch {
+      /* not JSON — fall through */
+    }
+    // Not a tool call — emit the brace and keep scanning.
+    out.push(ch);
+    i++;
+  }
+  return { calls, remaining: out.join("").trim() };
+}
+
+// Tool definitions exposed to the model. Kept narrow + read-only so the
+// model can navigate the codebase without needing user confirmation.
+const TOOLS: ToolDef[] = [
+  {
+    type: "function",
+    function: {
+      name: "list_files",
+      description:
+        "List relative file paths in the current workspace. Use this to discover the codebase layout.",
+      parameters: {
+        type: "object",
+        properties: {
+          max: {
+            type: "number",
+            description: "Max paths to return (default 200, hard cap 1000)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_file",
+      description:
+        "Read the contents of a file by relative path (relative to workspace root). Returns up to 16000 chars.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Relative path of the file to read",
+          },
+        },
+        required: ["path"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_text",
+      description:
+        "Grep for a substring across all workspace source files. Returns up to 50 matching file:line entries with context.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Substring to search for" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_terminal",
+      description:
+        "Read the recent output (scrollback) of the active terminal in the workspace. Useful to see build/test output.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description:
+        "Search the public web via DuckDuckGo. Returns up to 10 result entries with title, snippet, and URL. Use this for documentation lookups or recent info.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_file",
+      description:
+        "Propose an edit to an EXISTING file. The user will see a diff and must approve before any change is applied. Provide the EXACT text to replace (must match the file character-for-character including whitespace). To insert at a unique anchor, include the anchor in old_text and the anchor + new content in new_text.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Relative path of the file to edit",
+          },
+          old_text: {
+            type: "string",
+            description:
+              "Exact text in the file to replace. Must appear exactly once.",
+          },
+          new_text: {
+            type: "string",
+            description:
+              "Replacement text. Pass empty string to delete old_text.",
+          },
+        },
+        required: ["path", "old_text", "new_text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_file",
+      description:
+        "Create a NEW file with the given contents. Fails if the file already exists. The user must approve before the file is created.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Relative path of the new file",
+          },
+          content: {
+            type: "string",
+            description: "File contents",
+          },
+        },
+        required: ["path", "content"],
+      },
+    },
+  },
+];
+
+async function webSearch(query: string): Promise<string> {
+  try {
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "user-agent": "Mozilla/5.0 LiteCoderPro" },
+    });
+    if (!res.ok) return `Search failed: HTTP ${res.status}`;
+    const html = await res.text();
+    const out: string[] = [];
+    const re =
+      /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>[\s\S]*?<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/g;
+    let m: RegExpExecArray | null;
+    let n = 0;
+    while ((m = re.exec(html)) !== null && n < 10) {
+      const rawHref = m[1];
+      // DuckDuckGo wraps results: //duckduckgo.com/l/?uddg=ENCODED_URL
+      let href = rawHref;
+      try {
+        const u = new URL(
+          rawHref.startsWith("//") ? "https:" + rawHref : rawHref,
+          "https://duckduckgo.com",
+        );
+        const uddg = u.searchParams.get("uddg");
+        if (uddg) href = decodeURIComponent(uddg);
+      } catch {
+        /* keep raw */
+      }
+      const title = m[2].replace(/&amp;/g, "&").replace(/&#x27;/g, "'");
+      const snippet = m[3]
+        .replace(/<[^>]+>/g, "")
+        .replace(/&amp;/g, "&")
+        .replace(/&#x27;/g, "'")
+        .replace(/\s+/g, " ")
+        .trim();
+      out.push(`${n + 1}. ${title}\n   ${href}\n   ${snippet}`);
+      n++;
+    }
+    if (out.length === 0) return "(no results)";
+    return out.join("\n\n");
+  } catch (e) {
+    return `Web search error: ${e}`;
+  }
+}
+
+async function executeTool(
+  call: ToolCall,
+  ctx: { wsId: string; root: string },
+): Promise<string> {
+  const name = call.function.name;
+  const args = call.function.arguments;
+  try {
+    if (name === "list_files") {
+      const max =
+        typeof args.max === "number"
+          ? Math.min(1000, Math.max(1, args.max))
+          : 200;
+      const files = await search.listFiles(ctx.root, max);
+      return files.join("\n");
+    }
+    if (name === "read_file") {
+      const rel = String(args.path ?? "");
+      if (!rel) return "Error: missing 'path' argument";
+      const abs =
+        rel.includes(":") || rel.startsWith("/")
+          ? rel
+          : `${ctx.root}/${rel}`.replace(/\\/g, "/");
+      const content = await fs.readFile(abs);
+      return content.length > 16000
+        ? content.slice(0, 16000) + "\n…[truncated]"
+        : content;
+    }
+    if (name === "search_text") {
+      const q = String(args.query ?? "");
+      if (!q) return "Error: missing 'query' argument";
+      const hits = await search.searchText(ctx.root, q, false, 50);
+      return (
+        hits
+          .map((h) => `${h.path}:${h.line}: ${h.text}`)
+          .join("\n") || "(no matches)"
+      );
+    }
+    if (name === "read_terminal") {
+      const wsLatest = useStore.getState().loaded[ctx.wsId];
+      const terms = wsLatest ? Object.values(wsLatest.terminals) : [];
+      const t = terms[terms.length - 1];
+      if (!t?.ptyId) return "(no active terminal)";
+      const buf = await pty.getBuffer(t.ptyId);
+      return buf.length > 8000 ? buf.slice(-8000) : buf;
+    }
+    if (name === "web_search") {
+      const q = String(args.query ?? "");
+      if (!q) return "Error: missing 'query' argument";
+      return await webSearch(q);
+    }
+    if (name === "edit_file") {
+      const rel = String(args.path ?? "");
+      const oldText = String(args.old_text ?? "");
+      const newText = String(args.new_text ?? "");
+      if (!rel) return "Error: missing 'path' argument";
+      if (!oldText) return "Error: missing 'old_text' argument";
+      const abs =
+        rel.includes(":") || rel.startsWith("/")
+          ? rel
+          : `${ctx.root}/${rel}`.replace(/\\/g, "/");
+      let original: string;
+      try {
+        original = await fs.readFile(abs);
+      } catch (e) {
+        return `Error: cannot read ${rel}: ${e}`;
+      }
+      const idx = original.indexOf(oldText);
+      if (idx === -1) {
+        return `Error: old_text not found in ${rel}. The text must match exactly. Try using read_file first to see the current contents.`;
+      }
+      const next = original.slice(0, idx) + newText + original.slice(idx + oldText.length);
+      const ok = await dialogConfirm(
+        `Apply this edit to ${rel}?\n\n--- BEFORE ---\n${oldText.slice(0, 800)}${oldText.length > 800 ? "\n…" : ""}\n\n--- AFTER ---\n${newText.slice(0, 800)}${newText.length > 800 ? "\n…" : ""}`,
+        {
+          title: `Edit ${rel}`,
+          okLabel: "Apply",
+          cancelLabel: "Reject",
+        },
+      );
+      if (!ok) return `User rejected the edit to ${rel}.`;
+      try {
+        await fs.writeFile(abs, next);
+        // Sync the in-memory store if this file is loaded.
+        const wsState = useStore.getState().loaded[ctx.wsId];
+        if (wsState?.files[abs]) {
+          useStore.getState().updateFileContents(ctx.wsId, abs, next);
+        }
+        return `Applied edit to ${rel} (${oldText.length} chars replaced with ${newText.length}).`;
+      } catch (e) {
+        return `Error writing ${rel}: ${e}`;
+      }
+    }
+    if (name === "create_file") {
+      const rel = String(args.path ?? "");
+      const content = String(args.content ?? "");
+      if (!rel) return "Error: missing 'path' argument";
+      const abs =
+        rel.includes(":") || rel.startsWith("/")
+          ? rel
+          : `${ctx.root}/${rel}`.replace(/\\/g, "/");
+      try {
+        const exists = await fs.exists(abs);
+        if (exists) return `Error: ${rel} already exists. Use edit_file instead.`;
+      } catch {
+        /* fall through */
+      }
+      const ok = await dialogConfirm(
+        `Create new file ${rel}?\n\n--- CONTENT ---\n${content.slice(0, 1200)}${content.length > 1200 ? "\n…" : ""}`,
+        {
+          title: `Create ${rel}`,
+          okLabel: "Create",
+          cancelLabel: "Reject",
+        },
+      );
+      if (!ok) return `User rejected creating ${rel}.`;
+      try {
+        await fs.writeFile(abs, content);
+        return `Created ${rel} (${content.length} chars).`;
+      } catch (e) {
+        return `Error creating ${rel}: ${e}`;
+      }
+    }
+    return `Unknown tool: ${name}`;
+  } catch (e) {
+    return `Error executing ${name}: ${e}`;
+  }
+}
+
+function insertIntoActiveEditor(text: string): boolean {
+  const ed = getActiveEditor();
+  if (!ed) return false;
+  const sel = ed.getSelection();
+  if (!sel) return false;
+  ed.executeEdits("ai-insert", [
+    {
+      range: sel,
+      text,
+      forceMoveMarkers: true,
+    },
+  ]);
+  ed.focus();
+  return true;
+}
+
+export function AIChatPanel({ wsId, root }: Props) {
+  const [status, setStatus] = useState<
+    "checking" | "missing" | "ready" | "no-models"
+  >("checking");
+  const [allModels, setAllModels] = useState<ProviderModel[]>([]);
+  // Curated cloud models, shown in the browser regardless of key status so
+  // users can discover what's available before setting up a key.
+  const [allCloudCatalog, setAllCloudCatalog] = useState<ProviderModel[]>([]);
+  const [claudeCodeAvailable, setClaudeCodeAvailable] = useState(false);
+  const [selected, setSelected] = useState<string>("");
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [streaming, setStreaming] = useState<string | null>(null);
+  // Per-model pull progress so multiple installs can run in parallel.
+  // Map(modelName → "human-readable progress line"). Empty = nothing pulling.
+  const [pullProgressMap, setPullProgressMap] = useState<
+    Record<string, string>
+  >({});
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const isAnyPulling = Object.keys(pullProgressMap).length > 0;
+  const aggregatedPullProgress = isAnyPulling
+    ? Object.values(pullProgressMap).join(" · ")
+    : null;
+  const [attachContext, setAttachContext] = useState(true);
+  const [runningTools, setRunningTools] = useState(false);
+  // Compact descriptions of tool calls currently in flight (e.g. "read_file
+  // package.json"), so the user can see what the AI is doing at a glance.
+  const [activeToolLabels, setActiveToolLabels] = useState<string[]>([]);
+  // Inline permission request — when a tool needs "ask" approval, instead
+  // of popping a modal we render a card in the chat with multiple options.
+  // The chat loop awaits a Promise that resolves when the user clicks one.
+  const [pendingPermission, setPendingPermission] = useState<{
+    call: ToolCall;
+    resolve: (decision: "allow" | "deny") => void;
+  } | null>(null);
+  // Live tokens-per-second during streaming, and a sticky "warming up"
+  // marker for the cold-start window before the first token arrives.
+  const [tokensPerSec, setTokensPerSec] = useState<number | null>(null);
+  const [warmingUp, setWarmingUp] = useState(false);
+  // EMA of recent assistant generations for the slow-model banner.
+  const [recentTps, setRecentTps] = useState<number | null>(null);
+  const [sessionId, setSessionId] = useState<string>(() => newSessionId());
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [attachTree, setAttachTree] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
+  const [attachTerminal, setAttachTerminal] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const editorState = useEditorState();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickyBottomRef = useRef(true);
+  const [expandedMsgIdx, setExpandedMsgIdx] = useState<Set<number>>(new Set());
+
+  // Reset expanded state when the conversation switches (new chat / restore).
+  useEffect(() => {
+    setExpandedMsgIdx(new Set());
+  }, [sessionId]);
+
+  const refresh = async (showChecking = false) => {
+    if (showChecking) setStatus("checking");
+    // Always re-check Claude Code availability so post-install detects.
+    invalidateClaudeCodeCache();
+    // Aggregate models across every configured provider.
+    let aggregate: ProviderModel[] = [];
+    try {
+      aggregate = await listAllModels();
+    } catch {
+      aggregate = [];
+    }
+    setAllModels(aggregate);
+    // Always populate curated cloud lists so the browser can show them
+    // regardless of key status.
+    try {
+      setAllCloudCatalog(await listAllCloudModels());
+    } catch {
+      setAllCloudCatalog([]);
+    }
+    // Detect whether the Claude Code CLI is available on PATH.
+    try {
+      const ccProvider = (await import("../providers")).getProvider(
+        "claude-code",
+      );
+      setClaudeCodeAvailable(await ccProvider.isAvailable());
+    } catch {
+      setClaudeCodeAvailable(false);
+    }
+    // Track Ollama-specific availability for the install/pull onboarding UI.
+    const ollamaUp = await ping();
+
+    if (aggregate.length > 0) {
+      setStatus("ready");
+      // Migrate any unqualified persisted model to ollama:<name>.
+      const stored = localStorage.getItem(STORAGE_KEY);
+      const isPresent = (q: string) =>
+        aggregate.some(
+          (m) => makeQualifiedModel(m.providerId, m.modelId) === q,
+        );
+      // Migrate stale Claude Code model IDs to "default". Both dated IDs
+      // (claude-opus-4-7 etc.) and aliases (sonnet/opus/haiku) can be
+      // rejected by various CLI versions or subscription tiers, but
+      // "default" — which skips the --model flag — always works.
+      const migrateClaudeCode = (q: string): string => {
+        if (!q.startsWith("claude-code:")) return q;
+        const id = q.slice("claude-code:".length);
+        if (
+          id.startsWith("claude-opus") ||
+          id.startsWith("claude-sonnet") ||
+          id.startsWith("claude-haiku")
+        ) {
+          return "claude-code:default";
+        }
+        return q;
+      };
+      const migratedSelected = selected ? migrateClaudeCode(selected) : selected;
+      if (migratedSelected !== selected) {
+        setSelected(migratedSelected);
+      }
+      if (!migratedSelected || !isPresent(migratedSelected)) {
+        let preferred: string | null = null;
+        if (stored) {
+          const qualified = parseQualifiedModel(stored)
+            ? stored
+            : makeQualifiedModel("ollama", stored);
+          const migratedStored = migrateClaudeCode(qualified);
+          if (isPresent(migratedStored)) preferred = migratedStored;
+        }
+        if (!preferred) {
+          const first = aggregate[0];
+          preferred = makeQualifiedModel(first.providerId, first.modelId);
+        }
+        setSelected(preferred);
+      }
+      return;
+    }
+    // No models anywhere.
+    if (ollamaUp) {
+      setStatus("no-models");
+    } else {
+      setStatus("missing");
+    }
+  };
+
+  useEffect(() => {
+    void refresh(true);
+  }, []);
+
+  // Auto-poll when Ollama isn't reachable or has no models, so the user
+  // doesn't have to keep clicking Refresh after installing. Pause the
+  // poll while a pull is in flight — refresh() would otherwise hide the
+  // pull-progress UI behind a "checking" flicker.
+  useEffect(() => {
+    if (status === "ready" || status === "checking") return;
+    if (isAnyPulling) return;
+    const t = window.setInterval(() => {
+      void refresh(false);
+    }, 4000);
+    return () => window.clearInterval(t);
+  }, [status, isAnyPulling]);
+
+  // Expose workspace root globally so the Claude Code provider can spawn
+  // its CLI subprocess with the right cwd.
+  useEffect(() => {
+    (window as unknown as { __LCP_WS_ROOT?: string }).__LCP_WS_ROOT = root;
+  }, [root]);
+
+  useEffect(() => {
+    if (selected) localStorage.setItem(STORAGE_KEY, selected);
+    // Pre-warm Ollama models on selection so the first chat doesn't pay the
+    // cold-start cost (often 20-60s for a 32B model).
+    if (!selected) return;
+    const parsed = parseQualifiedModel(selected);
+    if (!parsed || parsed.providerId !== "ollama") return;
+    setWarmingUp(true);
+    void warmupOllamaModel(parsed.modelId).finally(() => {
+      setWarmingUp(false);
+    });
+  }, [selected]);
+
+  // Track whether user is parked at the bottom. We only auto-follow when
+  // they were already at (or near) the bottom — otherwise we leave their
+  // scroll position alone while they're reading earlier output.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+      stickyBottomRef.current = remaining < 60;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+  useEffect(() => {
+    if (!stickyBottomRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages, streaming]);
+
+  // Reset chat & restore last session when workspace changes.
+  useEffect(() => {
+    setInput("");
+    const list = loadSessions(wsId);
+    setSessions(list);
+    if (list.length > 0) {
+      setSessionId(list[0].id);
+      // Filter out stale "Unknown tool: X" result messages from older
+      // sessions where we incorrectly tried to execute the agentic
+      // provider's tool calls on our side. They're meaningless garbage.
+      setMessages(cleanStaleToolMessages(list[0].messages));
+      if (list[0].model) {
+        const q = parseQualifiedModel(list[0].model)
+          ? list[0].model
+          : makeQualifiedModel("ollama", list[0].model);
+        setSelected((cur) => cur || q);
+      }
+    } else {
+      setSessionId(newSessionId());
+      setMessages([]);
+    }
+  }, [wsId]);
+
+  // Persist session whenever messages change (debounced).
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const t = window.setTimeout(() => {
+      const session: ChatSession = {
+        id: sessionId,
+        title: deriveTitle(messages),
+        messages,
+        model: selected,
+        updatedAt: Date.now(),
+      };
+      saveSession(wsId, session);
+      setSessions(loadSessions(wsId));
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [messages, sessionId, wsId, selected]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text) return;
+    setInput("");
+    await sendUserText(text);
+  };
+
+  const sendUserText = async (
+    text: string,
+    baseMessages: ChatMessage[] = messages,
+  ) => {
+    if (!text || !selected || streaming !== null || runningTools) return;
+
+    // Compose context: active file path + (when reasonable) its content.
+    const ws = useStore.getState().loaded[wsId];
+    const ap = ws?.layout.activePaneId
+      ? findPaneById(ws.layout.editorRoot, ws.layout.activePaneId)
+      : null;
+    const activeKey = ap && ap.kind === "tabs" ? ap.active : null;
+    const parsed = activeKey ? parseKey(activeKey) : null;
+    const sysParts: string[] = [
+      "You are a helpful coding assistant embedded in a code editor. Keep answers concise and reference the user's file when relevant.",
+    ];
+    // Auto-attach the project tree when:
+    //   1. The user explicitly typed /tree (attachTree flag), OR
+    //   2. This is the first message of a new chat (so the model gets oriented), OR
+    //   3. The user's text mentions the codebase/project at a high level.
+    const isFirstMessage = baseMessages.length === 0;
+    const codebaseRegex =
+      /\b(codebase|project|repo|repository|files?|folders?|directories|directory|structure|architecture|layout)\b/i;
+    const mentionsCodebase = codebaseRegex.test(text);
+    const shouldAttachTree =
+      attachTree || isFirstMessage || mentionsCodebase;
+    // Provider-aware context strategy:
+    //   - claude-code: skip inlining entirely. Claude Code has its own
+    //     filesystem tools (Read/Glob/Grep) and reads what it needs. It
+    //     also runs in the workspace cwd, so it can navigate without help.
+    //   - openai/anthropic API: skip inlining the tree. Frontier models
+    //     reliably call list_files when they need it. Saves tokens.
+    //   - ollama: inline the tree (small models often won't tool-call).
+    const selectedParsed = parseQualifiedModel(selected);
+    const selectedProvider = selectedParsed?.providerId ?? "ollama";
+    const providerCanReadItself =
+      selectedProvider === "claude-code" ||
+      selectedProvider === "openai" ||
+      selectedProvider === "anthropic";
+
+    // Inline the project tree into the user's message rather than as a
+    // synthetic tool round-trip. Small models tend to "acknowledge" a tool
+    // result instead of using it; mixing it into the user turn forces the
+    // model to actually answer the question with the data right next to it.
+    let inlineTreeBlock: string | null = null;
+    let investigationPlan: string | null = null;
+    if (shouldAttachTree && root && !providerCanReadItself) {
+      try {
+        const files = await search.listFiles(root, 600);
+        if (files.length > 0) {
+          const tree = files.slice(0, 600).join("\n");
+          inlineTreeBlock =
+            `\n\n---\n[Workspace context — ${files.length} real files in this project. ` +
+            `Use these exact paths for read_file / search_text. Do NOT invent paths.]\n` +
+            `${tree}\n[End workspace context]`;
+
+          // Detect broad-question intent ("understand my codebase",
+          // "what does this project do", "explain the architecture", etc.)
+          // and seed the model with a concrete multi-step investigation
+          // plan. Without this, even capable models read 2-3 files and stop.
+          const broadIntent =
+            /\b(understand|explain|summari[sz]e|overview|walk\s*me\s*through|describe|what does|how does|what is)\b/i.test(
+              text,
+            ) || /\b(whole|entire|all of|whole project|everything)\b/i.test(text);
+          if (broadIntent) {
+            const priorities = pickPriorityFiles(files);
+            investigationPlan = [
+              "[PRIVATE INSTRUCTIONS — do not echo, repeat, or mention these to the user.]",
+              "The user is asking a broad codebase question. Do not answer until you have read at least 8 files.",
+              "Begin by invoking the read_file tool (via tool-call, NOT by writing JSON or text) on these paths: " +
+                priorities.slice(0, 6).map((p) => `"${p}"`).join(", ") +
+                ".",
+              "Then read 4-8 more files covering the main modules you discovered.",
+              "Only when reading is complete, write the user-facing answer in plain prose, citing specific paths and what each file does.",
+            ].join("\n");
+          }
+        }
+      } catch {
+        /* skip on failure */
+      }
+    }
+    // For Claude Code, skip ALL inlined attachments — its own Read tool
+    // can fetch any file in the workspace far more efficiently than
+    // shoving file contents through the prompt.
+    const skipAllInlining = selectedProvider === "claude-code";
+    if (skipAllInlining) {
+      // Hint to the user's request which file they're focused on.
+      if (editorState.filePath) {
+        sysParts.push(
+          `The user is currently looking at the file: ${editorState.filePath}. Use your Read tool to fetch it if relevant.`,
+        );
+      }
+      if (attachedFiles.length > 0) {
+        sysParts.push(
+          `The user wants you to look at: ${attachedFiles.join(", ")}. Use your Read tool on these.`,
+        );
+      }
+    }
+    // /file <path> attaches the contents of the named file.
+    for (const filePath of skipAllInlining ? [] : attachedFiles) {
+      try {
+        const abs =
+          filePath.includes(":") || filePath.startsWith("/")
+            ? filePath
+            : `${root}/${filePath}`.replace(/\\/g, "/");
+        const content = await fs.readFile(abs);
+        const trimmed =
+          content.length > 12000
+            ? content.slice(0, 12000) + "\n…[truncated]"
+            : content;
+        sysParts.push(`Contents of ${filePath}:\n\`\`\`\n${trimmed}\n\`\`\``);
+      } catch {
+        /* skip files that don't exist */
+      }
+    }
+    // /terminal attaches the active terminal's recent output.
+    if (attachTerminal && !skipAllInlining) {
+      const wsLatest = useStore.getState().loaded[wsId];
+      const terms = wsLatest ? Object.values(wsLatest.terminals) : [];
+      const t = terms[terms.length - 1];
+      if (t?.ptyId) {
+        try {
+          const buf = await pty.getBuffer(t.ptyId);
+          const trimmed = buf.length > 8000 ? buf.slice(-8000) : buf;
+          sysParts.push(
+            `Recent output from terminal "${t.title ?? "Terminal"}" (last ${trimmed.length} chars):\n\`\`\`\n${trimmed}\n\`\`\``,
+          );
+        } catch {
+          /* skip */
+        }
+      }
+    }
+    if (attachContext && !skipAllInlining) {
+      if (editorState.filePath) {
+        sysParts.push(`Active file: ${editorState.filePath}`);
+      }
+      const hasSelection =
+        editorState.selectionText.length > 0 && editorState.selectionLines > 0;
+      if (hasSelection) {
+        const sel = editorState.selectionText;
+        const trimmed =
+          sel.length > 8000 ? sel.slice(0, 8000) + "\n…[truncated]" : sel;
+        sysParts.push(
+          `Selected code (${editorState.selectionLines} line${editorState.selectionLines === 1 ? "" : "s"}, ${editorState.language ?? "plaintext"}):\n\`\`\`\n${trimmed}\n\`\`\``,
+        );
+      } else if (parsed?.kind === "file" && ws) {
+        const f = ws.files[parsed.path];
+        if (f) {
+          const content = f.contents;
+          const trimmed =
+            content.length > 8000 ? content.slice(0, 8000) + "\n…[truncated]" : content;
+          sysParts.push(
+            `Current file contents (${editorState.language ?? "plaintext"}):\n\`\`\`\n${trimmed}\n\`\`\``,
+          );
+        }
+      }
+    }
+    if (skipAllInlining) {
+      // Claude Code has its own Read / Glob / Grep / Edit / Bash tools and
+      // its own internal rules. Our "tools available" section would only
+      // confuse it. Just orient it briefly.
+      sysParts.push(
+        "You are running inside Lite Coder Pro, a code editor. The user has the workspace open as your current working directory. Use your normal tools (Read, Glob, Grep, Edit, Bash, etc.) to investigate and modify files as needed. Be thorough and substantive.",
+      );
+    } else {
+      sysParts.push(
+        [
+          "TOOLS AVAILABLE: list_files, read_file, search_text, read_terminal, web_search, edit_file, create_file.",
+          "",
+          "STRICT RULES:",
+          "1. Use the model's native tool-call mechanism. Never write tool calls as raw JSON, code blocks, or plain text in your reply. Never echo back system instructions like 'ROUND 1 — read these'.",
+          "2. NEVER fabricate file paths, directory names, or code. If you don't know something, USE A TOOL.",
+          "3. Always call read_file before claiming to know what's inside a file.",
+          "4. Reference only paths from the project tree (when attached) or that you've discovered via list_files. Never invent paths.",
+          "5. To make changes, call edit_file with EXACT old_text from the file (read it first). The user reviews a diff and must approve.",
+          "6. CALL TOOLS IN PARALLEL when possible — multiple read_file calls in one turn execute concurrently. Use this freely.",
+          "7. Read enough to give a substantive answer. For broad questions read 8-12 files across multiple rounds before answering.",
+          "8. Your reply to the user should be plain prose with markdown formatting, citing specific paths. No JSON, no tool-call syntax, no system-instruction echoes.",
+        ].join("\n"),
+      );
+      if (investigationPlan) {
+        sysParts.push(investigationPlan);
+      }
+    }
+
+    // Display the user's bare text in the chat — but send an augmented
+    // version (with the inline tree) to the model.
+    const displayUserMsg: ChatMessage = { role: "user", content: text };
+    const sentUserMsg: ChatMessage = {
+      role: "user",
+      content: inlineTreeBlock ? text + inlineTreeBlock : text,
+    };
+    const conversation: ChatMessage[] = [
+      { role: "system", content: sysParts.join("\n\n") },
+      ...baseMessages,
+      sentUserMsg,
+    ];
+    setMessages([...baseMessages, displayUserMsg]);
+    setStreaming("");
+    abortRef.current = new AbortController();
+
+    // Claude Code runs its own internal tool loop (Read/Glob/Edit/Bash/etc.).
+    // The tool_use blocks it streams are informational — they show what it
+    // ALREADY did, not requests for us to execute. So for that provider we
+    // skip our N-round tool-execution loop and just stream once.
+    const isAgenticProvider = selectedProvider === "claude-code";
+    const MAX_ROUNDS = isAgenticProvider ? 1 : 8;
+    try {
+      const knownToolNames = new Set(TOOLS.map((t) => t.function.name));
+      for (let round = 0; round < MAX_ROUNDS; round++) {
+        let acc = "";
+        const toolCallsThisRound: ToolCall[] = [];
+        let firstTokenAt: number | null = null;
+        const startedAt = performance.now();
+        for await (const ev of chatStream(
+          selected,
+          conversation,
+          abortRef.current.signal,
+          TOOLS,
+        )) {
+          if (ev.kind === "content") {
+            if (firstTokenAt === null) {
+              firstTokenAt = performance.now();
+            }
+            acc += ev.text;
+            setStreaming(acc);
+            // Approximate tokens/sec: ~4 chars per token on average.
+            const elapsedSec = (performance.now() - firstTokenAt) / 1000;
+            if (elapsedSec > 0.5) {
+              setTokensPerSec(acc.length / 4 / elapsedSec);
+            }
+          } else if (ev.kind === "tool_call") {
+            toolCallsThisRound.push(ev.call);
+            // Live-surface the tool call in the status strip so the user
+            // sees what's happening during long agentic streams (Claude
+            // Code may emit many tool_use blocks before any text content).
+            const args = ev.call.function.arguments;
+            const detail =
+              typeof args.path === "string"
+                ? args.path
+                : typeof args.file_path === "string"
+                  ? args.file_path
+                  : typeof args.pattern === "string"
+                    ? args.pattern
+                    : typeof args.query === "string"
+                      ? args.query
+                      : typeof args.command === "string"
+                        ? args.command.slice(0, 60)
+                        : "";
+            const label = detail
+              ? `${ev.call.function.name} ${detail}`
+              : ev.call.function.name;
+            setActiveToolLabels((labels) => {
+              const next = labels.slice(-9);
+              next.push(label);
+              return next;
+            });
+            setRunningTools(true);
+          }
+        }
+        // Record final speed for the slow-model banner heuristic.
+        if (firstTokenAt !== null) {
+          const elapsedSec = (performance.now() - firstTokenAt) / 1000;
+          if (elapsedSec > 1 && acc.length > 40) {
+            const tps = acc.length / 4 / elapsedSec;
+            setRecentTps((prev) =>
+              prev === null ? tps : prev * 0.5 + tps * 0.5,
+            );
+          }
+        }
+        void startedAt;
+        // Fallback: some models emit tool calls as JSON inside the content
+        // stream instead of using Ollama's native tool_calls field. Detect
+        // and lift them out before showing the message to the user.
+        let visibleContent = acc;
+        if (toolCallsThisRound.length === 0 && acc.includes("{")) {
+          const parsed = parseInlineToolCalls(acc, knownToolNames);
+          if (parsed.calls.length > 0) {
+            toolCallsThisRound.push(...parsed.calls);
+            visibleContent = parsed.remaining;
+          }
+        }
+        const assistantMsg: ChatMessage = {
+          role: "assistant",
+          content: visibleContent,
+          tool_calls:
+            toolCallsThisRound.length > 0 ? toolCallsThisRound : undefined,
+        };
+        conversation.push(assistantMsg);
+        setMessages((m) => [...m, assistantMsg]);
+        setStreaming(null);
+        setRunningTools(false);
+        setActiveToolLabels([]);
+
+        if (toolCallsThisRound.length === 0) break;
+        if (abortRef.current?.signal.aborted) break;
+        // Agentic providers (Claude Code) ran their own internal tool loop
+        // while streaming — the tool_use blocks we collected are display-
+        // only. Don't try to "execute" them on our side; just end here.
+        if (isAgenticProvider) break;
+
+        // Run independent reads in parallel; serialize writes so their
+        // confirm dialogs don't all fire at once.
+        const WRITE_TOOLS = new Set(["edit_file", "create_file"]);
+        const reads = toolCallsThisRound.filter(
+          (c) => !WRITE_TOOLS.has(c.function.name),
+        );
+        const writes = toolCallsThisRound.filter((c) =>
+          WRITE_TOOLS.has(c.function.name),
+        );
+
+        setRunningTools(true);
+        setActiveToolLabels(
+          toolCallsThisRound.map((c) => {
+            const args = c.function.arguments;
+            const path =
+              typeof args.path === "string"
+                ? args.path
+                : typeof args.query === "string"
+                  ? args.query
+                  : "";
+            return path
+              ? `${c.function.name} ${path}`
+              : c.function.name;
+          }),
+        );
+        const finishToolCall = (call: ToolCall, result: string) => {
+          const trimmed =
+            result.length > 16000
+              ? result.slice(0, 16000) + "\n…[truncated]"
+              : result;
+          const toolMsg: ChatMessage = {
+            role: "tool",
+            content: trimmed,
+            tool_call_id: call.id,
+          };
+          conversation.push(toolMsg);
+          setMessages((m) => [...m, toolMsg]);
+        };
+
+        const runWithPermission = async (call: ToolCall): Promise<string> => {
+          const perm = permissionFor(call.function.name, call.function.arguments);
+          if (perm === "deny") {
+            return `User has disabled the ${call.function.name} tool in Settings → Tool Permissions.`;
+          }
+          if (perm === "ask") {
+            // Render an inline permission card in the chat and await the
+            // user's decision. The card's buttons may also persist a
+            // remember-this rule (via rememberToolAlways / rememberToolPath
+            // before resolving), so the next call gets "allow" instantly.
+            const decision = await new Promise<"allow" | "deny">((resolve) => {
+              setPendingPermission({ call, resolve });
+            });
+            setPendingPermission(null);
+            if (decision !== "allow") {
+              return `User denied permission for ${call.function.name}.`;
+            }
+          }
+          return executeTool(call, { wsId, root });
+        };
+
+        // Parallel reads (each may hit an Ask dialog, queued in series via
+        // the dialog manager — the API allows concurrent Promise dispatch).
+        const readResults = await Promise.all(reads.map(runWithPermission));
+        for (let i = 0; i < reads.length; i++) {
+          finishToolCall(reads[i], readResults[i]);
+        }
+
+        if (abortRef.current?.signal.aborted) {
+          setRunningTools(false);
+          break;
+        }
+
+        // Sequential writes (each shows a confirm dialog inside executeTool too).
+        for (const call of writes) {
+          if (abortRef.current?.signal.aborted) break;
+          const result = await runWithPermission(call);
+          finishToolCall(call, result);
+        }
+        setRunningTools(false);
+        setActiveToolLabels([]);
+
+        if (abortRef.current?.signal.aborted) break;
+        // Restart streaming UI for the next round.
+        setStreaming("");
+      }
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") {
+        toastError(`Chat failed: ${e}`);
+      }
+    } finally {
+      setStreaming(null);
+      setRunningTools(false);
+      setActiveToolLabels([]);
+      setTokensPerSec(null);
+      abortRef.current = null;
+      // One-shot attach flags reset after the message goes out.
+      setAttachTree(false);
+      setAttachedFiles([]);
+      setAttachTerminal(false);
+    }
+  };
+
+  const stop = () => {
+    abortRef.current?.abort();
+  };
+
+  const regenerateFrom = async (index: number) => {
+    if (streaming !== null || runningTools) return;
+    const target = messages[index];
+    if (!target || target.role !== "user") return;
+    // Wipe this message + everything after, then re-send with the same text.
+    const truncated = messages.slice(0, index);
+    setMessages(truncated);
+    setExpandedMsgIdx(new Set());
+    await sendUserText(target.content, truncated);
+  };
+
+  const goDeeper = async () => {
+    if (streaming !== null || runningTools) return;
+    if (messages.length === 0) return;
+    await sendUserText(
+      "Go deeper. Read more files (5+ more) and expand your answer with concrete details: specific file paths, what each module does, how data flows, and any concerns or improvements you'd suggest. Reference exact paths and code patterns you observe.",
+      messages,
+    );
+  };
+
+  const startNewChat = () => {
+    if (streaming !== null) return;
+    setSessionId(newSessionId());
+    setMessages([]);
+    setInput("");
+    setHistoryOpen(false);
+  };
+
+  const openSession = (id: string) => {
+    if (streaming !== null) return;
+    const list = loadSessions(wsId);
+    const s = list.find((x) => x.id === id);
+    if (!s) return;
+    setSessionId(s.id);
+    setMessages(s.messages);
+    setInput("");
+    setHistoryOpen(false);
+    if (s.model) setSelected((cur) => cur || s.model);
+  };
+
+  const runInActiveTerminal = async (text: string) => {
+    const wsLatest = useStore.getState().loaded[wsId];
+    const terms = wsLatest ? Object.values(wsLatest.terminals) : [];
+    const t = terms[terms.length - 1];
+    if (!t?.ptyId) {
+      toastError("No active terminal — open one first");
+      return;
+    }
+    try {
+      // Strip leading "$" or ">" prompts the model often adds.
+      const cleaned = text
+        .split("\n")
+        .map((l) => l.replace(/^[$>]\s*/, ""))
+        .join("\n");
+      // Send each non-empty line followed by Enter.
+      for (const line of cleaned.split("\n")) {
+        if (line.trim().length === 0) continue;
+        await pty.write(t.ptyId, line + "\r");
+      }
+      toastSuccess(`Sent to terminal "${t.title ?? "Terminal"}"`);
+    } catch (e) {
+      toastError(`Failed to send to terminal: ${e}`);
+    }
+  };
+
+  const runSlashCommand = (cmd: SlashCommand) => {
+    if (cmd.action === "new") {
+      startNewChat();
+      return;
+    }
+    if (cmd.action === "clear") {
+      setMessages([]);
+      setInput("");
+      return;
+    }
+    if (cmd.action === "tree") {
+      setAttachTree(true);
+      setInput("");
+      toastInfo("Project tree will attach to your next message");
+      return;
+    }
+    if (cmd.action === "terminal") {
+      setAttachTerminal(true);
+      setInput("");
+      toastInfo("Active terminal output will attach to your next message");
+      return;
+    }
+    if (cmd.action === "file") {
+      // Parse trailing path from current input ("/file src/foo.ts" -> "src/foo.ts")
+      const rest = input.replace(/^\/file\s*/i, "").trim();
+      if (!rest) {
+        // Don't have a path yet — just complete the command and wait for the user.
+        setInput("/file ");
+        return;
+      }
+      setAttachedFiles((prev) =>
+        prev.includes(rest) ? prev : [...prev, rest],
+      );
+      setInput("");
+      toastInfo(`Attached ${rest} to next message`);
+      return;
+    }
+    if (cmd.prompt) {
+      setInput(cmd.prompt);
+      setSlashIndex(0);
+    }
+  };
+
+  const removeSession = async (id: string) => {
+    const list = loadSessions(wsId);
+    const s = list.find((x) => x.id === id);
+    if (!s) return;
+    const ok = await dialogConfirm(
+      `Delete chat "${s.title}"?`,
+      { title: "Delete chat", okLabel: "Delete", danger: true },
+    );
+    if (!ok) return;
+    deleteSession(wsId, id);
+    setSessions(loadSessions(wsId));
+    if (id === sessionId) {
+      // Active chat deleted — start a new one.
+      setSessionId(newSessionId());
+      setMessages([]);
+    }
+  };
+
+  const pullSpecific = async (name: string) => {
+    if (!name) return;
+    // Already pulling this same model? No-op.
+    if (pullProgressMap[name]) return;
+    setPullProgressMap((m) => ({ ...m, [name]: `Pulling ${name}…` }));
+    try {
+      for await (const ev of pullStream(name)) {
+        const pct =
+          ev.total && ev.completed
+            ? Math.round((ev.completed / ev.total) * 100)
+            : null;
+        const line =
+          pct != null
+            ? `${name} — ${ev.status} (${pct}%)`
+            : `${name} — ${ev.status}`;
+        setPullProgressMap((m) => ({ ...m, [name]: line }));
+      }
+      toastSuccess(`Pulled ${name}`);
+      await refresh();
+    } catch (e) {
+      toastError(`Pull failed: ${e}`);
+    } finally {
+      setPullProgressMap((m) => {
+        const { [name]: _drop, ...rest } = m;
+        void _drop;
+        return rest;
+      });
+    }
+  };
+
+  const pullModel = () => {
+    setBrowserOpen(true);
+  };
+
+  const renderHeader = () => {
+    const parsed = parseQualifiedModel(selected);
+    const currentModel = allModels.find(
+      (m) =>
+        parsed &&
+        m.providerId === parsed.providerId &&
+        m.modelId === parsed.modelId,
+    );
+    const providerLabel: Record<string, string> = {
+      ollama: "Ollama",
+      "claude-code": "Claude Code",
+      openai: "OpenAI",
+      anthropic: "Anthropic",
+    };
+    const providerName = parsed
+      ? (providerLabel[parsed.providerId] ?? parsed.providerId)
+      : "";
+    const modelLabel = parsed
+      ? `${providerName} · ${parsed.modelId}`
+      : "Pick a model…";
+    return (
+      <div className="ai-header">
+        <button
+          className="ai-model-btn"
+          onClick={() => setBrowserOpen(true)}
+          title={
+            currentModel ? currentModel.displayName : "Open model browser"
+          }
+        >
+          <span className="ai-model-btn-label">{modelLabel}</span>
+          <span className="ai-model-btn-caret">▾</span>
+        </button>
+        <button
+          className="ai-header-primary"
+          onClick={startNewChat}
+          title="New chat (current is saved to history)"
+          disabled={streaming !== null || runningTools}
+        >
+          ✚ New
+        </button>
+        <HeaderMenu
+          historyCount={sessions.length}
+          onHistory={() => setHistoryOpen((v) => !v)}
+          historyActive={historyOpen}
+          onRefresh={() => void refresh()}
+          onSettings={() => openSettings()}
+          onBrowseModels={() => pullModel()}
+        />
+      </div>
+    );
+  };
+
+  const renderHistoryDropdown = () => {
+    if (!historyOpen) return null;
+    return (
+      <div className="ai-history-dropdown">
+        {sessions.length === 0 && (
+          <div className="ai-history-empty">No saved chats yet</div>
+        )}
+        {sessions.map((s) => (
+          <div
+            key={s.id}
+            className={`ai-history-item ${s.id === sessionId ? "active" : ""}`}
+          >
+            <button
+              className="ai-history-open"
+              onClick={() => openSession(s.id)}
+              title={`${s.messages.length} messages · ${new Date(s.updatedAt).toLocaleString()}`}
+            >
+              <span className="ai-history-title">{s.title}</span>
+              <span className="ai-history-meta">
+                {new Date(s.updatedAt).toLocaleString()} · {s.messages.length} msg
+              </span>
+            </button>
+            <button
+              className="ai-history-delete"
+              onClick={() => void removeSession(s.id)}
+              title="Delete this chat"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const display = useMemo(() => {
+    const arr: ChatMessage[] = [...messages];
+    if (streaming !== null) arr.push({ role: "assistant", content: streaming });
+    return arr;
+  }, [messages, streaming]);
+
+  const contextLabel = useMemo(() => {
+    if (!attachContext) return "No context attached";
+    if (editorState.selectionText.length > 0 && editorState.selectionLines > 0) {
+      const n = editorState.selectionLines;
+      return `Sending ${n} selected line${n === 1 ? "" : "s"} as context`;
+    }
+    if (editorState.filePath) {
+      const base =
+        editorState.filePath.replace(/\\/g, "/").split("/").pop() ??
+        editorState.filePath;
+      return `Sending whole file ${base}`;
+    }
+    return null;
+  }, [
+    attachContext,
+    editorState.filePath,
+    editorState.selectionText,
+    editorState.selectionLines,
+  ]);
+
+  if (status === "checking") {
+    return (
+      <div className="ai-panel">
+        <div className="ai-empty">Checking for Ollama…</div>
+      </div>
+    );
+  }
+
+  if (status === "missing") {
+    return (
+      <div className="ai-panel">
+        <div className="ai-empty">
+          <p>
+            <strong>Ollama isn't reachable on localhost:11434.</strong>
+          </p>
+          <p>
+            <strong>If Ollama is already installed:</strong> launch the Ollama
+            app (Windows tray / macOS menu bar). The panel will auto-detect
+            within a few seconds. Or click <em>Try to start Ollama</em> below —
+            we'll attempt to spawn the server in a hidden terminal.
+          </p>
+          <p>
+            <strong>If Ollama isn't installed:</strong> get it from{" "}
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                void openUrl(OLLAMA_DOWNLOAD);
+              }}
+            >
+              ollama.com/download
+            </a>
+            .
+          </p>
+          <p>
+            <strong>Or skip Ollama entirely:</strong> add an OpenAI / Anthropic
+            API key in{" "}
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                openSettings();
+              }}
+            >
+              Settings → AI Providers
+            </a>
+            .
+          </p>
+          <div className="ai-actions">
+            <button
+              className="primary"
+              onClick={async () => {
+                try {
+                  // Spawn a hidden Ollama server in a workspace terminal.
+                  // The user can see / kill it from the terminal panel.
+                  useStore.getState().addTerminal(wsId, "bottom", {
+                    path: "ollama",
+                    args: ["serve"],
+                    label: "Ollama Server",
+                  });
+                  toastInfo(
+                    "Spawning Ollama in a terminal. Will auto-detect within a few seconds.",
+                  );
+                  // Recheck shortly after.
+                  setTimeout(() => void refresh(), 2500);
+                } catch (e) {
+                  toastError(`Could not start Ollama: ${e}`);
+                }
+              }}
+            >
+              ▶ Try to start Ollama
+            </button>
+            <button
+              onClick={() => {
+                void openUrl(OLLAMA_DOWNLOAD);
+                toastInfo("Opened ollama.com/download.");
+              }}
+            >
+              Download Ollama…
+            </button>
+            <button onClick={() => void refresh()}>Check now</button>
+          </div>
+          <p className="ai-auto-hint">
+            <span className="ai-spinner" /> Auto-checking every 4 s…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "no-models") {
+    return (
+      <div className="ai-panel">
+        <div className="ai-empty">
+          <p>
+            <strong>Ollama is running.</strong> Pull a model to start chatting,
+            or add a cloud provider key in <a href="#" onClick={(e) => { e.preventDefault(); openSettings(); }}>Settings</a>.
+          </p>
+          <ul className="ai-suggested">
+            {SUGGESTED_MODELS.map((m) => (
+              <li key={m}>
+                <button
+                  className="ai-pull-btn"
+                  onClick={() => void pullSpecific(m)}
+                  disabled={!!pullProgressMap[m]}
+                >
+                  ↓ <code>{m}</code>
+                </button>
+                <span className="ai-pull-hint">
+                  {m.startsWith("qwen2.5-coder:7b")
+                    ? "best for coding · ~4.7 GB"
+                    : m.startsWith("qwen2.5-coder:3b")
+                      ? "smaller coding model · ~1.9 GB"
+                      : m.startsWith("llama3.2")
+                        ? "general-purpose · ~2 GB"
+                        : "tiny, fast · ~2.4 GB"}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="ai-actions">
+            <button className="primary" onClick={() => pullModel()}>
+              Browse all models…
+            </button>
+            <button onClick={() => void refresh()}>Refresh</button>
+          </div>
+          {aggregatedPullProgress && (
+            <p className="ai-progress">{aggregatedPullProgress}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ai-panel">
+      {renderHeader()}
+      {renderHistoryDropdown()}
+      <div className="ai-messages" ref={scrollRef}>
+        {display.length === 0 && (
+          <>
+            <div className="ai-hint">
+              Ask anything about the active file. The current file's
+              contents are sent as context.
+            </div>
+            <div className="ai-quick-prompts">
+              {[
+                { label: "Explain this code", prompt: "Explain what this file does, in simple terms." },
+                { label: "Find bugs", prompt: "Are there bugs or logic errors in this file? Be specific." },
+                { label: "Suggest refactor", prompt: "Suggest a refactor that would improve readability or correctness. Show the proposed change." },
+                { label: "Write tests", prompt: "Suggest unit tests for the functions in this file." },
+                { label: "Add types", prompt: "Suggest type annotations or improvements to existing types." },
+                { label: "Summarize", prompt: "Summarize the key responsibilities of this file in 3-5 bullets." },
+              ].map((q) => (
+                <button
+                  key={q.label}
+                  className="ai-quick-btn"
+                  onClick={() => setInput(q.prompt)}
+                >
+                  {q.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {display.map((m, i) => {
+          const isAssistant = m.role === "assistant";
+          const isStreamingThis = isAssistant && i === display.length - 1 && streaming !== null;
+          const blocks = isAssistant ? extractCodeBlocks(m.content) : [];
+          const insertText = blocks.length > 0 ? blocks.join("\n\n") : m.content;
+          const taggedBlocks = isAssistant
+            ? extractTaggedCodeBlocks(m.content)
+            : [];
+          const shellBlocks = taggedBlocks.filter((b) => isShellLang(b.lang));
+          const shellText = shellBlocks.map((b) => b.code).join("\n");
+          const split = isAssistant
+            ? splitThinking(m.content)
+            : { thinking: "", visible: m.content };
+          const showThinking =
+            isStreamingThis && m.content.length === 0 && !m.tool_calls;
+          // Collapse long, older assistant messages by default. Keep the most
+          // recent one + currently-streaming one fully visible.
+          const isLatest = i === display.length - 1;
+          const COLLAPSE_THRESHOLD = 600;
+          const COLLAPSE_PREVIEW = 320;
+          const expanded = expandedMsgIdx.has(i);
+          const shouldCollapse =
+            isAssistant &&
+            !isLatest &&
+            !isStreamingThis &&
+            !expanded &&
+            split.visible.length > COLLAPSE_THRESHOLD;
+          const visibleContent = shouldCollapse
+            ? split.visible.slice(0, COLLAPSE_PREVIEW) + "…"
+            : split.visible;
+          // While streaming, the model may be emitting raw tool-call JSON or
+          // echoing the investigation plan. Hide that ugliness behind a
+          // placeholder until streaming finishes (the parser cleans it up).
+          const trimmedStream = visibleContent.trim();
+          const looksLikeToolJunk =
+            isStreamingThis &&
+            trimmedStream.length > 0 &&
+            (trimmedStream.startsWith("{") ||
+              trimmedStream.startsWith("[") ||
+              trimmedStream.startsWith("ROUND ") ||
+              /\{\s*"name"\s*:/.test(trimmedStream) ||
+              /\{\s*"arguments"/.test(trimmedStream) ||
+              /<tool_call>/i.test(trimmedStream));
+          if (m.role === "tool") {
+            // Defense-in-depth: stale "Unknown tool: X" results from old
+            // sessions add visual noise — hide them at render time too.
+            if (/^Unknown tool:/i.test(m.content)) return null;
+            return (
+              <details key={i} className="ai-msg ai-msg-tool">
+                <summary className="ai-tool-summary">
+                  <span className="ai-tool-icon">📄</span>
+                  Tool result
+                  <span className="ai-tool-meta">
+                    {m.content.length} chars
+                  </span>
+                </summary>
+                <pre className="ai-tool-body">{m.content}</pre>
+              </details>
+            );
+          }
+          return (
+            <div key={i} className={`ai-msg ai-msg-${m.role}`}>
+              <span className="ai-msg-role">
+                {m.role === "user" ? "You" : "AI"}
+                {m.role === "user" && (
+                  <button
+                    className="ai-msg-regen"
+                    title="Re-send this message — wipes everything below"
+                    onClick={() => void regenerateFrom(i)}
+                    disabled={streaming !== null || runningTools}
+                  >
+                    ↻
+                  </button>
+                )}
+              </span>
+              {m.tool_calls && m.tool_calls.length > 0 && (
+                <ToolCallSummary calls={m.tool_calls} />
+              )}
+              {isAssistant && split.thinking.length > 0 && (
+                <details className="ai-think-block">
+                  <summary>
+                    <span>💭</span> Reasoning
+                  </summary>
+                  <div className="ai-think-body">{split.thinking}</div>
+                </details>
+              )}
+              <div className="ai-msg-body">
+                {showThinking ? (
+                  <span className="ai-thinking">
+                    <span className="ai-spinner" /> Thinking…
+                  </span>
+                ) : looksLikeToolJunk ? (
+                  <span className="ai-thinking">
+                    <span className="ai-spinner" /> Preparing tool call…
+                  </span>
+                ) : isAssistant ? (
+                  <>
+                    <MarkdownPreview content={balanceFences(visibleContent)} />
+                    {shouldCollapse && (
+                      <button
+                        className="ai-show-more"
+                        onClick={() => {
+                          setExpandedMsgIdx((s) => new Set(s).add(i));
+                        }}
+                      >
+                        Show {split.visible.length - COLLAPSE_PREVIEW} more chars
+                      </button>
+                    )}
+                    {!shouldCollapse &&
+                      isAssistant &&
+                      !isLatest &&
+                      !isStreamingThis &&
+                      split.visible.length > COLLAPSE_THRESHOLD && (
+                        <button
+                          className="ai-show-more"
+                          onClick={() => {
+                            setExpandedMsgIdx((s) => {
+                              const next = new Set(s);
+                              next.delete(i);
+                              return next;
+                            });
+                          }}
+                        >
+                          Show less
+                        </button>
+                      )}
+                  </>
+                ) : (
+                  m.content
+                )}
+              </div>
+              {isAssistant && !isStreamingThis && m.content.length > 0 && (
+                <div className="ai-msg-actions">
+                  <button
+                    className="ai-msg-action"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(m.content);
+                      toastSuccess("Copied to clipboard");
+                    }}
+                    title="Copy message"
+                  >
+                    📋 Copy
+                  </button>
+                  {blocks.length > 0 && (
+                    <button
+                      className="ai-msg-action"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(blocks.join("\n\n"));
+                        toastSuccess(
+                          `Copied ${blocks.length} code block${blocks.length === 1 ? "" : "s"}`,
+                        );
+                      }}
+                      title="Copy code blocks only"
+                    >
+                      &lt;/&gt; Copy code
+                    </button>
+                  )}
+                  <button
+                    className="ai-msg-action"
+                    onClick={() => {
+                      const ok = insertIntoActiveEditor(insertText);
+                      if (ok) toastSuccess("Inserted at cursor");
+                      else toastError("No active editor");
+                    }}
+                    title="Insert at cursor / replace selection"
+                  >
+                    ↳ Insert
+                  </button>
+                  {shellBlocks.length > 0 && (
+                    <button
+                      className="ai-msg-action ai-msg-action-run"
+                      onClick={async () => {
+                        const ok = await dialogConfirm(
+                          `Run ${shellBlocks.length} shell command${shellBlocks.length === 1 ? "" : "s"} in the active terminal?\n\n${shellText.slice(0, 800)}${shellText.length > 800 ? "\n…" : ""}`,
+                          {
+                            title: "Run in terminal",
+                            okLabel: "Run",
+                            cancelLabel: "Cancel",
+                          },
+                        );
+                        if (ok) await runInActiveTerminal(shellText);
+                      }}
+                      title="Run the shell command(s) in the active terminal"
+                    >
+                      ▶ Run
+                    </button>
+                  )}
+                  {isLatest && (
+                    <button
+                      className="ai-msg-action"
+                      onClick={() => void goDeeper()}
+                      title="Ask the model to investigate further and expand the answer"
+                      disabled={streaming !== null || runningTools}
+                    >
+                      ↡ Go deeper
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {pendingPermission && (
+          <PermissionCard
+            call={pendingPermission.call}
+            onResolve={(decision) => pendingPermission.resolve(decision)}
+          />
+        )}
+      </div>
+      {attachTree && (
+        <div
+          className="ai-context-indicator"
+          title="Project file tree will be attached to your next message — click to cancel"
+          onClick={() => setAttachTree(false)}
+          role="button"
+        >
+          <span className="ai-context-dot" />
+          Project file tree attached (one-shot)
+          <span className="ai-context-toggle">cancel</span>
+        </div>
+      )}
+      {attachTerminal && (
+        <div
+          className="ai-context-indicator"
+          title="Active terminal output will be attached to your next message — click to cancel"
+          onClick={() => setAttachTerminal(false)}
+          role="button"
+        >
+          <span className="ai-context-dot" />
+          Terminal output attached (one-shot)
+          <span className="ai-context-toggle">cancel</span>
+        </div>
+      )}
+      {attachedFiles.length > 0 && (
+        <div className="ai-context-indicator" role="status">
+          <span className="ai-context-dot" />
+          Files: {attachedFiles.join(", ")}
+          <button
+            className="ai-context-toggle"
+            onClick={() => setAttachedFiles([])}
+            title="Detach all attached files"
+          >
+            clear
+          </button>
+        </div>
+      )}
+      {contextLabel && (
+        <div
+          className={`ai-context-indicator ${attachContext ? "" : "off"}`}
+          title="Click to toggle whether file/selection is attached to your next message"
+          onClick={() => setAttachContext((v) => !v)}
+          role="button"
+        >
+          <span className="ai-context-dot" />
+          {contextLabel}
+          <span className="ai-context-toggle">
+            {attachContext ? "off" : "on"}
+          </span>
+        </div>
+      )}
+      {(() => {
+        const isSlash = input.startsWith("/");
+        if (!isSlash || streaming !== null) return null;
+        const q = input.slice(1).toLowerCase();
+        const matches = SLASH_COMMANDS.filter((c) =>
+          c.name.slice(1).toLowerCase().startsWith(q),
+        );
+        if (matches.length === 0) return null;
+        const idx = Math.max(0, Math.min(slashIndex, matches.length - 1));
+        return (
+          <div className="ai-slash-suggestions">
+            {matches.map((c, i) => (
+              <button
+                key={c.name}
+                className={`ai-slash-item ${i === idx ? "active" : ""}`}
+                onMouseEnter={() => setSlashIndex(i)}
+                onClick={() => runSlashCommand(c)}
+              >
+                <span className="ai-slash-name">{c.name}</span>
+                <span className="ai-slash-hint">{c.hint}</span>
+              </button>
+            ))}
+          </div>
+        );
+      })()}
+      <div className="ai-input-row">
+        <textarea
+          className="ai-input"
+          rows={2}
+          placeholder={
+            streaming !== null
+              ? "Streaming…"
+              : runningTools
+                ? "Running tools…"
+                : "Ask the model, or type / for commands… (Enter to send, Shift+Enter newline)"
+          }
+          value={input}
+          onChange={(e) => {
+            setInput(e.target.value);
+            setSlashIndex(0);
+          }}
+          onKeyDown={(e) => {
+            const isSlash = input.startsWith("/");
+            const firstWord = isSlash ? input.split(/\s+/)[0] : "";
+            const exactCmd = isSlash
+              ? SLASH_COMMANDS.find(
+                  (c) => c.name.toLowerCase() === firstWord.toLowerCase(),
+                )
+              : undefined;
+            if (isSlash) {
+              const q = input.slice(1).toLowerCase();
+              const matches = SLASH_COMMANDS.filter((c) =>
+                c.name.slice(1).toLowerCase().startsWith(q),
+              );
+              if (matches.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashIndex((i) =>
+                    Math.min(matches.length - 1, i + 1),
+                  );
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSlashIndex((i) => Math.max(0, i - 1));
+                  return;
+                }
+                if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                  e.preventDefault();
+                  const idx = Math.max(
+                    0,
+                    Math.min(slashIndex, matches.length - 1),
+                  );
+                  runSlashCommand(matches[idx]);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setInput("");
+                  return;
+                }
+              }
+              // Exact-match command typed with arguments (e.g. "/file foo.ts")
+              if (
+                exactCmd &&
+                (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))
+              ) {
+                e.preventDefault();
+                runSlashCommand(exactCmd);
+                return;
+              }
+            }
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+          disabled={streaming !== null || runningTools}
+        />
+        {streaming !== null || runningTools ? (
+          <button onClick={stop} title="Stop">
+            ◼
+          </button>
+        ) : (
+          <button
+            className="primary"
+            onClick={() => void send()}
+            disabled={!input.trim() || !selected}
+          >
+            Send
+          </button>
+        )}
+      </div>
+      {/* Single consolidated status strip — one row that shows whatever's
+          active right now, instead of stacking 4 separate banners. */}
+      {(runningTools ||
+        (streaming !== null && warmingUp && streaming.length === 0) ||
+        (streaming !== null && tokensPerSec !== null) ||
+        aggregatedPullProgress) && (
+        <div className="ai-status-strip">
+          {runningTools && (
+            <span className="ai-status-item">
+              <span className="ai-spinner" />
+              {activeToolLabels.length > 0
+                ? `Running: ${activeToolLabels.slice(0, 3).join(", ")}${activeToolLabels.length > 3 ? ` +${activeToolLabels.length - 3}` : ""}`
+                : "Running tools"}
+            </span>
+          )}
+          {streaming !== null && warmingUp && streaming.length === 0 && (
+            <span className="ai-status-item">
+              <span className="ai-spinner" /> Loading model
+            </span>
+          )}
+          {streaming !== null && tokensPerSec !== null && (
+            <span className="ai-status-item ai-status-tps">
+              {tokensPerSec.toFixed(1)} t/s
+            </span>
+          )}
+          {aggregatedPullProgress && (
+            <span className="ai-status-item ai-status-pull">
+              {aggregatedPullProgress}
+            </span>
+          )}
+        </div>
+      )}
+      {recentTps !== null && recentTps < 8 && streaming === null && !runningTools && (
+        <div className="ai-slow-banner">
+          Slow generation ({recentTps.toFixed(1)} t/s). Likely VRAM bound.{" "}
+          <button
+            className="ai-slow-banner-btn"
+            onClick={() => {
+              setBrowserOpen(true);
+              setRecentTps(null);
+            }}
+          >
+            Smaller model
+          </button>{" "}
+          ·{" "}
+          <button
+            className="ai-slow-banner-btn"
+            onClick={() => {
+              openSettings();
+              setRecentTps(null);
+            }}
+          >
+            Cloud key
+          </button>
+        </div>
+      )}
+      <ModelBrowser
+        open={browserOpen}
+        installedNames={
+          new Set(
+            allModels
+              .filter((m) => m.providerId === "ollama")
+              .map((m) => m.modelId),
+          )
+        }
+        cloudModels={allCloudCatalog}
+        hasKey={{
+          ollama: true,
+          "claude-code": claudeCodeAvailable,
+          openai: hasApiKey("openai"),
+          anthropic: hasApiKey("anthropic"),
+        }}
+        selectedQualified={selected}
+        pullProgressByName={pullProgressMap}
+        onClose={() => setBrowserOpen(false)}
+        onSelect={(q) => setSelected(q)}
+        onPull={(name) => void pullSpecific(name)}
+        onConfigureKey={() => {
+          setBrowserOpen(false);
+          openSettings();
+        }}
+        onInstallClaudeCode={async () => {
+          // Spawn a workspace terminal that runs the install. We use the
+          // default shell so npm resolves through the user's normal PATH,
+          // then queue the install command via pty.write once spawned.
+          const termId = useStore
+            .getState()
+            .addTerminal(wsId, "bottom", undefined);
+          // Wait briefly for the PTY to be ready, then send the command.
+          setTimeout(() => {
+            const ws = useStore.getState().loaded[wsId];
+            const t = ws?.terminals[termId];
+            if (!t?.ptyId) return;
+            void pty.write(
+              t.ptyId,
+              "npm install -g @anthropic-ai/claude-code\r",
+            );
+          }, 800);
+          toastInfo(
+            "Installing Claude Code via npm — when it finishes, run `claude /login`.",
+          );
+          setBrowserOpen(false);
+          // Recheck a few times after install likely finishes.
+          setTimeout(() => void refresh(), 15000);
+          setTimeout(() => void refresh(), 30000);
+        }}
+      />
+    </div>
+  );
+}
+
+function ToolCallSummary({ calls }: { calls: ToolCall[] }) {
+  const [expanded, setExpanded] = useState(false);
+  // Group by tool name and count.
+  const counts = new Map<string, number>();
+  for (const c of calls) {
+    counts.set(c.function.name, (counts.get(c.function.name) ?? 0) + 1);
+  }
+  const summary = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, n]) => (n === 1 ? name : `${name} ×${n}`))
+    .join(", ");
+  return (
+    <div className="ai-tool-summary-wrap">
+      <button
+        className="ai-tool-summary-btn"
+        onClick={() => setExpanded((v) => !v)}
+        title={expanded ? "Hide details" : "Show all tool calls"}
+      >
+        <span className="ai-tool-summary-icon">{expanded ? "▾" : "▸"}</span>
+        <span className="ai-tool-summary-text">
+          🔧 Used {calls.length} tool{calls.length === 1 ? "" : "s"} —{" "}
+          <span className="ai-tool-summary-detail">{summary}</span>
+        </span>
+      </button>
+      {expanded && (
+        <div className="ai-tool-summary-list">
+          {calls.map((c, j) => {
+            const argsStr = Object.entries(c.function.arguments)
+              .map(
+                ([k, v]) =>
+                  `${k}=${typeof v === "string" ? JSON.stringify(v.length > 80 ? v.slice(0, 80) + "…" : v) : JSON.stringify(v)}`,
+              )
+              .join(", ");
+            return (
+              <div key={j} className="ai-tool-summary-item">
+                <code className="ai-tool-summary-name">{c.function.name}</code>
+                {argsStr && (
+                  <span className="ai-tool-summary-args">{argsStr}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PermissionCard({
+  call,
+  onResolve,
+}: {
+  call: ToolCall;
+  onResolve: (decision: "allow" | "deny") => void;
+}) {
+  const args = call.function.arguments;
+  const path = extractPathArg(args);
+  const argsSummary = Object.entries(args)
+    .map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 200)}`)
+    .join(", ");
+  return (
+    <div className="ai-perm-card">
+      <div className="ai-perm-head">
+        <span className="ai-perm-icon">🔒</span>
+        <span className="ai-perm-title">Permission needed</span>
+      </div>
+      <div className="ai-perm-body">
+        <div className="ai-perm-row">
+          <span className="ai-perm-label">Tool</span>
+          <code className="ai-perm-tool">{call.function.name}</code>
+        </div>
+        {argsSummary && (
+          <div className="ai-perm-row">
+            <span className="ai-perm-label">Args</span>
+            <code className="ai-perm-args">{argsSummary}</code>
+          </div>
+        )}
+      </div>
+      <div className="ai-perm-actions">
+        <button
+          className="ai-perm-btn ai-perm-btn-primary"
+          onClick={() => onResolve("allow")}
+          title="Run this call only"
+        >
+          ✓ Allow once
+        </button>
+        <button
+          className="ai-perm-btn"
+          onClick={() => {
+            rememberToolAlways(call.function.name);
+            onResolve("allow");
+          }}
+          title={`Auto-allow every future ${call.function.name} call`}
+        >
+          ✓ Allow always ({call.function.name})
+        </button>
+        {path && (
+          <button
+            className="ai-perm-btn"
+            onClick={() => {
+              rememberToolPath(call.function.name, path);
+              onResolve("allow");
+            }}
+            title={`Auto-allow ${call.function.name} calls for this exact path`}
+          >
+            ✓ Allow this path
+          </button>
+        )}
+        <button
+          className="ai-perm-btn ai-perm-btn-danger"
+          onClick={() => onResolve("deny")}
+          title="Reject this call — the model will see a denial message"
+        >
+          ✕ Deny
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HeaderMenu({
+  historyCount,
+  onHistory,
+  historyActive,
+  onRefresh,
+  onSettings,
+  onBrowseModels,
+}: {
+  historyCount: number;
+  onHistory: () => void;
+  historyActive: boolean;
+  onRefresh: () => void;
+  onSettings: () => void;
+  onBrowseModels: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest(".ai-header-menu-popover")) return;
+      if (t?.closest(".ai-header-menu-btn")) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+  return (
+    <div className="ai-header-menu-wrap">
+      <button
+        className={`ai-header-menu-btn ${open ? "active" : ""}`}
+        onClick={() => setOpen((v) => !v)}
+        title="More"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="ai-header-menu-popover">
+          <button
+            className="ai-header-menu-item"
+            onClick={() => {
+              onHistory();
+              setOpen(false);
+            }}
+          >
+            <span>{historyActive ? "▾" : "▸"} Chat history</span>
+            {historyCount > 0 && (
+              <span className="ai-header-menu-meta">{historyCount}</span>
+            )}
+          </button>
+          <button
+            className="ai-header-menu-item"
+            onClick={() => {
+              onBrowseModels();
+              setOpen(false);
+            }}
+          >
+            <span>⊕ Browse models</span>
+          </button>
+          <div className="ai-header-menu-sep" />
+          <button
+            className="ai-header-menu-item"
+            onClick={() => {
+              onRefresh();
+              setOpen(false);
+            }}
+          >
+            <span>⟳ Refresh providers</span>
+          </button>
+          <button
+            className="ai-header-menu-item"
+            onClick={() => {
+              onSettings();
+              setOpen(false);
+            }}
+          >
+            <span>⚙ Settings</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
