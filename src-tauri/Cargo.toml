@@ -1,6 +1,6 @@
 [package]
 name = "codetta"
-version = "0.1.0"
+version = "0.1.1"
 description = "A lightweight desktop code editor with first-class AI."
 authors = ["Codetta Maintainers <getcodetta@gmail.com>"]
 edition = "2021"
