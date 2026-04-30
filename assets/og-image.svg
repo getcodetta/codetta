@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f1115"/>
+      <stop offset="100%" stop-color="#161a22"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#6ea8ff"/>
+      <stop offset="100%" stop-color="#92bcff"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- subtle grid -->
+  <g stroke="#1f242c" stroke-width="1" opacity="0.6">
+    <path d="M0 100 L1200 100 M0 200 L1200 200 M0 300 L1200 300 M0 400 L1200 400 M0 500 L1200 500"/>
+    <path d="M100 0 L100 630 M200 0 L200 630 M300 0 L300 630 M400 0 L400 630 M500 0 L500 630 M600 0 L600 630 M700 0 L700 630 M800 0 L800 630 M900 0 L900 630 M1000 0 L1000 630 M1100 0 L1100 630"/>
+  </g>
+
+  <!-- corner brand -->
+  <g transform="translate(80, 90)">
+    <text x="0" y="0" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="36" font-weight="600" fill="url(#accent)" filter="url(#glow)">⌘</text>
+    <text x="56" y="0" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="32" font-weight="600" fill="#e6e8eb">Codetta</text>
+  </g>
+
+  <!-- main headline -->
+  <g transform="translate(80, 230)" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" fill="#e6e8eb">
+    <text x="0" y="0" font-size="72" font-weight="600" letter-spacing="-1.5">The lightweight code editor</text>
+    <text x="0" y="86" font-size="72" font-weight="600" letter-spacing="-1.5">with first-class <tspan fill="url(#accent)">AI</tspan>.</text>
+  </g>
+
+  <!-- subhead -->
+  <text x="80" y="450" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="26" fill="#9aa0a8">
+    Bring your own model — Anthropic, OpenAI, Ollama, or Claude Code.
+  </text>
+
+  <!-- bottom row: provider chips + URL -->
+  <g transform="translate(80, 530)" font-family="-apple-system, 'Segoe UI', Inter, sans-serif">
+    <g font-size="18" fill="#c8ccd2">
+      <rect x="0" y="-26" width="118" height="38" rx="19" fill="#1a1d24" stroke="#2a2f38"/>
+      <text x="59" y="0" text-anchor="middle">Anthropic</text>
+
+      <rect x="134" y="-26" width="100" height="38" rx="19" fill="#1a1d24" stroke="#2a2f38"/>
+      <text x="184" y="0" text-anchor="middle">OpenAI</text>
+
+      <rect x="250" y="-26" width="100" height="38" rx="19" fill="#1a1d24" stroke="#2a2f38"/>
+      <text x="300" y="0" text-anchor="middle">Ollama</text>
+
+      <rect x="366" y="-26" width="156" height="38" rx="19" fill="#1a1d24" stroke="#2a2f38"/>
+      <text x="444" y="0" text-anchor="middle">Claude Code CLI</text>
+    </g>
+  </g>
+
+  <text x="1120" y="555" font-family="-apple-system, 'Segoe UI', Inter, sans-serif" font-size="22" font-weight="500" fill="#6ea8ff" text-anchor="end">codetta.dev</text>
+</svg>

@@ -2,9 +2,12 @@
 
 **A lightweight desktop code editor with first-class AI. Bring your own model — Anthropic, OpenAI, Ollama, or Claude Code.**
 
+[![npm](https://img.shields.io/npm/v/codetta.svg?label=npm&color=cb3837)](https://www.npmjs.com/package/codetta)
+[![Release](https://img.shields.io/github/v/release/getcodetta/codetta?include_prereleases&label=release&color=6ea8ff)](https://github.com/getcodetta/codetta/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/getcodetta/codetta/total.svg?color=22c55e)](https://github.com/getcodetta/codetta/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
-[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6.svg)](https://github.com/getcodetta/codetta/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/getcodetta/codetta/release.yml?label=build)](https://github.com/getcodetta/codetta/actions)
 
 Website · [codetta.dev](https://codetta.dev)
 Issues · [github.com/getcodetta/codetta/issues](https://github.com/getcodetta/codetta/issues)

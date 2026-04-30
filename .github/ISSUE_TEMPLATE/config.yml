@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/getcodetta/codetta/discussions
+    about: Use Discussions for usage questions, ideas in flux, and general chat. Issues are for actionable bug reports and feature requests.
+  - name: Security report
+    url: mailto:getcodetta@gmail.com
+    about: Please email security issues privately rather than opening a public issue. We respond within a week.
