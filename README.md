@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/codetta.svg?label=npm&color=cb3837)](https://www.npmjs.com/package/codetta)
 [![Release](https://img.shields.io/github/v/release/getcodetta/codetta?include_prereleases&label=release&color=6ea8ff)](https://github.com/getcodetta/codetta/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/getcodetta/codetta/total.svg?color=22c55e)](https://github.com/getcodetta/codetta/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: FSL-1.1-ALv2](https://img.shields.io/badge/License-FSL--1.1--ALv2-blue.svg)](LICENSE)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://tauri.app)
 [![CI](https://img.shields.io/github/actions/workflow/status/getcodetta/codetta/release.yml?label=build)](https://github.com/getcodetta/codetta/actions)
 
@@ -167,4 +167,13 @@ Please follow [DCO sign-off](https://developercertificate.org/) on commits (`git
 
 ## License
 
-[MIT](LICENSE) © 2026 Codetta Maintainers
+[FSL-1.1-ALv2](LICENSE) © 2026 Codetta Maintainers
+
+Codetta is **source-available** under the [Functional Source License](https://fsl.software). In short:
+
+- ✅ **Free for personal use, internal company use, education, research, and non-commercial work** — read the source, modify it, build it, run it however you like.
+- ✅ **Free to contribute** — fork, hack, send PRs.
+- ❌ **You may not** repackage Codetta as a competing commercial product or hosted service.
+- 🕒 **Auto-converts to Apache 2.0** two years after each release — so every version eventually becomes fully open source.
+
+If you want to use Codetta in a way the FSL doesn't allow, get in touch at getcodetta@gmail.com.

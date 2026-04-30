@@ -1,10 +1,10 @@
 [package]
 name = "codetta"
-version = "0.1.1"
+version = "0.2.0"
 description = "A lightweight desktop code editor with first-class AI."
 authors = ["Codetta Maintainers <getcodetta@gmail.com>"]
 edition = "2021"
-license = "MIT"
+license-file = "../LICENSE"
 homepage = "https://codetta.dev"
 repository = "https://github.com/getcodetta/codetta"
 

@@ -1,10 +1,10 @@
 {
   "name": "codetta",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A lightweight desktop code editor with first-class AI. Bring your own model — Anthropic, OpenAI, Ollama, or Claude Code.",
   "private": false,
   "type": "module",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "author": "Codetta Maintainers <getcodetta@gmail.com>",
   "homepage": "https://codetta.dev",
   "repository": {

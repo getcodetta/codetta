@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "codetta"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
