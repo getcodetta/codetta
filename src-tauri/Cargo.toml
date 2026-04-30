@@ -1,12 +1,15 @@
 [package]
-name = "lite-coder-pro"
+name = "codetta"
 version = "0.1.0"
-description = "Lite Coder Pro"
-authors = ["Bishal"]
+description = "A lightweight desktop code editor with first-class AI."
+authors = ["Codetta Maintainers <getcodetta@gmail.com>"]
 edition = "2021"
+license = "MIT"
+homepage = "https://codetta.dev"
+repository = "https://github.com/getcodetta/codetta"
 
 [lib]
-name = "lite_coder_pro_lib"
+name = "codetta_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

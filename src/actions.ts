@@ -42,7 +42,7 @@ function activeFilePath(wsId: string | null): string | null {
 export interface CommandSpec {
   id: string;
   label: string;
-  category: "File" | "View" | "Terminal" | "Help" | "Workspace" | "Edit";
+  category: "File" | "View" | "Terminal" | "AI" | "Help" | "Workspace" | "Edit";
   accel?: string;
   run: () => void | Promise<void>;
 }
@@ -400,12 +400,21 @@ export const commands: CommandSpec[] = [
     },
   },
   {
+    id: "ai.new_chat",
+    label: "New AI Chat",
+    category: "AI",
+    run: () => {
+      const wsId = s().activeId;
+      if (wsId) s().addAIChat(wsId, "editor");
+    },
+  },
+  {
     id: "help.repo",
     label: "GitHub Repository",
     category: "Help",
     run: async () => {
       try {
-        await openUrl("https://github.com/suppledigital/lite-coder-pro");
+        await openUrl("https://github.com/getcodetta/codetta");
       } catch {
         /* ignore */
       }
@@ -413,12 +422,12 @@ export const commands: CommandSpec[] = [
   },
   {
     id: "help.about",
-    label: "About Lite Coder Pro",
+    label: "About Codetta",
     category: "Help",
     run: () =>
       void dialogAlert(
-        "A lightweight Tauri-based code editor.\n\nMulti-workspace · multi-terminal · integrated git · drag-and-drop splits.",
-        { title: "Lite Coder Pro" },
+        "Codetta — a lightweight Tauri-based code editor with first-class AI.\n\nMulti-workspace · multi-terminal (with pop-out) · integrated git · drag-and-drop splits · BYOK AI (Anthropic, OpenAI, Ollama, Claude Code).\n\nhttps://codetta.dev",
+        { title: "About Codetta" },
       ),
   },
 ];

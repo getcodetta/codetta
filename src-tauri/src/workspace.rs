@@ -22,7 +22,7 @@ pub struct WorkspacesIndex {
 
 fn app_data_dir() -> Result<PathBuf, String> {
     let base = dirs::data_dir().ok_or_else(|| "no app data dir".to_string())?;
-    let dir = base.join("lite-coder-pro");
+    let dir = base.join("codetta");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }

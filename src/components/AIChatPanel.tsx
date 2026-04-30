@@ -74,6 +74,17 @@ const SLASH_COMMANDS: SlashCommand[] = [
 interface Props {
   wsId: string;
   root: string;
+  /**
+   * When set, this AIChatPanel instance is bound to a moveable AI tab
+   * (one of `WorkspaceData.aiChats[aiChatId]`). It will load that tab's
+   * stored sessionId on mount, and write back any sessionId / title
+   * changes so they survive pane drags + reloads.
+   *
+   * When omitted, the panel runs in legacy "right-side singleton" mode:
+   * it auto-restores the most-recent saved session on workspace switch,
+   * just like before.
+   */
+  aiChatId?: string;
 }
 
 const OLLAMA_DOWNLOAD = "https://ollama.com/download";
@@ -651,7 +662,7 @@ function insertIntoActiveEditor(text: string): boolean {
   return true;
 }
 
-export function AIChatPanel({ wsId, root }: Props) {
+export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const [status, setStatus] = useState<
     "checking" | "missing" | "ready" | "no-models"
   >("checking");
@@ -702,6 +713,7 @@ export function AIChatPanel({ wsId, root }: Props) {
   const abortRef = useRef<AbortController | null>(null);
   const editorState = useEditorState();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const stickyBottomRef = useRef(true);
   const [expandedMsgIdx, setExpandedMsgIdx] = useState<Set<number>>(new Set());
 
@@ -709,6 +721,17 @@ export function AIChatPanel({ wsId, root }: Props) {
   useEffect(() => {
     setExpandedMsgIdx(new Set());
   }, [sessionId]);
+
+  // Auto-grow the prompt textarea up to ~8 lines so multi-paragraph
+  // questions don't get cropped behind a tiny scrollbar. Falls back to
+  // the rows={2} baseline when empty.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const max = 8 * 18 + 16; // ~8 rows of line-height 18px + padding
+    el.style.height = Math.min(el.scrollHeight, max) + "px";
+  }, [input]);
 
   const refresh = async (showChecking = false) => {
     if (showChecking) setStatus("checking");
@@ -850,11 +873,39 @@ export function AIChatPanel({ wsId, root }: Props) {
     el.scrollTop = el.scrollHeight;
   }, [messages, streaming]);
 
-  // Reset chat & restore last session when workspace changes.
+  // Reset chat & restore appropriate session when workspace or bound
+  // chat-tab changes.
+  //
+  // - With `aiChatId` set (tabbed mode): load THAT tab's stored sessionId
+  //   from the workspace store. Each tab has its own conversation, so we
+  //   must not fall back to "the most recent session in the workspace" —
+  //   that would make every newly-opened tab show the same chat.
+  // - Without `aiChatId` (singleton sidebar mode): keep the legacy
+  //   behavior of restoring the most-recently-saved session.
   useEffect(() => {
     setInput("");
     const list = loadSessions(wsId);
     setSessions(list);
+
+    if (aiChatId) {
+      const desc = useStore.getState().loaded[wsId]?.aiChats[aiChatId];
+      const targetSid = desc?.sessionId ?? newSessionId();
+      const found = list.find((s) => s.id === targetSid);
+      setSessionId(targetSid);
+      if (found) {
+        setMessages(cleanStaleToolMessages(found.messages));
+        if (found.model) {
+          const q = parseQualifiedModel(found.model)
+            ? found.model
+            : makeQualifiedModel("ollama", found.model);
+          setSelected((cur) => cur || q);
+        }
+      } else {
+        setMessages([]);
+      }
+      return;
+    }
+
     if (list.length > 0) {
       setSessionId(list[0].id);
       // Filter out stale "Unknown tool: X" result messages from older
@@ -871,7 +922,27 @@ export function AIChatPanel({ wsId, root }: Props) {
       setSessionId(newSessionId());
       setMessages([]);
     }
-  }, [wsId]);
+  }, [wsId, aiChatId]);
+
+  // When sessionId changes inside a tabbed panel (e.g. via /new or the
+  // history dropdown), persist it back to the descriptor so a reload
+  // re-opens the same conversation.
+  useEffect(() => {
+    if (!aiChatId) return;
+    useStore.getState().setAIChatSession(wsId, aiChatId, sessionId);
+  }, [wsId, aiChatId, sessionId]);
+
+  // Mirror the auto-derived chat title back to the tab label when in
+  // tabbed mode. Cheap — only runs when messages or descriptor change.
+  useEffect(() => {
+    if (!aiChatId) return;
+    if (messages.length === 0) return;
+    const title = deriveTitle(messages);
+    if (!title) return;
+    const desc = useStore.getState().loaded[wsId]?.aiChats[aiChatId];
+    if (!desc || desc.title === title) return;
+    useStore.getState().setAIChatTitle(wsId, aiChatId, title);
+  }, [wsId, aiChatId, messages]);
 
   // Persist session whenever messages change (debounced).
   useEffect(() => {
@@ -1059,7 +1130,7 @@ export function AIChatPanel({ wsId, root }: Props) {
       // its own internal rules. Our "tools available" section would only
       // confuse it. Just orient it briefly.
       sysParts.push(
-        "You are running inside Lite Coder Pro, a code editor. The user has the workspace open as your current working directory. Use your normal tools (Read, Glob, Grep, Edit, Bash, etc.) to investigate and modify files as needed. Be thorough and substantive.",
+        "You are running inside Codetta, a code editor. The user has the workspace open as your current working directory. Use your normal tools (Read, Glob, Grep, Edit, Bash, etc.) to investigate and modify files as needed. Be thorough and substantive.",
       );
     } else {
       sysParts.push(
@@ -1742,7 +1813,16 @@ export function AIChatPanel({ wsId, root }: Props) {
             </div>
           </>
         )}
-        {display.map((m, i) => {
+        {(() => {
+          // Build a lookup of tool results by call id so each tool_call
+          // row can render its result inline (Claude-Code-style).
+          const toolResultsById = new Map<string, string>();
+          for (const msg of display) {
+            if (msg.role === "tool" && msg.tool_call_id) {
+              toolResultsById.set(msg.tool_call_id, msg.content);
+            }
+          }
+          return display.map((m, i) => {
           const isAssistant = m.role === "assistant";
           const isStreamingThis = isAssistant && i === display.length - 1 && streaming !== null;
           const blocks = isAssistant ? extractCodeBlocks(m.content) : [];
@@ -1786,8 +1866,13 @@ export function AIChatPanel({ wsId, root }: Props) {
               /\{\s*"arguments"/.test(trimmedStream) ||
               /<tool_call>/i.test(trimmedStream));
           if (m.role === "tool") {
-            // Defense-in-depth: stale "Unknown tool: X" results from old
-            // sessions add visual noise — hide them at render time too.
+            // Tool results are now rendered inline, attached to their
+            // matching tool_call row in the parent assistant message.
+            // Only show standalone if the result has no matching call
+            // (orphan / safety net).
+            if (m.tool_call_id && toolResultsById.has(m.tool_call_id)) {
+              return null;
+            }
             if (/^Unknown tool:/i.test(m.content)) return null;
             return (
               <details key={i} className="ai-msg ai-msg-tool">
@@ -1818,7 +1903,15 @@ export function AIChatPanel({ wsId, root }: Props) {
                 )}
               </span>
               {m.tool_calls && m.tool_calls.length > 0 && (
-                <ToolCallSummary calls={m.tool_calls} />
+                <div className="ai-tcalls">
+                  {m.tool_calls.map((c, j) => (
+                    <ToolCallRow
+                      key={c.id ?? j}
+                      call={c}
+                      result={c.id ? toolResultsById.get(c.id) : undefined}
+                    />
+                  ))}
+                </div>
               )}
               {isAssistant && split.thinking.length > 0 && (
                 <details className="ai-think-block">
@@ -1943,7 +2036,35 @@ export function AIChatPanel({ wsId, root }: Props) {
               )}
             </div>
           );
-        })}
+          });
+        })()}
+        {(runningTools ||
+          (streaming !== null && warmingUp && streaming.length === 0) ||
+          (streaming !== null && tokensPerSec !== null)) && (
+          <div className="ai-inline-status">
+            {runningTools && (
+              <span className="ai-thinking">
+                <span className="ai-spinner" />
+                {activeToolLabels.length > 0
+                  ? `Running: ${activeToolLabels.slice(0, 3).join(", ")}${activeToolLabels.length > 3 ? ` +${activeToolLabels.length - 3}` : ""}`
+                  : "Running tools…"}
+              </span>
+            )}
+            {streaming !== null &&
+              warmingUp &&
+              streaming.length === 0 &&
+              !runningTools && (
+                <span className="ai-thinking">
+                  <span className="ai-spinner" /> Loading model
+                </span>
+              )}
+            {streaming !== null && tokensPerSec !== null && (
+              <span className="ai-inline-tps">
+                {tokensPerSec.toFixed(1)} t/s
+              </span>
+            )}
+          </div>
+        )}
         {pendingPermission && (
           <PermissionCard
             call={pendingPermission.call}
@@ -2029,14 +2150,15 @@ export function AIChatPanel({ wsId, root }: Props) {
       })()}
       <div className="ai-input-row">
         <textarea
+          ref={inputRef}
           className="ai-input"
           rows={2}
           placeholder={
             streaming !== null
-              ? "Streaming…"
+              ? "Streaming… (Esc to stop)"
               : runningTools
-                ? "Running tools…"
-                : "Ask the model, or type / for commands… (Enter to send, Shift+Enter newline)"
+                ? "Running tools… (Esc to stop)"
+                : "Ask the model, or type / for commands… (Enter to send, Shift+Enter newline, ↑ to recall)"
           }
           value={input}
           onChange={(e) => {
@@ -2044,6 +2166,18 @@ export function AIChatPanel({ wsId, root }: Props) {
             setSlashIndex(0);
           }}
           onKeyDown={(e) => {
+            // Esc while a request is in flight = stop. Always wins so the
+            // user can bail out of long generations without reaching for
+            // the mouse. (Escape with empty input also clears any pending
+            // attachments — see below.)
+            if (
+              e.key === "Escape" &&
+              (streaming !== null || runningTools)
+            ) {
+              e.preventDefault();
+              stop();
+              return;
+            }
             const isSlash = input.startsWith("/");
             const firstWord = isSlash ? input.split(/\s+/)[0] : "";
             const exactCmd = isSlash
@@ -2094,20 +2228,43 @@ export function AIChatPanel({ wsId, root }: Props) {
                 return;
               }
             }
+            // ArrowUp on an empty input recalls the most recent prompt the
+            // user sent — same idiom as a shell. Modifier keys skip it so
+            // we don't fight selection-extending shortcuts.
+            if (
+              e.key === "ArrowUp" &&
+              input.length === 0 &&
+              !e.shiftKey &&
+              !e.ctrlKey &&
+              !e.metaKey &&
+              !e.altKey
+            ) {
+              const lastUser = [...messages]
+                .reverse()
+                .find((m) => m.role === "user");
+              if (lastUser) {
+                e.preventDefault();
+                setInput(lastUser.content);
+                return;
+              }
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               void send();
             }
           }}
-          disabled={streaming !== null || runningTools}
         />
         {streaming !== null || runningTools ? (
-          <button onClick={stop} title="Stop">
-            ◼
+          <button
+            className="ai-send-btn ai-stop-btn"
+            onClick={stop}
+            title="Stop (Esc)"
+          >
+            ◼ Stop
           </button>
         ) : (
           <button
-            className="primary"
+            className="primary ai-send-btn"
             onClick={() => void send()}
             disabled={!input.trim() || !selected}
           >
@@ -2115,36 +2272,11 @@ export function AIChatPanel({ wsId, root }: Props) {
           </button>
         )}
       </div>
-      {/* Single consolidated status strip — one row that shows whatever's
-          active right now, instead of stacking 4 separate banners. */}
-      {(runningTools ||
-        (streaming !== null && warmingUp && streaming.length === 0) ||
-        (streaming !== null && tokensPerSec !== null) ||
-        aggregatedPullProgress) && (
+      {aggregatedPullProgress && (
         <div className="ai-status-strip">
-          {runningTools && (
-            <span className="ai-status-item">
-              <span className="ai-spinner" />
-              {activeToolLabels.length > 0
-                ? `Running: ${activeToolLabels.slice(0, 3).join(", ")}${activeToolLabels.length > 3 ? ` +${activeToolLabels.length - 3}` : ""}`
-                : "Running tools"}
-            </span>
-          )}
-          {streaming !== null && warmingUp && streaming.length === 0 && (
-            <span className="ai-status-item">
-              <span className="ai-spinner" /> Loading model
-            </span>
-          )}
-          {streaming !== null && tokensPerSec !== null && (
-            <span className="ai-status-item ai-status-tps">
-              {tokensPerSec.toFixed(1)} t/s
-            </span>
-          )}
-          {aggregatedPullProgress && (
-            <span className="ai-status-item ai-status-pull">
-              {aggregatedPullProgress}
-            </span>
-          )}
+          <span className="ai-status-item ai-status-pull">
+            {aggregatedPullProgress}
+          </span>
         </div>
       )}
       {recentTps !== null && recentTps < 8 && streaming === null && !runningTools && (
@@ -2226,49 +2358,100 @@ export function AIChatPanel({ wsId, root }: Props) {
   );
 }
 
-function ToolCallSummary({ calls }: { calls: ToolCall[] }) {
-  const [expanded, setExpanded] = useState(false);
-  // Group by tool name and count.
-  const counts = new Map<string, number>();
-  for (const c of calls) {
-    counts.set(c.function.name, (counts.get(c.function.name) ?? 0) + 1);
+const TOOL_LABELS: Record<string, string> = {
+  read_file: "Read",
+  read: "Read",
+  write_file: "Write",
+  write: "Write",
+  edit_file: "Edit",
+  edit: "Edit",
+  create_file: "Create",
+  list_directory: "List",
+  list_dir: "List",
+  ls: "List",
+  glob: "Glob",
+  grep: "Grep",
+  search: "Search",
+  bash: "Bash",
+  shell: "Bash",
+  run_command: "Bash",
+  run: "Bash",
+  web_fetch: "Web Fetch",
+  fetch: "Web Fetch",
+  web_search: "Web Search",
+  search_web: "Web Search",
+};
+
+function friendlyToolName(name: string): string {
+  if (TOOL_LABELS[name]) return TOOL_LABELS[name];
+  return name
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function primaryToolDetail(args: Record<string, unknown>): string {
+  for (const k of [
+    "path",
+    "file_path",
+    "url",
+    "pattern",
+    "query",
+    "command",
+    "name",
+  ]) {
+    const v = args[k];
+    if (typeof v === "string" && v.length > 0) {
+      return v.length > 200 ? v.slice(0, 200) + "…" : v;
+    }
   }
-  const summary = Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, n]) => (n === 1 ? name : `${name} ×${n}`))
-    .join(", ");
+  return "";
+}
+
+function resultPreview(result: string): string {
+  const trimmed = result.trim();
+  if (!trimmed) return "(empty)";
+  const firstLine = trimmed.split("\n")[0];
+  return firstLine.length > 200 ? firstLine.slice(0, 200) + "…" : firstLine;
+}
+
+function ToolCallRow({
+  call,
+  result,
+}: {
+  call: ToolCall;
+  result: string | undefined;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const label = friendlyToolName(call.function.name);
+  const detail = primaryToolDetail(call.function.arguments);
+  const hasResult = typeof result === "string";
   return (
-    <div className="ai-tool-summary-wrap">
-      <button
-        className="ai-tool-summary-btn"
-        onClick={() => setExpanded((v) => !v)}
-        title={expanded ? "Hide details" : "Show all tool calls"}
-      >
-        <span className="ai-tool-summary-icon">{expanded ? "▾" : "▸"}</span>
-        <span className="ai-tool-summary-text">
-          🔧 Used {calls.length} tool{calls.length === 1 ? "" : "s"} —{" "}
-          <span className="ai-tool-summary-detail">{summary}</span>
-        </span>
-      </button>
-      {expanded && (
-        <div className="ai-tool-summary-list">
-          {calls.map((c, j) => {
-            const argsStr = Object.entries(c.function.arguments)
-              .map(
-                ([k, v]) =>
-                  `${k}=${typeof v === "string" ? JSON.stringify(v.length > 80 ? v.slice(0, 80) + "…" : v) : JSON.stringify(v)}`,
-              )
-              .join(", ");
-            return (
-              <div key={j} className="ai-tool-summary-item">
-                <code className="ai-tool-summary-name">{c.function.name}</code>
-                {argsStr && (
-                  <span className="ai-tool-summary-args">{argsStr}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
+    <div className="ai-tcall">
+      <div className="ai-tcall-head">
+        <span className="ai-tcall-dot" />
+        <span className="ai-tcall-name">{label}</span>
+        {detail && <span className="ai-tcall-detail">{detail}</span>}
+        {!hasResult && (
+          <span className="ai-tcall-pending">
+            <span className="ai-spinner" />
+          </span>
+        )}
+      </div>
+      {hasResult && (
+        <button
+          type="button"
+          className={`ai-tcall-result${expanded ? " expanded" : ""}`}
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? "Hide result" : "Click to expand"}
+        >
+          {expanded ? (
+            <pre className="ai-tcall-result-body">{result}</pre>
+          ) : (
+            <span className="ai-tcall-result-preview">
+              {resultPreview(result!)}
+            </span>
+          )}
+        </button>
       )}
     </div>
   );

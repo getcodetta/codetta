@@ -5,7 +5,9 @@ import { TerminalCore } from "./TerminalCore";
 import { PaneNode } from "./PaneNode";
 import { SidebarStack } from "./SidebarStack";
 import { AIChatPanel } from "./AIChatPanel";
+import { AIIcon } from "./AIIcon";
 import {
+  aiKey,
   findTabsPaneByTab,
   termKey,
   useStore,
@@ -13,6 +15,7 @@ import {
   type TerminalLocation,
 } from "../store";
 import { pty, type ShellOption } from "../ipc";
+import { redockTerminal } from "../terminalPopout";
 
 interface Props {
   wsId: string;
@@ -159,7 +162,9 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
             style={{ width: layout.aiPanelW }}
           >
             <div className="ai-side-panel-header">
-              <span className="ai-side-panel-title">🤖 AI Chat</span>
+              <span className="ai-side-panel-title">
+                <AIIcon size={14} /> AI Chat
+              </span>
               <button
                 className="ai-side-panel-close"
                 onClick={() => setAIPanelVisible(wsId, false)}
@@ -182,6 +187,15 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
             pane={layout.editorRoot}
             registerContainer={registerContainer}
             rootPaneId={layout.editorRoot.id}
+            rightSlotForRoot={
+              <button
+                className="tab-add tab-add-ai"
+                title="New AI chat tab — drag the tab edge to split"
+                onClick={() => useStore.getState().addAIChat(wsId, "editor")}
+              >
+                <AIIcon size={12} /> New AI
+              </button>
+            }
           />
         </div>
         {layout.bottomVisible && layout.bottomRoot && (
@@ -224,6 +238,15 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
                       }
                     >
                       + Term ▾
+                    </button>
+                    <button
+                      className="tab-add tab-add-ai"
+                      title="New AI chat tab"
+                      onClick={() =>
+                        useStore.getState().addAIChat(wsId, "bottom")
+                      }
+                    >
+                      <AIIcon size={12} /> New AI
                     </button>
                     <button
                       className="tab-add"
@@ -296,6 +319,37 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
         return <>{overlays}</>;
       })()}
 
+      {/* AI chats: one AIChatHost per descriptor. Internally portals an
+          AIChatPanel into the pane container that currently owns the
+          tab. Because the React component itself stays mounted across
+          container changes, in-flight streams + chat state survive a
+          tab being dragged from one pane to another. */}
+      {Object.values(ws.aiChats).map((chat) => {
+        const tabKeyStr = aiKey(chat.id);
+        const editorPane = findTabsPaneByTab(layout.editorRoot, tabKeyStr);
+        const bottomPane = layout.bottomRoot
+          ? findTabsPaneByTab(layout.bottomRoot, tabKeyStr)
+          : null;
+        const pane = editorPane ?? bottomPane;
+        const inBottom = !editorPane && !!bottomPane;
+        const container = pane ? (paneContainers[pane.id] ?? null) : null;
+        const visible =
+          isActive &&
+          !!pane &&
+          pane.active === tabKeyStr &&
+          (inBottom ? layout.bottomVisible : true);
+        return (
+          <AIChatHost
+            key={chat.id}
+            wsId={wsId}
+            root={ws.meta.root}
+            chatId={chat.id}
+            container={container}
+            visible={visible}
+          />
+        );
+      })}
+
       {/* Terminals: one TerminalCore per terminal, portal-ed to its current pane's container. */}
       {Object.values(ws.terminals).map((t) => {
         const tabKeyStr = termKey(t.id);
@@ -311,6 +365,23 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
           !!pane &&
           pane.active === tabKeyStr &&
           (inBottom ? layout.bottomVisible : true);
+        // While popped out, hide the in-window xterm and render a placeholder
+        // in its slot. The popout window owns the only live xterm bound to
+        // this PTY; on re-dock the terminal is re-mounted and replays the
+        // backend's scrollback.
+        if (t.popped) {
+          return (
+            <PoppedPlaceholder
+              key={t.id}
+              container={container}
+              visible={visible}
+              title={t.title}
+              onRedock={() => {
+                void redockTerminal(t.id);
+              }}
+            />
+          );
+        }
         return (
           <TerminalCore
             key={t.id}
@@ -331,3 +402,67 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
     </div>
   );
 }
+
+interface AIChatHostProps {
+  wsId: string;
+  root: string;
+  chatId: string;
+  container: HTMLElement | null;
+  visible: boolean;
+}
+
+function AIChatHost({
+  wsId,
+  root,
+  chatId,
+  container,
+  visible,
+}: AIChatHostProps) {
+  if (!container) return null;
+  return createPortal(
+    <div
+      className="ai-tab-host"
+      style={{ display: visible ? "flex" : "none" }}
+    >
+      <AIChatPanel wsId={wsId} root={root} aiChatId={chatId} />
+    </div>,
+    container,
+  );
+}
+
+interface PoppedPlaceholderProps {
+  container: HTMLElement | null;
+  visible: boolean;
+  title: string;
+  onRedock: () => void;
+}
+
+function PoppedPlaceholder({
+  container,
+  visible,
+  title,
+  onRedock,
+}: PoppedPlaceholderProps) {
+  if (!container) return null;
+  return createPortal(
+    <div
+      className="popped-placeholder"
+      style={{ display: visible ? "flex" : "none" }}
+    >
+      <div className="popped-placeholder-card">
+        <div className="popped-placeholder-icon">⤴</div>
+        <div className="popped-placeholder-title">
+          {title} is in a separate window
+        </div>
+        <div className="popped-placeholder-hint">
+          Closing the pop-out window or clicking re-dock brings it back here.
+        </div>
+        <button className="popped-placeholder-btn" onClick={onRedock}>
+          ↩ Re-dock now
+        </button>
+      </div>
+    </div>,
+    container,
+  );
+}
+

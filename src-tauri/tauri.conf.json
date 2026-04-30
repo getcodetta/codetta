@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Lite Coder Pro",
+  "productName": "Codetta",
   "version": "0.1.0",
-  "identifier": "com.bishal.litecoderpro",
+  "identifier": "dev.getcodetta.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Lite Coder Pro",
+        "title": "Codetta",
         "width": 1280,
         "height": 800,
         "minWidth": 800,
@@ -29,12 +29,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "publisher": "Bishal",
-    "copyright": "Copyright © 2026 Bishal",
+    "publisher": "Codetta",
+    "copyright": "Copyright © 2026 Codetta Maintainers",
     "category": "DeveloperTool",
-    "shortDescription": "Lightweight desktop code editor with multi-workspace, multi-terminal, and integrated git.",
-    "longDescription": "Lite Coder Pro is a Tauri-based desktop code editor: Monaco editor, xterm.js terminals, multi-workspace tabs, file watcher, and integrated source control.",
-    "homepage": "https://github.com/suppledigital/lite-coder-pro",
+    "shortDescription": "A lightweight desktop code editor with first-class AI.",
+    "longDescription": "Codetta is a lightweight desktop code editor built on Tauri. Bring your own AI model — Anthropic Claude, OpenAI, Ollama, or Claude Code — and edit with multi-pane splits, integrated git, multi-terminal support (with pop-out windows), and per-project workspaces.",
+    "homepage": "https://codetta.dev",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -53,7 +53,7 @@
         "languages": ["English"],
         "compression": "lzma",
         "installerIcon": "icons/icon.ico",
-        "startMenuFolder": "Lite Coder Pro"
+        "startMenuFolder": "Codetta"
       }
     }
   }

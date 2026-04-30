@@ -18,6 +18,8 @@ import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { runCommand } from "../actions";
 import { openPalette } from "../paletteBus";
 import { prompt as dialogPrompt } from "../dialog";
+import { popOutTerminal, redockTerminal } from "../terminalPopout";
+import { AIIcon } from "./AIIcon";
 
 function basename(p: string): string {
   const norm = p.replace(/\\/g, "/");
@@ -28,7 +30,13 @@ function basename(p: string): string {
 function tabLabel(
   ws: WorkspaceData,
   key: string,
-): { label: string; dirty: boolean; isTerminal: boolean } {
+): {
+  label: string;
+  dirty: boolean;
+  isTerminal: boolean;
+  isAI: boolean;
+  popped: boolean;
+} {
   const parsed = parseKey(key);
   if (parsed?.kind === "terminal") {
     const t = ws.terminals[parsed.id];
@@ -36,6 +44,18 @@ function tabLabel(
       label: t?.title ?? "Terminal",
       dirty: false,
       isTerminal: true,
+      isAI: false,
+      popped: !!t?.popped,
+    };
+  }
+  if (parsed?.kind === "ai") {
+    const a = ws.aiChats[parsed.id];
+    return {
+      label: a?.title ?? "AI Chat",
+      dirty: false,
+      isTerminal: false,
+      isAI: true,
+      popped: false,
     };
   }
   if (parsed?.kind === "file") {
@@ -44,9 +64,17 @@ function tabLabel(
       label: basename(parsed.path),
       dirty: f ? f.contents !== f.original : false,
       isTerminal: false,
+      isAI: false,
+      popped: false,
     };
   }
-  return { label: key, dirty: false, isTerminal: false };
+  return {
+    label: key,
+    dirty: false,
+    isTerminal: false,
+    isAI: false,
+    popped: false,
+  };
 }
 
 function computeEdgeForPoint(
@@ -282,6 +310,23 @@ function TabsPaneView(
         },
       });
     }
+    if (parsed?.kind === "ai") {
+      const chat = ws.aiChats[parsed.id];
+      out.push("separator");
+      out.push({
+        label: "Rename Chat…",
+        disabled: !chat,
+        onClick: async () => {
+          const next = await dialogPrompt(
+            "New chat name",
+            chat?.title ?? "",
+            { title: "Rename AI chat", okLabel: "Rename" },
+          );
+          if (!next || !next.trim()) return;
+          useStore.getState().setAIChatTitle(wsId, parsed.id, next.trim());
+        },
+      });
+    }
     if (parsed?.kind === "terminal") {
       const term = ws.terminals[parsed.id];
       out.push("separator");
@@ -328,6 +373,24 @@ function TabsPaneView(
           }
         },
       });
+      out.push("separator");
+      if (term?.popped) {
+        out.push({
+          label: "Re-dock Terminal",
+          onClick: () => {
+            void redockTerminal(parsed.id);
+          },
+        });
+      } else {
+        out.push({
+          label: "Pop Out Terminal…",
+          disabled: !term,
+          onClick: () => {
+            if (!term) return;
+            void popOutTerminal(wsId, term, ws.meta.root);
+          },
+        });
+      }
     }
     return out;
   })();
@@ -479,11 +542,28 @@ function TabsPaneView(
               title={parsed?.kind === "file" ? parsed.path : info.label}
             >
               <span className="tab-icon">
-                {isPinned ? "📌" : info.isTerminal ? "›_" : "📄"}
+                {isPinned ? (
+                  "📌"
+                ) : info.isTerminal ? (
+                  "›_"
+                ) : info.isAI ? (
+                  <AIIcon size={12} />
+                ) : (
+                  "📄"
+                )}
               </span>
               <span className="tab-name">
                 {info.label}
                 {info.dirty ? " •" : ""}
+                {info.popped ? (
+                  <span
+                    className="tab-popped-mark"
+                    title="In a separate window"
+                  >
+                    {" "}
+                    ↗
+                  </span>
+                ) : null}
               </span>
               {!isPinned && (
                 <button
@@ -555,6 +635,12 @@ function EmptyPane() {
             title="Ctrl+`"
           >
             <span>›_</span> New terminal
+          </button>
+          <button
+            onClick={() => runCommand("ai.new_chat")}
+            title="Open a new AI chat tab"
+          >
+            <AIIcon size={14} /> New AI chat
           </button>
         </div>
         <ul className="pane-empty-tips">

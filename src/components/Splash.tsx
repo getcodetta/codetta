@@ -9,8 +9,8 @@ export function Splash() {
   return (
     <div className="splash">
       <div className="splash-card">
-        <div className="splash-brand">Lite Coder Pro</div>
-        <div className="splash-tagline">A lightweight desktop code editor</div>
+        <div className="splash-brand">Codetta</div>
+        <div className="splash-tagline">A lightweight desktop code editor with AI</div>
         <div className="splash-progress-track">
           <div
             className="splash-progress-fill"

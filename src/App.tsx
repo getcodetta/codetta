@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { startFsBusOnce } from "./fsBus";
 import { runCommand } from "./actions";
@@ -21,9 +22,20 @@ import { useEditorState } from "./editorState";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Dialog } from "./components/Dialog";
 import { SettingsModal } from "./components/SettingsModal";
+import { TerminalPopoutWindow } from "./components/TerminalPopoutWindow";
 import "./App.css";
 
-function App() {
+// When this document was opened as a terminal pop-out window, render only
+// the popout shell (no workspace, no toolbars, no store hydration).
+const IS_POPOUT = (() => {
+  try {
+    return new URLSearchParams(window.location.search).get("popout") === "1";
+  } catch {
+    return false;
+  }
+})();
+
+function MainApp() {
   const hydrate = useStore((s) => s.hydrate);
   const hydrated = useStore((s) => s.hydrated);
   const openIds = useStore((s) => s.openIds);
@@ -46,12 +58,12 @@ function App() {
   useEffect(() => {
     const ws = activeId ? loaded[activeId]?.meta : null;
     const file = editorState.filePath;
-    let title = "Lite Coder Pro";
+    let title = "Codetta";
     if (ws && file) {
       const base = file.replace(/\\/g, "/").split("/").pop() ?? file;
-      title = `${base} — ${ws.name} — Lite Coder Pro`;
+      title = `${base} — ${ws.name} — Codetta`;
     } else if (ws) {
-      title = `${ws.name} — Lite Coder Pro`;
+      title = `${ws.name} — Codetta`;
     }
     getCurrentWindow()
       .setTitle(title)
@@ -64,6 +76,79 @@ function App() {
       setPaletteOpen(true);
     });
   }, []);
+
+  // Pop-out windows announce a redock request via this event (from the
+  // popout's Re-dock button OR its own onCloseRequested handler). Main is
+  // authoritative: it closes the popout window (popout's self-close is
+  // unreliable in some Tauri 2 situations), then flips the popped flag.
+  // The window's `tauri://destroyed` listener (registered in popOutTerminal)
+  // is the safety net if the close itself races or fails.
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    void listen<{ wsId: string; termId: string }>(
+      "popout:redock",
+      async (e) => {
+        const { wsId, termId } = e.payload;
+        const ws = useStore.getState().loaded[wsId];
+        if (!ws || !ws.terminals[termId]) return;
+        // Force-close the popout from main so we don't depend on the
+        // popout's own close() succeeding.
+        try {
+          const { WebviewWindow } = await import(
+            "@tauri-apps/api/webviewWindow"
+          );
+          const w = await WebviewWindow.getByLabel(`popout-${termId}`);
+          if (w) await w.close();
+        } catch (err) {
+          console.warn("popout close failed", err);
+        }
+        useStore.getState().setTerminalPopped(wsId, termId, false);
+      },
+    ).then((u) => {
+      off = u;
+    });
+    return () => {
+      off?.();
+    };
+  }, []);
+
+  // After a Ctrl+R reload, popout windows from the previous session may
+  // still be alive. Mark their terminals as popped so the main window
+  // doesn't double-mount the xterm against the same PTY.
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { WebviewWindow } = await import(
+          "@tauri-apps/api/webviewWindow"
+        );
+        const all = await WebviewWindow.getAll();
+        if (cancelled) return;
+        const poppedTermIds = new Set<string>();
+        for (const w of all) {
+          const m = w.label.match(/^popout-(.+)$/);
+          if (m) poppedTermIds.add(m[1]);
+        }
+        if (poppedTermIds.size === 0) return;
+        const state = useStore.getState();
+        for (const wsId of state.openIds) {
+          const ws = state.loaded[wsId];
+          if (!ws) continue;
+          for (const termId of Object.keys(ws.terminals)) {
+            if (poppedTermIds.has(termId)) {
+              state.setTerminalPopped(wsId, termId, true);
+            }
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated]);
 
   useEffect(() => {
     for (const id of openIds) {
@@ -277,4 +362,6 @@ function App() {
   );
 }
 
-export default App;
+export default function App() {
+  return IS_POPOUT ? <TerminalPopoutWindow /> : <MainApp />;
+}

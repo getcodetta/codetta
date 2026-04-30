@@ -1,8 +1,39 @@
 {
-  "name": "lite-coder-pro",
-  "private": true,
+  "name": "codetta",
   "version": "0.1.0",
+  "description": "A lightweight desktop code editor with first-class AI. Bring your own model — Anthropic, OpenAI, Ollama, or Claude Code.",
+  "private": false,
   "type": "module",
+  "license": "MIT",
+  "author": "Codetta Maintainers <getcodetta@gmail.com>",
+  "homepage": "https://codetta.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getcodetta/codetta.git"
+  },
+  "bugs": {
+    "url": "https://github.com/getcodetta/codetta/issues"
+  },
+  "keywords": [
+    "editor",
+    "code-editor",
+    "ide",
+    "tauri",
+    "ai",
+    "claude",
+    "anthropic",
+    "openai",
+    "ollama",
+    "desktop"
+  ],
+  "bin": {
+    "codetta": "./bin/cli.js"
+  },
+  "files": [
+    "bin/cli.js",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

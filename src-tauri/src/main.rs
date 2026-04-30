@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    lite_coder_pro_lib::run()
+    codetta_lib::run()
 }

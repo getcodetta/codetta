@@ -9,6 +9,22 @@ import {
 import { confirm as dialogConfirm } from "./dialog";
 import { getEditorSettings } from "./editorSettings";
 
+/**
+ * Close the pop-out window hosting a terminal, if any. Best-effort —
+ * silently swallows the case where no such window exists. Imported lazily
+ * so we don't pull the webviewWindow API into popout windows themselves
+ * (where the store should never run).
+ */
+async function closePopoutWindow(termId: string): Promise<void> {
+  try {
+    const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+    const w = await WebviewWindow.getByLabel(`popout-${termId}`);
+    if (w) await w.close();
+  } catch {
+    /* ignore */
+  }
+}
+
 export type TerminalLocation = "editor" | "bottom";
 
 export interface TerminalShell {
@@ -28,11 +44,32 @@ export interface TerminalDescriptor {
    * running shell across hot-reload / Ctrl+R.
    */
   ptyId?: string;
+  /**
+   * True when this terminal is currently rendered in a separate pop-out
+   * window. Tab stays in main so the user can re-dock; the in-tab area
+   * shows a "Popped out" placeholder. Not persisted — on reload all
+   * popout windows are gone, so popped resets to false naturally.
+   */
+  popped?: boolean;
 }
 
 export interface FileData {
   contents: string;
   original: string;
+}
+
+/**
+ * Descriptor for one AI chat that lives as a moveable tab inside a pane.
+ * Multiple chats can run in parallel — each has its own descriptor (and
+ * its own AIChatPanel instance kept alive via portal).
+ *
+ * `sessionId` is the chat-history id used by the panel to load/save the
+ * conversation transcript from disk. `title` is shown in the tab.
+ */
+export interface AIChatDescriptor {
+  id: string;
+  title: string;
+  sessionId: string;
 }
 
 export type SidebarView = "files" | "git" | "tasks" | "todos" | "ai";
@@ -92,18 +129,22 @@ export interface WorkspaceData {
   layout: WorkspaceLayout;
   files: Record<string, FileData>;
   terminals: Record<string, TerminalDescriptor>;
+  aiChats: Record<string, AIChatDescriptor>;
 }
 
 export const fileKey = (p: string) => "file:" + p;
 export const termKey = (id: string) => "term:" + id;
+export const aiKey = (id: string) => "ai:" + id;
 export function parseKey(
   k: string,
 ):
   | { kind: "file"; path: string }
   | { kind: "terminal"; id: string }
+  | { kind: "ai"; id: string }
   | null {
   if (k.startsWith("file:")) return { kind: "file", path: k.slice(5) };
   if (k.startsWith("term:")) return { kind: "terminal", id: k.slice(5) };
+  if (k.startsWith("ai:")) return { kind: "ai", id: k.slice(3) };
   return null;
 }
 
@@ -424,6 +465,12 @@ interface AppState {
   ): string;
   closeTerminal(wsId: string, id: string): void;
   setTerminalPtyId(wsId: string, termId: string, ptyId: string): void;
+  setTerminalPopped(wsId: string, termId: string, popped: boolean): void;
+
+  addAIChat(wsId: string, location?: TerminalLocation): string;
+  closeAIChat(wsId: string, id: string): void;
+  setAIChatTitle(wsId: string, id: string, title: string): void;
+  setAIChatSession(wsId: string, id: string, sessionId: string): void;
 }
 
 const defaultLayout = (): WorkspaceLayout => {
@@ -460,6 +507,28 @@ function makeWsId(root: string): string {
 
 function makeTermId(): string {
   return "t_" + Math.random().toString(36).slice(2, 10);
+}
+
+function makeAIChatId(): string {
+  return "a_" + Math.random().toString(36).slice(2, 10);
+}
+
+function parseAIChatsRaw(raw: unknown): Record<string, AIChatDescriptor> {
+  const out: Record<string, AIChatDescriptor> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [id, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (!val || typeof val !== "object") continue;
+    const v = val as Record<string, unknown>;
+    if (
+      typeof v.id !== "string" ||
+      typeof v.title !== "string" ||
+      typeof v.sessionId !== "string"
+    ) {
+      continue;
+    }
+    out[id] = { id: v.id, title: v.title, sessionId: v.sessionId };
+  }
+  return out;
 }
 
 function sanitizePane(p: unknown): Pane {
@@ -671,6 +740,15 @@ async function loadWorkspaceFromDisk(
   }
   const layout = normalizeLayout(layoutRaw);
   const allTerminals = parseTerminalsRaw(terminalsRaw);
+  let aiChatsRaw: unknown = null;
+  if (
+    raw &&
+    typeof raw === "object" &&
+    "aiChats" in (raw as Record<string, unknown>)
+  ) {
+    aiChatsRaw = (raw as Record<string, unknown>).aiChats;
+  }
+  const aiChats = parseAIChatsRaw(aiChatsRaw);
 
   // Filter terminals to only those whose PTY is still alive in the backend.
   const liveTerminals: Record<string, TerminalDescriptor> = {};
@@ -713,6 +791,7 @@ async function loadWorkspaceFromDisk(
       const tabs = p.tabs.filter((k) => {
         if (k.startsWith("file:")) return files[k.slice(5)] !== undefined;
         if (k.startsWith("term:")) return liveTerminals[k.slice(5)] !== undefined;
+        if (k.startsWith("ai:")) return aiChats[k.slice(3)] !== undefined;
         return false;
       });
       if (tabs.length === 0) return null;
@@ -741,6 +820,7 @@ async function loadWorkspaceFromDisk(
     },
     files,
     terminals: liveTerminals,
+    aiChats,
   };
 }
 
@@ -759,10 +839,19 @@ export const useStore = create<AppState>((set, get) => {
         persistTimers.delete(id);
         const ws = get().loaded[id];
         if (!ws) return;
+        // Drop the in-memory `popped` flag before persisting — popout
+        // windows are gone after a reload, so the flag would be stale.
+        const persistedTerminals: Record<string, TerminalDescriptor> = {};
+        for (const [tid, t] of Object.entries(ws.terminals)) {
+          const { popped: _drop, ...rest } = t;
+          void _drop;
+          persistedTerminals[tid] = rest;
+        }
         try {
           await wsApi.saveState(id, {
             layout: ws.layout,
-            terminals: ws.terminals,
+            terminals: persistedTerminals,
+            aiChats: ws.aiChats,
           });
         } catch {
           /* ignore — best-effort persistence */
@@ -896,6 +985,7 @@ export const useStore = create<AppState>((set, get) => {
               layout: defaultLayout(),
               files: {},
               terminals: {},
+              aiChats: {},
             },
           };
         }
@@ -927,13 +1017,16 @@ export const useStore = create<AppState>((set, get) => {
           );
           if (!ok) return;
         }
-        // Kill all PTYs we own in this workspace.
+        // Kill all PTYs we own in this workspace, and close any pop-out
+        // windows hosting them. Both are best-effort.
         for (const t of Object.values(ws.terminals)) {
           if (t.ptyId) void ptyApi.kill(t.ptyId).catch(() => {});
+          void closePopoutWindow(t.id).catch(() => {});
         }
         await wsApi.saveState(id, {
           layout: ws.layout,
           terminals: {},
+          aiChats: ws.aiChats,
         });
       }
       const openIds = get().openIds.filter((i) => i !== id);
@@ -1027,6 +1120,10 @@ export const useStore = create<AppState>((set, get) => {
       const parsed = parseKey(key);
       if (parsed?.kind === "terminal") {
         get().closeTerminal(wsId, parsed.id);
+        return;
+      }
+      if (parsed?.kind === "ai") {
+        get().closeAIChat(wsId, parsed.id);
         return;
       }
       if (parsed?.kind === "file") {
@@ -1293,11 +1390,16 @@ export const useStore = create<AppState>((set, get) => {
           sections.push({ view, collapsed: false, size: 1 });
         } else {
           sections.splice(idx, 1);
-          if (sections.length === 0) {
-            sections.push({ view: "files", collapsed: false, size: 1 });
-          }
         }
-        return { ...w, layout: { ...w.layout, sidebarSections: sections } };
+        // No remaining sections → collapse the whole sidebar so the user
+        // gets back the editor real estate. Re-clicking any activity-bar
+        // button will re-show it (see switchView in ActivityBar).
+        const sidebarVisible =
+          sections.length === 0 ? false : w.layout.sidebarVisible;
+        return {
+          ...w,
+          layout: { ...w.layout, sidebarSections: sections, sidebarVisible },
+        };
       }),
 
     removeSidebarSection: (wsId, view) =>
@@ -1305,10 +1407,12 @@ export const useStore = create<AppState>((set, get) => {
         const sections = w.layout.sidebarSections.filter(
           (s) => s.view !== view,
         );
-        if (sections.length === 0) {
-          sections.push({ view: "files", collapsed: false, size: 1 });
-        }
-        return { ...w, layout: { ...w.layout, sidebarSections: sections } };
+        const sidebarVisible =
+          sections.length === 0 ? false : w.layout.sidebarVisible;
+        return {
+          ...w,
+          layout: { ...w.layout, sidebarSections: sections, sidebarVisible },
+        };
       }),
 
     collapseSidebarSection: (wsId, view, collapsed) =>
@@ -1431,12 +1535,26 @@ export const useStore = create<AppState>((set, get) => {
         };
       }),
 
+    setTerminalPopped: (wsId, termId, popped) =>
+      updateWs(wsId, (w) => {
+        const t = w.terminals[termId];
+        if (!t) return w;
+        return {
+          ...w,
+          terminals: { ...w.terminals, [termId]: { ...t, popped } },
+        };
+      }),
+
     closeTerminal: (wsId, id) => {
       const ws = get().loaded[wsId];
       const desc = ws?.terminals[id];
       if (desc?.ptyId) {
         void ptyApi.kill(desc.ptyId).catch(() => {});
       }
+      // If a pop-out window is hosting this terminal, close it too. The PTY
+      // is already being killed above, so the popout's TerminalCore will see
+      // the exit event regardless.
+      void closePopoutWindow(id).catch(() => {});
       updateWs(wsId, (w) => {
         const k = termKey(id);
         const { [id]: _drop, ...restT } = w.terminals;
@@ -1460,5 +1578,111 @@ export const useStore = create<AppState>((set, get) => {
         };
       });
     },
+
+    addAIChat: (wsId, location = "editor") => {
+      const id = makeAIChatId();
+      const k = aiKey(id);
+      const existingCount = Object.keys(
+        get().loaded[wsId]?.aiChats ?? {},
+      ).length;
+      const title = existingCount === 0 ? "AI Chat" : `AI Chat ${existingCount + 1}`;
+      const desc: AIChatDescriptor = {
+        id,
+        title,
+        sessionId: id,
+      };
+      updateWs(wsId, (w) => {
+        const aiChats = { ...w.aiChats, [id]: desc };
+        let editorRoot = w.layout.editorRoot;
+        let bottomRoot = w.layout.bottomRoot;
+        let activePaneId = w.layout.activePaneId;
+        if (location === "bottom") {
+          if (!bottomRoot) {
+            bottomRoot = {
+              kind: "tabs",
+              id: makePaneId(),
+              tabs: [k],
+              active: k,
+            };
+          } else {
+            const leafId = firstLeaf(bottomRoot).id;
+            bottomRoot = mapTree(bottomRoot, (t) =>
+              t.id === leafId
+                ? { ...t, tabs: [...t.tabs, k], active: k }
+                : t,
+            );
+          }
+        } else {
+          const targetPaneId =
+            (activePaneId && isInTree(editorRoot, activePaneId) && activePaneId) ||
+            firstLeaf(editorRoot).id;
+          editorRoot = mapTree(editorRoot, (t) =>
+            t.id === targetPaneId
+              ? { ...t, tabs: [...t.tabs, k], active: k }
+              : t,
+          );
+          activePaneId = targetPaneId;
+        }
+        return {
+          ...w,
+          aiChats,
+          layout: {
+            ...w.layout,
+            editorRoot,
+            bottomRoot,
+            activePaneId,
+            bottomVisible:
+              location === "bottom" ? true : w.layout.bottomVisible,
+          },
+        };
+      });
+      return id;
+    },
+
+    closeAIChat: (wsId, id) => {
+      updateWs(wsId, (w) => {
+        const k = aiKey(id);
+        const { [id]: _drop, ...restAi } = w.aiChats;
+        void _drop;
+        const er = removeTabFromTree(w.layout.editorRoot, k);
+        const editorRoot: Pane = er.tree ?? emptyTabsPane();
+        let bottomRoot = w.layout.bottomRoot;
+        if (bottomRoot) {
+          const br = removeTabFromTree(bottomRoot, k);
+          bottomRoot = pruneEmptyTabsPanes(br.tree);
+        }
+        const activePaneId =
+          w.layout.activePaneId &&
+          (isInTree(editorRoot, w.layout.activePaneId) ||
+            (bottomRoot ? isInTree(bottomRoot, w.layout.activePaneId) : false))
+            ? w.layout.activePaneId
+            : firstLeaf(editorRoot).id;
+        return {
+          ...w,
+          aiChats: restAi,
+          layout: { ...w.layout, editorRoot, bottomRoot, activePaneId },
+        };
+      });
+    },
+
+    setAIChatTitle: (wsId, id, title) =>
+      updateWs(wsId, (w) => {
+        const desc = w.aiChats[id];
+        if (!desc) return w;
+        return {
+          ...w,
+          aiChats: { ...w.aiChats, [id]: { ...desc, title } },
+        };
+      }),
+
+    setAIChatSession: (wsId, id, sessionId) =>
+      updateWs(wsId, (w) => {
+        const desc = w.aiChats[id];
+        if (!desc) return w;
+        return {
+          ...w,
+          aiChats: { ...w.aiChats, [id]: { ...desc, sessionId } },
+        };
+      }),
   };
 });

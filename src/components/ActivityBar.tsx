@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useStore, type SidebarView } from "../store";
+import { AIIcon } from "./AIIcon";
 
 function initials(name: string): string {
   const parts = name.split(/[\s\-_.]+/).filter(Boolean);
@@ -39,10 +40,18 @@ export function ActivityBar() {
 
   const switchView = (v: SidebarView) => {
     if (!activeId) return;
+    // If the sidebar is hidden (e.g. Ctrl+B, or auto-hidden because the
+    // last section was removed), the click should *reveal* the panel, not
+    // toggle the section away. Only add the section if it isn't already
+    // there; if it is, the existing one just becomes visible again.
     if (!sidebarVisible) {
       setSidebarVisible(activeId, true);
+      const present = sections.some((s) => s.view === v);
+      if (!present) toggleSidebarSection(activeId, v);
+      return;
     }
-    // Toggle the section's presence; first click adds, second removes.
+    // Sidebar is visible — standard toggle. Removing the only remaining
+    // section auto-hides the sidebar (handled in the store action).
     toggleSidebarSection(activeId, v);
   };
   // satisfy ts lint (used to be referenced)
@@ -143,7 +152,7 @@ export function ActivityBar() {
           onClick={() => activeId && setAIPanelVisible(activeId, !aiPanelVisible)}
           disabled={!activeId}
         >
-          🤖
+          <AIIcon size={20} />
         </button>
       </div>
 

@@ -1,0 +1,55 @@
+name: Release
+
+# Triggered when you push a tag like v0.1.0, v0.2.0, etc.
+# Produces a draft GitHub Release with Windows installers attached;
+# you review, write release notes, and click Publish.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust target dir
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Codetta ${{ github.ref_name }}"
+          releaseBody: |
+            ### Codetta ${{ github.ref_name }}
+
+            **Windows install** — download the NSIS installer below
+            (`Codetta_<version>_x64-setup.exe`). The portable `codetta.exe`
+            and the MSI are also attached.
+
+            See [README](https://github.com/getcodetta/codetta#install-end-users)
+            for details.
+          releaseDraft: true
+          prerelease: false

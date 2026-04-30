@@ -1173,6 +1173,9 @@ input {
   font-size: 12px;
   font-weight: 600;
   color: var(--fg);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .ai-side-panel-close {
   width: 22px;
@@ -1197,6 +1200,22 @@ input {
   overflow: hidden;
 }
 .ai-side-panel-body > .ai-panel {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+/* Wrapper around an AIChatPanel that's been portaled into a pane tab.
+   Mirrors .ai-side-panel-body so the inner panel fills the available
+   area; uses display:none to hide non-active tabs without unmounting. */
+.ai-tab-host {
+  position: absolute;
+  inset: 0;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.ai-tab-host > .ai-panel {
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -3158,6 +3177,110 @@ input {
   max-height: 240px;
   overflow: auto;
 }
+/* Inline status row that lives in the conversation flow (right after the
+   latest AI message) instead of in a strip below the input. Mirrors how
+   Claude Code shows "Web Fetch …" / "Read …" rows as the AI works. */
+.ai-inline-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 10px;
+  margin: 2px 0 4px;
+  border-left: 2px solid var(--accent);
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.ai-inline-tps {
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  color: var(--accent);
+  margin-left: auto;
+}
+/* Per-tool-call inline rows (Claude Code style). One row per call with a
+   click-to-expand result panel underneath. */
+.ai-tcalls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+}
+.ai-tcall {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ai-tcall-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.ai-tcall-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.ai-tcall-name {
+  font-weight: 600;
+  color: var(--fg);
+  flex-shrink: 0;
+}
+.ai-tcall-detail {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ai-tcall-pending {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+.ai-tcall-result {
+  display: block;
+  width: 100%;
+  margin-left: 14px;
+  padding: 6px 10px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--mono, monospace);
+}
+.ai-tcall-result:hover {
+  background: var(--bg);
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.ai-tcall-result.expanded {
+  cursor: zoom-out;
+}
+.ai-tcall-result-preview {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-tcall-result-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--fg);
+  max-height: 320px;
+  overflow: auto;
+}
 .ai-msg-action-run {
   background: rgba(0, 122, 204, 0.15);
   color: var(--accent);
@@ -3271,6 +3394,7 @@ input {
   padding: 8px 10px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  align-items: flex-end;
 }
 .ai-input {
   flex: 1;
@@ -3278,11 +3402,30 @@ input {
   padding: 6px 8px;
   font-size: 12px;
   font-family: inherit;
+  line-height: 1.45;
+  overflow-y: auto;
+  min-height: 44px;
+  max-height: 160px;
 }
 .ai-input-row button {
   align-self: stretch;
   padding: 0 12px;
   font-size: 12px;
+}
+.ai-send-btn {
+  white-space: nowrap;
+}
+/* Distinct treatment for the Stop button so it's obvious during a long
+   stream (and matches what the placeholder/Esc hint promises). */
+.ai-stop-btn {
+  background: #c43d3d;
+  color: #ffffff;
+  border-color: #c43d3d;
+  font-weight: 600;
+}
+.ai-stop-btn:hover {
+  background: #a83333;
+  border-color: #a83333;
 }
 .ai-progress {
   padding: 6px 10px;
@@ -3436,10 +3579,23 @@ input {
   color: var(--fg-muted);
   font-size: 11px;
   padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .tab-add:hover {
   background: var(--bg-hi);
   color: var(--fg);
+}
+.tab-add-ai {
+  color: var(--accent);
+}
+.tab-add-ai:hover {
+  color: var(--accent-hover);
+}
+.tab-icon svg {
+  vertical-align: middle;
+  display: block;
 }
 
 /* Editor */
@@ -3711,6 +3867,126 @@ input {
   padding: 4px;
   position: absolute;
   inset: 0;
+}
+
+/* Marker shown next to a popped-out terminal's tab name. */
+.tab-popped-mark {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Placeholder rendered in a tab's pane while its terminal is in a
+   separate window. Centered call-to-action with a re-dock button. */
+.popped-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+}
+.popped-placeholder-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 420px;
+  text-align: center;
+  padding: 24px 28px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg);
+}
+.popped-placeholder-icon {
+  font-size: 28px;
+  line-height: 1;
+  color: var(--accent);
+}
+.popped-placeholder-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.popped-placeholder-hint {
+  font-size: 12px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+}
+.popped-placeholder-btn {
+  margin-top: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.popped-placeholder-btn:hover {
+  background: var(--bg-hover, var(--bg-elev));
+  border-color: var(--accent);
+}
+
+/* Pop-out terminal window — minimal chrome above a full-bleed xterm. */
+.popout-shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+}
+.popout-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  height: 30px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.popout-bar-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.popout-bar-spacer {
+  flex: 1;
+}
+.popout-bar-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 3px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.popout-bar-btn:hover {
+  background: var(--bg-hover, var(--bg-elev));
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.popout-term-host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.popout-error {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--fg-muted);
 }
 
 /* Source control panel */
