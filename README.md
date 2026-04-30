@@ -17,7 +17,7 @@ Codetta is a small, fast desktop code editor that doesn't try to be VS Code. It 
 
 **Highlights**
 
-- **BYOK AI panel** — Anthropic Claude (API), OpenAI, local Ollama models, and the Claude Code CLI all in one chat
+- **BYOK AI panel** — Anthropic Claude (API), OpenAI, local Ollama models, and the Claude Code CLI all in one chat. The Claude Code option lets you use your existing **Claude Pro / Max subscription** instead of paying API rates.
 - **Multi-workspace** — open several projects side by side; each has its own isolated, persistent state (open files, terminals, layout)
 - **Multi-terminal with pop-out** — drop terminals into the bottom panel, or pop them out into their own OS window and re-dock when done
 - **Drag-and-drop tab splits** — drag any tab to an edge to split a pane horizontally or vertically
@@ -62,10 +62,12 @@ Open **Settings → AI Providers** and add a key for whichever provider(s) you w
 
 | Provider | What you need | Cost |
 |---|---|---|
-| **Anthropic Claude** | API key from [console.anthropic.com](https://console.anthropic.com/) | Pay-per-token |
+| **Claude Code CLI** ⭐ | Install [Claude Code](https://docs.claude.com/en/docs/claude-code) and `claude login` | **Uses your existing Claude.ai Pro / Max subscription — no extra billing.** Or pay-per-token if you log in with an API key. |
+| **Anthropic Claude (API)** | API key from [console.anthropic.com](https://console.anthropic.com/) | Pay-per-token |
 | **OpenAI** | API key from [platform.openai.com](https://platform.openai.com/api-keys) | Pay-per-token |
 | **Ollama** (local) | [Install Ollama](https://ollama.com/download) and `ollama pull qwen2.5-coder:7b` (or any model) | Free, local |
-| **Claude Code CLI** | Install [Claude Code](https://docs.claude.com/en/docs/claude-code) and `claude login` | Per your Anthropic plan |
+
+> 💡 **Already pay for Claude Pro or Max?** Use the **Claude Code CLI** option instead of the API. After `claude login`, Codetta talks to Claude through the CLI, which runs against your subscription (5-hour usage caps per your plan tier) rather than the metered API. For most coding work this is significantly cheaper than per-token API billing.
 
 You can mix providers freely — switch models from the chat panel's model picker mid-conversation.
 
