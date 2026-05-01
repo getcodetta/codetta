@@ -34,6 +34,14 @@ use uuid::Uuid;
 
 const DEFAULT_PORT: u16 = 14272;
 
+/// How long the HTTP handler waits for the user's decision before
+/// giving up and defaulting to Deny. Kept under Claude Code's own
+/// hook timeout (60s default) so we always respond before the CLI
+/// kills the hook process — otherwise a slow user click would
+/// produce an orphaned card the user clicks Allow on but no agent
+/// is listening anymore.
+const DECISION_TIMEOUT: Duration = Duration::from_secs(50);
+
 /// User decision on a permission request. The HTTP server translates
 /// these to the exit-code semantics Claude Code expects from a hook:
 ///   - Allow → exit 0 (let the tool run)
@@ -54,6 +62,13 @@ type PendingMap = Arc<Mutex<HashMap<String, mpsc::Sender<PermDecision>>>>;
 pub struct PermState {
     pub port: Mutex<Option<u16>>,
     pub pending: PendingMap,
+    /// Per-startup random secret. The hook URL we install in
+    /// settings.local.json includes this as a query param; requests
+    /// without a matching token are rejected. Closes the drive-by
+    /// hole — without it, any local process (or a malicious webpage
+    /// abusing simple-content-type CORS) could spam fake permission
+    /// cards just by knowing the port.
+    pub auth_token: Mutex<Option<String>>,
 }
 
 /// Payload emitted to the frontend when a hook requests permission.
@@ -96,11 +111,27 @@ pub fn start_server(app: AppHandle) -> Result<u16, String> {
             .ok_or_else(|| "no port from bound server".to_string())?;
         *state.port.lock() = Some(actual_port);
 
+        // Mint a per-startup token so only our auto-installed hook
+        // (which knows the token because we build the URL ourselves)
+        // can submit permission requests. UUID is fine for this —
+        // we just need 128 bits of unguessability, not crypto.
+        let token = Uuid::new_v4().to_string();
+        *state.auth_token.lock() = Some(token.clone());
+
         let pending = Arc::clone(&state.pending);
         let app_handle = app.clone();
+        // Spawn one thread per request so a slow user decision (up
+        // to DECISION_TIMEOUT) doesn't block other parallel tool
+        // calls. handle_request mostly just blocks on a channel,
+        // so threads are cheap.
         thread::spawn(move || {
             for request in server.incoming_requests() {
-                handle_request(request, &app_handle, &pending);
+                let app_h = app_handle.clone();
+                let pending_h = Arc::clone(&pending);
+                let token_h = token.clone();
+                thread::spawn(move || {
+                    handle_request(request, &app_h, &pending_h, &token_h);
+                });
             }
         });
         Ok(actual_port)
@@ -113,9 +144,20 @@ fn handle_request(
     mut request: tiny_http::Request,
     app: &AppHandle,
     pending: &PendingMap,
+    expected_token: &str,
 ) {
     if request.method() != &Method::Post {
         let _ = request.respond(Response::from_string("expected POST").with_status_code(405));
+        return;
+    }
+    // Reject anything that doesn't carry our per-startup token.
+    // Token is in the URL query (matches the hook URL we generate
+    // in claude_code.rs::build_hook_command).
+    let url = request.url().to_string();
+    if !url_has_token(&url, expected_token) {
+        let _ = request.respond(
+            Response::from_string("forbidden").with_status_code(403),
+        );
         return;
     }
 
@@ -179,12 +221,21 @@ fn handle_request(
     };
     let _ = app.emit("claude:permission-request", &req_for_frontend);
 
-    // Block waiting for the user's decision. Long timeout — Claude
-    // Code's hook also has a default timeout (60s); we go a bit higher
-    // because the user might be away from keyboard.
-    let decision = rx
-        .recv_timeout(Duration::from_secs(300))
-        .unwrap_or(PermDecision::Deny);
+    // Block waiting for the user's decision. Capped at
+    // DECISION_TIMEOUT (50s) so we always respond before Claude
+    // Code's 60s hook timeout kills the curl process; otherwise a
+    // late user click would land on a card whose request is gone.
+    let recv_result = rx.recv_timeout(DECISION_TIMEOUT);
+    let decision = match recv_result {
+        Ok(d) => d,
+        Err(_) => {
+            // Timed out — the hook process is about to die (or has).
+            // Tell the frontend to drop this card so the user doesn't
+            // see a ghost waiting for their click.
+            let _ = app.emit("claude:permission-cancelled", &request_id);
+            PermDecision::Deny
+        }
+    };
 
     // Clean up the pending entry.
     pending.lock().remove(&request_id);
@@ -228,11 +279,41 @@ pub fn claude_perm_decide(
     }
 }
 
-/// Returns the URL the hook command should POST to. None if the
-/// server hasn't started yet (shouldn't happen in normal use — we
-/// start the server during app launch).
+/// Returns the URL the hook command should POST to (including the
+/// per-startup auth token in the query string). None if the server
+/// hasn't started yet (shouldn't happen in normal use — we start the
+/// server during app launch).
 #[tauri::command]
 pub fn claude_perm_endpoint(state: tauri::State<'_, PermState>) -> Option<String> {
     let port = *state.port.lock();
-    port.map(|p| format!("http://127.0.0.1:{}/permission", p))
+    let token = state.auth_token.lock().clone();
+    match (port, token) {
+        (Some(p), Some(t)) => {
+            Some(format!("http://127.0.0.1:{}/permission?token={}", p, t))
+        }
+        _ => None,
+    }
+}
+
+/// Constant-time-ish check for the per-startup auth token in the
+/// URL query. Tiny_http gives us the raw URL string; we just look
+/// for "token=<expected>" so we don't pull in a URL parser dep.
+fn url_has_token(url: &str, expected: &str) -> bool {
+    let q = match url.find('?') {
+        Some(i) => &url[i + 1..],
+        None => return false,
+    };
+    for pair in q.split('&') {
+        if let Some(rest) = pair.strip_prefix("token=") {
+            // length-equality check first to avoid early-exit timing
+            // skew. Not strictly constant-time; tiny_http's tolerance
+            // makes a precise CT comparison overkill here.
+            if rest.len() == expected.len()
+                && rest.bytes().zip(expected.bytes()).all(|(a, b)| a == b)
+            {
+                return true;
+            }
+        }
+    }
+    false
 }

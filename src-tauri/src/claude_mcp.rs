@@ -28,6 +28,30 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Write a JSON file atomically — write to a sibling .tmp file
+/// first, then rename over the target. This prevents a crash or
+/// power loss mid-write from leaving `~/.claude.json` truncated
+/// (Claude Code reads it at every invocation; a corrupt one
+/// breaks the user's entire CLI workflow until they hand-edit it).
+fn write_json_atomic(target: &Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    // Use a deterministic suffix on the same path so rename is on
+    // the same volume (atomicity guarantee). The .codetta-tmp
+    // suffix makes orphaned tmps after a crash easy to identify.
+    let mut tmp = target.as_os_str().to_owned();
+    tmp.push(".codetta-tmp");
+    let tmp = PathBuf::from(tmp);
+    fs::write(&tmp, contents).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, target).map_err(|e| {
+        // Best-effort cleanup of the tmp file on rename failure so
+        // we don't leave clutter behind.
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct McpServer {
     pub name: String,
@@ -159,13 +183,27 @@ pub fn claude_mcp_remove(
         return Ok(());
     }
     let s = fs::read_to_string(&target).map_err(|e| e.to_string())?;
-    let mut v: serde_json::Value =
-        serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!({}));
+    // Reject malformed JSON instead of silently overwriting the
+    // user's settings file with an empty object — which would lose
+    // every MCP / setting / hook they have configured.
+    let mut v: serde_json::Value = serde_json::from_str(&s).map_err(|e| {
+        format!(
+            "{} is not valid JSON ({}). Refusing to overwrite — fix the file first.",
+            target.display(),
+            e
+        )
+    })?;
+    if !v.is_object() {
+        return Err(format!(
+            "{} root is not a JSON object. Refusing to overwrite.",
+            target.display()
+        ));
+    }
     if let Some(obj) = v.get_mut("mcpServers").and_then(|x| x.as_object_mut()) {
         obj.remove(&name);
     }
     let pretty = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    fs::write(&target, pretty).map_err(|e| e.to_string())?;
+    write_json_atomic(&target, &pretty)?;
     Ok(())
 }
 
@@ -181,12 +219,24 @@ fn write_server(
     }
     let mut v: serde_json::Value = if target.exists() {
         let s = fs::read_to_string(target).map_err(|e| e.to_string())?;
-        serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!({}))
+        // Same defensive parse as the remove path — refuse to
+        // proceed if the existing file is malformed, rather than
+        // silently overwriting the user's settings with `{}`.
+        serde_json::from_str::<serde_json::Value>(&s).map_err(|e| {
+            format!(
+                "{} is not valid JSON ({}). Refusing to overwrite — fix the file first.",
+                target.display(),
+                e
+            )
+        })?
     } else {
         serde_json::json!({})
     };
     if !v.is_object() {
-        v = serde_json::json!({});
+        return Err(format!(
+            "{} root is not a JSON object. Refusing to overwrite.",
+            target.display()
+        ));
     }
     let root = v.as_object_mut().unwrap();
     let servers = root
@@ -205,6 +255,6 @@ fn write_server(
         .unwrap()
         .insert(name.to_string(), entry);
     let pretty = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    fs::write(target, pretty).map_err(|e| e.to_string())?;
+    write_json_atomic(target, &pretty)?;
     Ok(())
 }

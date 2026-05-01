@@ -258,7 +258,17 @@ fn ensure_pretooluse_hook(workspace: &str, endpoint: &str) -> Result<(), String>
     arr.push(our_entry);
 
     let pretty = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-    fs::write(&settings_path, pretty).map_err(|e| e.to_string())?;
+    // Atomic write so a crash mid-write can't truncate the file
+    // and silently disable the permission flow (or any other hooks
+    // the user had configured manually).
+    let mut tmp = settings_path.as_os_str().to_owned();
+    tmp.push(".codetta-tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    fs::write(&tmp, &pretty).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &settings_path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })?;
     Ok(())
 }
 
@@ -266,11 +276,16 @@ fn ensure_pretooluse_hook(workspace: &str, endpoint: &str) -> Result<(), String>
 /// (which Claude Code requires anyway, so it's guaranteed available)
 /// to read the JSON payload from stdin, POST it to our endpoint, read
 /// back the decision body, and exit with that code.
+///
+/// Note: `path` MUST be `pathname + search` because our endpoint URL
+/// includes a `?token=<secret>` query string that the server uses to
+/// reject drive-by requests. Using `pathname` alone strips the token
+/// and the server returns 403.
 fn build_hook_command(endpoint: &str) -> String {
     // Node one-liner. Single-quoted in JSON to keep escapes manageable.
     // Logic: pipe stdin → POST endpoint → exit with response body as int.
     let js = format!(
-        r#"const http=require('http');let b='';process.stdin.on('data',c=>b+=c).on('end',()=>{{const u=new URL('{endpoint}');const r=http.request({{hostname:u.hostname,port:u.port,path:u.pathname,method:'POST',headers:{{'content-length':Buffer.byteLength(b)}}}},res=>{{let d='';res.on('data',c=>d+=c).on('end',()=>process.exit(parseInt(String(d).trim(),10)||0))}});r.on('error',()=>process.exit(0));r.write(b);r.end()}});"#,
+        r#"const http=require('http');let b='';process.stdin.on('data',c=>b+=c).on('end',()=>{{const u=new URL('{endpoint}');const r=http.request({{hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{{'content-length':Buffer.byteLength(b)}}}},res=>{{let d='';res.on('data',c=>d+=c).on('end',()=>process.exit(parseInt(String(d).trim(),10)||0))}});r.on('error',()=>process.exit(0));r.write(b);r.end()}});"#,
         endpoint = endpoint
     );
     format!("node -e \"{}\"", js.replace('"', "\\\""))
@@ -349,7 +364,18 @@ pub fn claude_code_chat(
         .try_state::<crate::claude_perm::PermState>()
         .and_then(|s| {
             let port = *s.port.lock();
-            port.map(|p| format!("http://127.0.0.1:{}/permission", p))
+            let token = s.auth_token.lock().clone();
+            match (port, token) {
+                // Hook URL bakes in the per-startup auth token so a
+                // drive-by request from another local process (or a
+                // CORS-permissive simple POST from a malicious page)
+                // can't trigger fake permission cards.
+                (Some(p), Some(t)) => Some(format!(
+                    "http://127.0.0.1:{}/permission?token={}",
+                    p, t
+                )),
+                _ => None,
+            }
         });
     let use_hooks = if let (Some(endpoint), Some(workspace_cwd)) =
         (perm_endpoint.as_ref(), cwd.as_deref())
@@ -491,10 +517,7 @@ pub fn claude_code_chat(
         loop {
             thread::sleep(Duration::from_secs(5));
             // Poll: is the child still alive?
-            let still_running = match child_for_watchdog.lock().try_wait() {
-                Ok(None) => true,
-                _ => false,
-            };
+            let still_running = matches!(child_for_watchdog.lock().try_wait(), Ok(None));
             if !still_running {
                 return;
             }
@@ -683,7 +706,8 @@ pub fn claude_code_list_sessions(cwd: String) -> Result<Vec<ClaudeSession>, Stri
             last_turn_at_ms,
         });
     }
-    sessions.sort_by(|a, b| b.last_turn_at_ms.cmp(&a.last_turn_at_ms));
+    // Newest first.
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.last_turn_at_ms));
     Ok(sessions)
 }
 
@@ -704,6 +728,13 @@ pub struct LoadedMessage {
 
 #[derive(serde::Serialize, Clone)]
 pub struct LoadedToolCall {
+    /// Skip-if-none so the JSON omits the field entirely when there's
+    /// no id, matching TypeScript's `id?: string` (undefined) rather
+    /// than serializing as `null`. The chat UI uses `Map.get(c.id)`
+    /// to pair calls with their results; `Map.get(null)` returns
+    /// undefined and silently drops the pairing — looks like a UI
+    /// bug in the rare case Claude Code omits the id.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub function: LoadedToolFunction,
 }

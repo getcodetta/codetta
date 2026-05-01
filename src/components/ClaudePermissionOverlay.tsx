@@ -92,7 +92,8 @@ export function ClaudePermissionOverlay() {
   void allowRef;
 
   useEffect(() => {
-    let off: (() => void) | undefined;
+    let offReq: (() => void) | undefined;
+    let offCancel: (() => void) | undefined;
     void listen<PermissionRequest>("claude:permission-request", (e) => {
       // Re-read from localStorage on each event so updates from
       // "Allow always" propagate without reloading the listener.
@@ -106,9 +107,21 @@ export function ClaudePermissionOverlay() {
       }
       setQueue((q) => [...q, e.payload]);
     }).then((u) => {
-      off = u;
+      offReq = u;
     });
-    return () => off?.();
+    // Server emits this when the hook timed out before the user
+    // clicked. Drop the orphaned card so the user isn't acting on
+    // a request the agent has already given up on.
+    void listen<string>("claude:permission-cancelled", (e) => {
+      const requestId = e.payload;
+      setQueue((q) => q.filter((r) => r.request_id !== requestId));
+    }).then((u) => {
+      offCancel = u;
+    });
+    return () => {
+      offReq?.();
+      offCancel?.();
+    };
   }, []);
   void autoResolveOrEnqueue;
 

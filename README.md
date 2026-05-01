@@ -20,13 +20,32 @@ Codetta is a small, fast desktop code editor that doesn't try to be VS Code. It 
 
 **Highlights**
 
-- **BYOK AI panel** — Anthropic Claude (API), OpenAI, local Ollama models, and the Claude Code CLI all in one chat. The Claude Code option lets you use your existing **Claude Pro / Max subscription** instead of paying API rates.
-- **Multi-workspace** — open several projects side by side; each has its own isolated, persistent state (open files, terminals, layout)
-- **Multi-terminal with pop-out** — drop terminals into the bottom panel, or pop them out into their own OS window and re-dock when done
-- **Drag-and-drop tab splits** — drag any tab to an edge to split a pane horizontally or vertically
-- **Integrated git** — branch picker, source-control panel, line-level gutter markers, diff viewer
-- **Monaco editor** under the hood — same engine as VS Code, with syntax highlighting, IntelliSense (LSP-free), find/replace, formatting
-- **Native Windows installer** (NSIS / MSI) — no Electron, no Node runtime required to run
+- **Best-in-class Claude Code integration** — uses your existing Claude Pro / Max subscription via the CLI. GUI permission cards (no more `--dangerously-skip-permissions`), session resume that hydrates the full prior transcript, branch from any past turn, MCP server browser, live spend tracking. See [What's new in v0.2.0](#whats-new-in-v020).
+- **BYOK AI panel** — Claude Code, Anthropic API, OpenAI, and local Ollama all in one chat. Switch models mid-conversation.
+- **Multi-workspace** — open several projects side by side; each has its own isolated, persistent state (open files, terminals, layout, AI chat history).
+- **Multi-terminal with pop-out** — drop terminals into the bottom panel, or pop them out into their own OS window and re-dock when done. PTY survives the move.
+- **Drag-and-drop tab splits** — drop any tab onto an edge to split a pane horizontally or vertically.
+- **Integrated git** — branch picker, source-control panel, line-level gutter markers, diff viewer.
+- **Monaco editor** under the hood — same engine as VS Code, with syntax highlighting, find/replace, formatting.
+- **~30 MB native** — Tauri 2 + Rust backend, no Electron, no Node runtime required to run.
+- **No telemetry** — zero phone-home. Your code, your keys, your machine.
+
+---
+
+## What's new in v0.2.0
+
+The Claude Code integration overhaul. Full notes in [CHANGELOG.md](CHANGELOG.md):
+
+- **GUI permission cards** replace `--dangerously-skip-permissions` — every Edit / Write / Bash / MultiEdit / NotebookEdit shows a real Allow / Allow always / Deny modal with tool-specific previews (literal command for Bash, unified diff for Edit, full content for Write). No more reaching for the unsafe bypass flag.
+- **Session continuity** — multi-turn chats actually remember context. Codetta captures Claude Code's `session_id` and passes `--resume` on every follow-up turn, slashing per-turn cost and preserving the server-side prompt cache.
+- **Session picker + transcript hydration** — browse past sessions for the workspace, click to restore the full conversation (not just an empty pane).
+- **Branch from any past turn** into a new chat tab without disturbing the current one.
+- **Timeline scrubber** — slider over past turns. The "no wrapper has this" feature.
+- **Tool result rendering + inline diff card** — see what Claude actually read / ran, with `±` line stats and an expandable unified diff for every Edit.
+- **TodoWrite checklist** sticky above the chat with live pulse on the in-progress item.
+- **Spend dashboard** — per-chat cumulative cost + budget threshold + warning toast.
+- **MCP server browser** — one-click installs for popular MCPs (filesystem, git, github, fetch, puppeteer, sqlite, postgres) per user or project scope.
+- **Stream hardening** — fixes the documented [#1920 hang](https://github.com/anthropics/claude-code/issues/1920) and large-tool-result truncation.
 
 ---
 
@@ -53,9 +72,18 @@ After install, launch **Codetta** from the Start Menu. The first run prompts you
 | Workspace state | `%AppData%\codetta\` |
 | Uninstall | Settings → Apps → Codetta |
 
-### macOS / Linux
+### macOS
 
-Coming soon. The codebase is Tauri 2 and already cross-platform — only the bundling/release pipeline is Windows-first today. Contributions welcome.
+Download `Codetta_<version>_universal.dmg` from the [latest release](https://github.com/getcodetta/codetta/releases/latest) — universal binary covers both Apple Silicon and Intel.
+
+> First-launch only — Gatekeeper will warn because the binary isn't notarized yet (notarization is on the roadmap). Either right-click the app → Open → Open to bypass once, or run `xattr -cr /Applications/Codetta.app` after first install.
+
+### Linux
+
+| File | Use this if… |
+|---|---|
+| `codetta_<version>_amd64.AppImage` | **Recommended** — portable, runs on most distros. `chmod +x` then double-click. |
+| `codetta_<version>_amd64.deb` | Debian / Ubuntu. `sudo apt install ./codetta_<version>_amd64.deb` |
 
 ---
 

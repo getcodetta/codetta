@@ -1574,12 +1574,16 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // No assistant turn after — the new chat is queued at the user's
     // message ready for them to send.
     const prefix = messages.slice(0, index + 1);
-    // Persist the prefix as a NEW chat session in localStorage and
-    // open a new tab pointing at it. Original chat is untouched.
+    // Open a new tab — addAIChat auto-assigns desc.sessionId = chat
+    // id. Save the branched session under THAT same id so the new
+    // panel's mount effect finds it on first load. Using a fresh
+    // newSessionId() and re-binding via setAIChatSession would race
+    // the panel mount: the load effect only re-runs on aiChatId
+    // change, so it'd pick up the old (auto-assigned) id and find
+    // nothing. The new tab would then open empty.
     const newChatId = useStore.getState().addAIChat(wsId, "editor");
-    const newSid = newSessionId();
     const branchedSession: ChatSession = {
-      id: newSid,
+      id: newChatId,
       title: deriveTitle(prefix) + " (branch)",
       messages: prefix,
       model: selected,
@@ -1588,7 +1592,6 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       // we want a fresh Claude Code session not a resumed one.
     };
     saveSession(wsId, branchedSession);
-    useStore.getState().setAIChatSession(wsId, newChatId, newSid);
     toastInfo(
       "Branched into a new chat tab — the original is untouched",
     );
@@ -1777,38 +1780,26 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     setBrowserOpen(true);
   };
 
+  const providerMeta: Record<string, { label: string; color: string }> = {
+    ollama: { label: "ollama", color: "#4ade80" },
+    "claude-code": { label: "claude code", color: "#b18cf0" },
+    openai: { label: "openai", color: "#10a37f" },
+    anthropic: { label: "anthropic", color: "#d97757" },
+  };
+
   const renderHeader = () => {
     const parsed = parseQualifiedModel(selected);
-    const currentModel = allModels.find(
-      (m) =>
-        parsed &&
-        m.providerId === parsed.providerId &&
-        m.modelId === parsed.modelId,
-    );
-    const providerLabel: Record<string, string> = {
-      ollama: "Ollama",
-      "claude-code": "Claude Code",
-      openai: "OpenAI",
-      anthropic: "Anthropic",
-    };
-    const providerName = parsed
-      ? (providerLabel[parsed.providerId] ?? parsed.providerId)
-      : "";
-    const modelLabel = parsed
-      ? `${providerName} · ${parsed.modelId}`
-      : "Pick a model…";
     return (
       <div className="ai-header">
         <button
-          className="ai-model-btn"
-          onClick={() => setBrowserOpen(true)}
-          title={
-            currentModel ? currentModel.displayName : "Open model browser"
-          }
+          className="ai-header-primary"
+          onClick={startNewChat}
+          title="New chat (current is saved to history)"
+          disabled={streaming !== null || runningTools}
         >
-          <span className="ai-model-btn-label">{modelLabel}</span>
-          <span className="ai-model-btn-caret">▾</span>
+          ✚ New chat
         </button>
+        <div className="ai-header-spacer" />
         {parsed?.providerId === "claude-code" && (
           <ClaudeSessionsButton
             cwd={root}
@@ -1843,14 +1834,6 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             }}
           />
         )}
-        <button
-          className="ai-header-primary"
-          onClick={startNewChat}
-          title="New chat (current is saved to history)"
-          disabled={streaming !== null || runningTools}
-        >
-          ✚ New
-        </button>
         <HeaderMenu
           historyCount={sessions.length}
           onHistory={() => setHistoryOpen((v) => !v)}
@@ -1860,6 +1843,52 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           onBrowseModels={() => pullModel()}
         />
       </div>
+    );
+  };
+
+  const renderModelChip = () => {
+    const parsed = parseQualifiedModel(selected);
+    const currentModel = allModels.find(
+      (m) =>
+        parsed &&
+        m.providerId === parsed.providerId &&
+        m.modelId === parsed.modelId,
+    );
+    const meta = parsed
+      ? (providerMeta[parsed.providerId] ?? {
+          label: parsed.providerId,
+          color: "#888",
+        })
+      : null;
+    return (
+      <button
+        className="ai-model-chip"
+        onClick={() => setBrowserOpen(true)}
+        title={
+          currentModel
+            ? `${currentModel.displayName} — click to switch`
+            : "Open model browser"
+        }
+      >
+        {meta && parsed ? (
+          <>
+            <span className="ai-model-chip-label">Model</span>
+            <span
+              className="ai-model-dot"
+              style={{ background: meta.color }}
+              aria-hidden="true"
+            />
+            <span className="ai-model-id">{parsed.modelId}</span>
+            <span className="ai-model-provider">{meta.label}</span>
+          </>
+        ) : (
+          <>
+            <span className="ai-model-chip-label">Model</span>
+            <span className="ai-model-btn-empty">Pick a model…</span>
+          </>
+        )}
+        <span className="ai-model-btn-caret">▾</span>
+      </button>
     );
   };
 
@@ -2090,25 +2119,58 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       <div className="ai-messages" ref={scrollRef}>
         {display.length === 0 && (
           <>
-            <div className="ai-hint">
-              Ask anything about the active file. The current file's
-              contents are sent as context.
+            <div className="ai-welcome">
+              <div className="ai-welcome-title">What's on your mind?</div>
+              <div className="ai-welcome-sub">
+                Ask anything about the active file — its contents are sent
+                as context. Or pick a starter:
+              </div>
             </div>
             <div className="ai-quick-prompts">
               {[
-                { label: "Explain this code", prompt: "Explain what this file does, in simple terms." },
-                { label: "Find bugs", prompt: "Are there bugs or logic errors in this file? Be specific." },
-                { label: "Suggest refactor", prompt: "Suggest a refactor that would improve readability or correctness. Show the proposed change." },
-                { label: "Write tests", prompt: "Suggest unit tests for the functions in this file." },
-                { label: "Add types", prompt: "Suggest type annotations or improvements to existing types." },
-                { label: "Summarize", prompt: "Summarize the key responsibilities of this file in 3-5 bullets." },
+                {
+                  label: "Explain this code",
+                  desc: "Walk through what it does",
+                  prompt: "Explain what this file does, in simple terms.",
+                },
+                {
+                  label: "Find bugs",
+                  desc: "Spot logic errors and edge cases",
+                  prompt:
+                    "Are there bugs or logic errors in this file? Be specific.",
+                },
+                {
+                  label: "Suggest refactor",
+                  desc: "Improve readability or correctness",
+                  prompt:
+                    "Suggest a refactor that would improve readability or correctness. Show the proposed change.",
+                },
+                {
+                  label: "Write tests",
+                  desc: "Generate unit tests",
+                  prompt:
+                    "Suggest unit tests for the functions in this file.",
+                },
+                {
+                  label: "Add types",
+                  desc: "Improve type annotations",
+                  prompt:
+                    "Suggest type annotations or improvements to existing types.",
+                },
+                {
+                  label: "Summarize",
+                  desc: "Key responsibilities in 3–5 bullets",
+                  prompt:
+                    "Summarize the key responsibilities of this file in 3-5 bullets.",
+                },
               ].map((q) => (
                 <button
                   key={q.label}
-                  className="ai-quick-btn"
+                  className="ai-quick-card"
                   onClick={() => setInput(q.prompt)}
                 >
-                  {q.label}
+                  <span className="ai-quick-card-title">{q.label}</span>
+                  <span className="ai-quick-card-desc">{q.desc}</span>
                 </button>
               ))}
             </div>
@@ -2479,6 +2541,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           </div>
         );
       })()}
+      {renderModelChip()}
       <div className="ai-input-row">
         <textarea
           ref={inputRef}
