@@ -4,7 +4,12 @@ import { findPaneById, parseKey, useStore } from "./store";
 import { openPalette } from "./paletteBus";
 import { openSettings } from "./settingsBus";
 import { getActiveEditor } from "./editorState";
-import { alert as dialogAlert } from "./dialog";
+import { alert as dialogAlert, confirm as dialogConfirm } from "./dialog";
+import { fs } from "./ipc";
+import {
+  error as toastError,
+  success as toastSuccess,
+} from "./notify";
 import {
   toggleAutoSave,
   toggleInsertFinalNewline,
@@ -409,6 +414,24 @@ export const commands: CommandSpec[] = [
     },
   },
   {
+    id: "ai.claude_md_open",
+    label: "Claude Code: Open project CLAUDE.md",
+    category: "AI",
+    run: () => void openProjectClaudeMd(),
+  },
+  {
+    id: "ai.claude_md_init",
+    label: "Claude Code: Init project CLAUDE.md (with scaffold)",
+    category: "AI",
+    run: () => void initProjectClaudeMd(),
+  },
+  {
+    id: "ai.claude_md_user_open",
+    label: "Claude Code: Open user CLAUDE.md (~/.claude/CLAUDE.md)",
+    category: "AI",
+    run: () => void openUserClaudeMd(),
+  },
+  {
     id: "help.repo",
     label: "GitHub Repository",
     category: "Help",
@@ -446,4 +469,164 @@ export function commandsForCategory(
   cat: CommandSpec["category"],
 ): CommandSpec[] {
   return commands.filter((c) => c.category === cat);
+}
+
+// -----------------------------------------------------------------
+// CLAUDE.md helpers
+//
+// CLAUDE.md is Claude Code's persistent per-project context file. The
+// CLI auto-loads `<workspace>/CLAUDE.md` (and the user-level
+// `~/.claude/CLAUDE.md`) into every prompt's system message. Most users
+// don't know it exists — these palette commands surface it.
+// -----------------------------------------------------------------
+
+function joinPath(...parts: string[]): string {
+  // Plain string join with normalization. We don't need OS-specific
+  // separators here because the Tauri fs commands accept either on
+  // Windows.
+  return parts
+    .map((p) => p.replace(/[\\/]+$/, ""))
+    .filter(Boolean)
+    .join("/");
+}
+
+async function ensureClaudeMd(absPath: string, scaffold: string | null): Promise<void> {
+  const exists = await fs.exists(absPath).catch(() => false);
+  if (!exists) {
+    if (scaffold !== null) {
+      await fs.writeFile(absPath, scaffold);
+    } else {
+      // Empty stub so the file exists for the editor.
+      await fs.writeFile(absPath, "");
+    }
+  }
+}
+
+async function projectClaudeMdPath(): Promise<string | null> {
+  const wsId = s().activeId;
+  if (!wsId) {
+    toastError("Open a workspace first.");
+    return null;
+  }
+  const ws = s().loaded[wsId];
+  if (!ws) return null;
+  return joinPath(ws.meta.root, "CLAUDE.md");
+}
+
+async function userClaudeMdPath(): Promise<string | null> {
+  try {
+    const { homeDir, join } = await import("@tauri-apps/api/path");
+    const home = await homeDir();
+    return await join(home, ".claude", "CLAUDE.md");
+  } catch (e) {
+    toastError(`Cannot resolve home directory: ${e}`);
+    return null;
+  }
+}
+
+async function openInActiveWorkspace(absPath: string): Promise<void> {
+  const wsId = s().activeId;
+  if (!wsId) return;
+  await s().openFile(wsId, absPath);
+}
+
+async function openProjectClaudeMd(): Promise<void> {
+  const path = await projectClaudeMdPath();
+  if (!path) return;
+  try {
+    await ensureClaudeMd(path, null);
+    await openInActiveWorkspace(path);
+  } catch (e) {
+    toastError(`Failed to open CLAUDE.md: ${e}`);
+  }
+}
+
+async function initProjectClaudeMd(): Promise<void> {
+  const path = await projectClaudeMdPath();
+  if (!path) return;
+  const exists = await fs.exists(path).catch(() => false);
+  if (exists) {
+    const ok = await dialogConfirm(
+      "CLAUDE.md already exists in this workspace. Overwrite with the scaffold? (Tip: open it instead via the palette to edit in place.)",
+      {
+        title: "Overwrite CLAUDE.md?",
+        okLabel: "Overwrite",
+        cancelLabel: "Cancel",
+        danger: true,
+      },
+    );
+    if (!ok) {
+      await openInActiveWorkspace(path);
+      return;
+    }
+  }
+  const wsId = s().activeId!;
+  const ws = s().loaded[wsId];
+  const scaffold = buildClaudeMdScaffold(ws?.meta.name ?? "this project");
+  try {
+    await fs.writeFile(path, scaffold);
+    await openInActiveWorkspace(path);
+    toastSuccess("CLAUDE.md scaffolded — edit and save to use it on the next Claude Code turn.");
+  } catch (e) {
+    toastError(`Failed to write CLAUDE.md: ${e}`);
+  }
+}
+
+async function openUserClaudeMd(): Promise<void> {
+  const path = await userClaudeMdPath();
+  if (!path) return;
+  try {
+    // Make sure the ~/.claude directory exists. Best-effort — the user
+    // probably already has it after running `claude /login`. We don't
+    // create the file pre-emptively; the editor handles non-existent
+    // paths by opening an empty buffer the user saves.
+    await ensureClaudeMd(path, null);
+    await openInActiveWorkspace(path);
+  } catch (e) {
+    toastError(`Failed to open ~/.claude/CLAUDE.md: ${e}`);
+  }
+}
+
+function buildClaudeMdScaffold(projectName: string): string {
+  return `# ${projectName} — project context for Claude Code
+
+> This file is automatically included by the Claude Code CLI on every
+> prompt. Keep it short and high-signal — anything in here costs tokens
+> on every turn. Delete sections you don't need.
+
+## What this project is
+
+<one-paragraph elevator pitch — what does the codebase do, who uses it, what's the current state>
+
+## How to run / build / test
+
+<exact commands the agent should use, e.g.:>
+
+\`\`\`
+npm install
+npm run dev          # local dev server
+npm run build        # production build
+npm test             # full test suite
+\`\`\`
+
+## Conventions
+
+- <language version, formatter, linter — e.g. "TypeScript strict mode, Prettier defaults, ESLint with @typescript-eslint">
+- <commit message style, branch naming>
+- <test layout — where tests live, what runner>
+
+## Architecture in 5 bullets
+
+- <where do feature requests typically land — frontend? backend? a specific service?>
+- <key state stores / data flow>
+- <external services this app talks to>
+- <build / deploy pipeline>
+- <anything subtle that an outsider would get wrong>
+
+## Things to avoid
+
+- <foot-guns specific to this codebase, e.g. "don't import from src/legacy/*">
+- <files that look editable but aren't, e.g. generated code>
+- <tests that are flaky and not worth chasing>
+`;
 }

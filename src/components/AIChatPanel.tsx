@@ -35,7 +35,13 @@ import {
   deriveTitle,
   type ChatSession,
 } from "../chatHistory";
-import { search, pty, fs } from "../ipc";
+import {
+  search,
+  pty,
+  fs,
+  claudeCode as claudeCodeIpc,
+  type ClaudeSession,
+} from "../ipc";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { ModelBrowser } from "./ModelBrowser";
 import {
@@ -85,6 +91,21 @@ interface Props {
    * just like before.
    */
   aiChatId?: string;
+}
+
+// Per-chat budget threshold in USD, persisted in localStorage. 0 =
+// disabled (no warning ever fires). Read on every turn so changes
+// from Settings take effect immediately.
+const BUDGET_KEY = "lcp.claudeCode.budgetUsd";
+function readBudgetUsd(): number {
+  try {
+    const raw = localStorage.getItem(BUDGET_KEY);
+    if (!raw) return 0;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
 }
 
 const OLLAMA_DOWNLOAD = "https://ollama.com/download";
@@ -700,10 +721,54 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   // Live tokens-per-second during streaming, and a sticky "warming up"
   // marker for the cold-start window before the first token arrives.
   const [tokensPerSec, setTokensPerSec] = useState<number | null>(null);
+  // Most-recent end-of-turn usage report from the agentic provider
+  // (Claude Code emits this in its `result` event). Pinned in the
+  // status strip so the user sees what the last turn cost in dollars +
+  // tokens, including cache hit ratio. Cleared on new chat / clear.
+  const [lastUsage, setLastUsage] = useState<{
+    cost?: number;
+    durationMs?: number;
+    model?: string;
+    tokens?: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheCreate: number;
+    };
+  } | null>(null);
+  // Latest TodoWrite snapshot from the agent, rendered as a sticky
+  // checklist above the chat. Per Shrivu Shankar — "the todo list is
+  // the most informative single artifact of an agent run". Updated
+  // every time Claude Code emits a TodoWrite tool_use; cleared on new
+  // chat / clear / restore.
+  const [todos, setTodos] = useState<Array<{
+    content: string;
+    status: "pending" | "in_progress" | "completed";
+    activeForm?: string;
+  }> | null>(null);
+  // Cumulative USD spend across every turn in this chat. Persisted
+  // alongside the conversation so the running tally survives reloads.
+  // Used by the spend chip in the footer + the budget-warning toast.
+  const [chatTotalCost, setChatTotalCost] = useState<number>(0);
+  // Toggle: has the user been warned about the budget for this chat
+  // yet? Avoids spamming the toast every turn once they cross.
+  const [budgetWarned, setBudgetWarned] = useState(false);
+  // Timeline scrubber — when non-null, messages past this index are
+  // dimmed and the user can branch from that point into a new chat
+  // tab without disturbing the current one. Null = no scrub (live).
+  // Reset on session change, new chat, regenerate.
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
   const [warmingUp, setWarmingUp] = useState(false);
   // EMA of recent assistant generations for the slow-model banner.
   const [recentTps, setRecentTps] = useState<number | null>(null);
   const [sessionId, setSessionId] = useState<string>(() => newSessionId());
+  // Claude Code provider session id, captured from stream-json `system/init`.
+  // Lets us pass --resume on every follow-up turn so the CLI keeps the
+  // server-side context window alive instead of re-paying cold-start cost.
+  // Cleared when the user starts a new chat or restores a non-CC session.
+  const [claudeSessionId, setClaudeSessionId] = useState<string | undefined>(
+    undefined,
+  );
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [attachTree, setAttachTree] = useState(false);
@@ -892,6 +957,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       const targetSid = desc?.sessionId ?? newSessionId();
       const found = list.find((s) => s.id === targetSid);
       setSessionId(targetSid);
+      // Restore the Claude Code session id alongside the conversation
+      // so the next turn resumes server-side context. If the chat is
+      // empty / non-CC, this stays undefined.
+      setClaudeSessionId(found?.claudeSessionId);
+      setChatTotalCost(found?.totalCostUsd ?? 0);
+      setBudgetWarned(false);
+      setScrubIndex(null);
       if (found) {
         setMessages(cleanStaleToolMessages(found.messages));
         if (found.model) {
@@ -908,6 +980,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
 
     if (list.length > 0) {
       setSessionId(list[0].id);
+      setClaudeSessionId(list[0].claudeSessionId);
+      setChatTotalCost(list[0].totalCostUsd ?? 0);
+      setBudgetWarned(false);
+      setScrubIndex(null);
       // Filter out stale "Unknown tool: X" result messages from older
       // sessions where we incorrectly tried to execute the agentic
       // provider's tool calls on our side. They're meaningless garbage.
@@ -920,6 +996,12 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       }
     } else {
       setSessionId(newSessionId());
+      setClaudeSessionId(undefined);
+    setLastUsage(null);
+    setTodos(null);
+    setChatTotalCost(0);
+    setBudgetWarned(false);
+    setScrubIndex(null);
       setMessages([]);
     }
   }, [wsId, aiChatId]);
@@ -954,12 +1036,14 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         messages,
         model: selected,
         updatedAt: Date.now(),
+        claudeSessionId,
+        totalCostUsd: chatTotalCost > 0 ? chatTotalCost : undefined,
       };
       saveSession(wsId, session);
       setSessions(loadSessions(wsId));
     }, 400);
     return () => window.clearTimeout(t);
-  }, [messages, sessionId, wsId, selected]);
+  }, [messages, sessionId, wsId, selected, claudeSessionId, chatTotalCost]);
 
   const send = async () => {
     const text = input.trim();
@@ -1180,6 +1264,15 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       for (let round = 0; round < MAX_ROUNDS; round++) {
         let acc = "";
         const toolCallsThisRound: ToolCall[] = [];
+        // Tool results emitted by an agentic provider (Claude Code) for
+        // calls it executed itself. Paired with toolCallsThisRound by
+        // tool_use_id at the end of the round and attached to the
+        // assistant message so the chat UI can render them.
+        const toolResultsThisRound: Array<{
+          tool_use_id: string;
+          content: string;
+          is_error?: boolean;
+        }> = [];
         let firstTokenAt: number | null = null;
         const startedAt = performance.now();
         for await (const ev of chatStream(
@@ -1187,7 +1280,47 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           conversation,
           abortRef.current.signal,
           TOOLS,
+          // Only pass resumeSessionId when we're on Claude Code AND we
+          // already have one captured from a prior turn in this chat.
+          // Other providers ignore this param.
+          selectedProvider === "claude-code" ? claudeSessionId : undefined,
         )) {
+          if (ev.kind === "session") {
+            // Captured the Claude Code session id — store it so the next
+            // turn passes --resume <id> and avoids re-flattening history.
+            setClaudeSessionId(ev.id);
+            continue;
+          }
+          if (ev.kind === "usage") {
+            setLastUsage({
+              cost: ev.cost,
+              durationMs: ev.durationMs,
+              model: ev.model,
+              tokens: ev.tokens,
+            });
+            // Roll into the per-chat running total. Triggers a
+            // budget-warning toast the first time we cross the
+            // user's configured threshold (resets per chat).
+            if (typeof ev.cost === "number" && ev.cost > 0) {
+              setChatTotalCost((prev) => {
+                const next = prev + ev.cost!;
+                const budget = readBudgetUsd();
+                if (
+                  budget > 0 &&
+                  prev < budget &&
+                  next >= budget &&
+                  !budgetWarned
+                ) {
+                  setBudgetWarned(true);
+                  toastError(
+                    `Chat budget reached: $${next.toFixed(4)} / $${budget.toFixed(2)}. Future turns will keep adding cost — start a new chat or stop to cap spend.`,
+                  );
+                }
+                return next;
+              });
+            }
+            continue;
+          }
           if (ev.kind === "content") {
             if (firstTokenAt === null) {
               firstTokenAt = performance.now();
@@ -1201,6 +1334,30 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             }
           } else if (ev.kind === "tool_call") {
             toolCallsThisRound.push(ev.call);
+            // Snapshot TodoWrite into the sticky checklist state so the
+            // user gets a live planning view as the agent progresses.
+            if (
+              ev.call.function.name === "TodoWrite" &&
+              Array.isArray(ev.call.function.arguments.todos)
+            ) {
+              const raw = ev.call.function.arguments.todos as unknown[];
+              const cleaned = raw
+                .filter(
+                  (t): t is Record<string, unknown> =>
+                    !!t && typeof t === "object",
+                )
+                .map((t) => ({
+                  content:
+                    typeof t.content === "string" ? t.content : "(untitled)",
+                  status:
+                    t.status === "in_progress" || t.status === "completed"
+                      ? (t.status as "in_progress" | "completed")
+                      : ("pending" as const),
+                  activeForm:
+                    typeof t.activeForm === "string" ? t.activeForm : undefined,
+                }));
+              setTodos(cleaned);
+            }
             // Live-surface the tool call in the status strip so the user
             // sees what's happening during long agentic streams (Claude
             // Code may emit many tool_use blocks before any text content).
@@ -1226,6 +1383,15 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               return next;
             });
             setRunningTools(true);
+          } else if (ev.kind === "tool_result") {
+            // Agentic providers (Claude Code) ran the tool themselves
+            // and report the result. Stash for attachment to the
+            // assistant message at end of round.
+            toolResultsThisRound.push({
+              tool_use_id: ev.tool_use_id,
+              content: ev.content,
+              is_error: ev.is_error,
+            });
           }
         }
         // Record final speed for the slow-model banner heuristic.
@@ -1255,6 +1421,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           content: visibleContent,
           tool_calls:
             toolCallsThisRound.length > 0 ? toolCallsThisRound : undefined,
+          tool_results:
+            toolResultsThisRound.length > 0
+              ? toolResultsThisRound
+              : undefined,
         };
         conversation.push(assistantMsg);
         setMessages((m) => [...m, assistantMsg]);
@@ -1383,7 +1553,45 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     const truncated = messages.slice(0, index);
     setMessages(truncated);
     setExpandedMsgIdx(new Set());
+    // Force a fresh Claude Code session — the existing CC session has
+    // turns we just truncated, so resuming it would feed the model
+    // context the user explicitly wiped. Next turn will get a new id.
+    setClaudeSessionId(undefined);
+    setLastUsage(null);
+    setTodos(null);
+    setChatTotalCost(0);
+    setBudgetWarned(false);
+    setScrubIndex(null);
     await sendUserText(target.content, truncated);
+  };
+
+  const branchFromHere = (index: number) => {
+    if (streaming !== null || runningTools) return;
+    const target = messages[index];
+    if (!target || target.role !== "user") return;
+    // Keep the prefix up THROUGH this user message (inclusive). The
+    // user can then edit the prompt or just hit send to retry.
+    // No assistant turn after — the new chat is queued at the user's
+    // message ready for them to send.
+    const prefix = messages.slice(0, index + 1);
+    // Persist the prefix as a NEW chat session in localStorage and
+    // open a new tab pointing at it. Original chat is untouched.
+    const newChatId = useStore.getState().addAIChat(wsId, "editor");
+    const newSid = newSessionId();
+    const branchedSession: ChatSession = {
+      id: newSid,
+      title: deriveTitle(prefix) + " (branch)",
+      messages: prefix,
+      model: selected,
+      updatedAt: Date.now(),
+      // No claudeSessionId — branching forks the conversation, so
+      // we want a fresh Claude Code session not a resumed one.
+    };
+    saveSession(wsId, branchedSession);
+    useStore.getState().setAIChatSession(wsId, newChatId, newSid);
+    toastInfo(
+      "Branched into a new chat tab — the original is untouched",
+    );
   };
 
   const goDeeper = async () => {
@@ -1398,6 +1606,14 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const startNewChat = () => {
     if (streaming !== null) return;
     setSessionId(newSessionId());
+    // Forget the prior Claude Code session so the next turn spawns a
+    // fresh server-side session instead of resuming an unrelated one.
+    setClaudeSessionId(undefined);
+    setLastUsage(null);
+    setTodos(null);
+    setChatTotalCost(0);
+    setBudgetWarned(false);
+    setScrubIndex(null);
     setMessages([]);
     setInput("");
     setHistoryOpen(false);
@@ -1409,6 +1625,23 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     const s = list.find((x) => x.id === id);
     if (!s) return;
     setSessionId(s.id);
+    // Restore the Claude Code session id alongside the conversation so
+    // resuming this chat picks up the server-side context where it left
+    // off. If the chat predates this feature it'll be undefined and the
+    // first turn will start a fresh CC session — the next stream-init
+    // event will populate it.
+    setClaudeSessionId(s.claudeSessionId);
+    // Reset transient last-turn telemetry. The cumulative cost IS
+    // persisted across reloads, so restore it from the session — the
+    // running total in the footer should reflect the chat's full
+    // history of spend, not reset to 0.
+    setLastUsage(null);
+    setTodos(null);
+    setChatTotalCost(s.totalCostUsd ?? 0);
+    // Also reset the budget-warning latch so a fresh load can warn
+    // again if the user has already crossed.
+    setBudgetWarned(false);
+    setScrubIndex(null);
     setMessages(s.messages);
     setInput("");
     setHistoryOpen(false);
@@ -1447,6 +1680,15 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     }
     if (cmd.action === "clear") {
       setMessages([]);
+      // Wipe Claude Code session context too — /clear means "forget what
+      // we were talking about", and resuming an old CC session would
+      // contradict that even if the local message list is empty.
+      setClaudeSessionId(undefined);
+    setLastUsage(null);
+    setTodos(null);
+    setChatTotalCost(0);
+    setBudgetWarned(false);
+    setScrubIndex(null);
       setInput("");
       return;
     }
@@ -1567,6 +1809,40 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           <span className="ai-model-btn-label">{modelLabel}</span>
           <span className="ai-model-btn-caret">▾</span>
         </button>
+        {parsed?.providerId === "claude-code" && (
+          <ClaudeSessionsButton
+            cwd={root}
+            onResume={async (id) => {
+              setClaudeSessionId(id);
+              setLastUsage(null);
+              setTodos(null);
+              // Hydrate the full prior transcript from the on-disk
+              // JSONL so the user sees what they're continuing from,
+              // not an empty pane. Best-effort — show a toast + start
+              // empty if the loader fails (the next user turn still
+              // resumes server-side via --resume).
+              try {
+                const loaded = await claudeCodeIpc.loadSession(root, id);
+                const hydrated: ChatMessage[] = loaded.map((m) => ({
+                  role: m.role,
+                  content: m.content,
+                  tool_calls: m.tool_calls,
+                  tool_results: m.tool_results,
+                }));
+                setMessages(hydrated);
+                toastInfo(
+                  `Resumed Claude Code session — ${hydrated.length} message${hydrated.length === 1 ? "" : "s"} restored`,
+                );
+              } catch (err) {
+                console.warn("loadSession failed", err);
+                setMessages([]);
+                toastInfo(
+                  "Resumed Claude Code session — your next message continues from where you left off",
+                );
+              }
+            }}
+          />
+        )}
         <button
           className="ai-header-primary"
           onClick={startNewChat}
@@ -1786,6 +2062,31 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     <div className="ai-panel">
       {renderHeader()}
       {renderHistoryDropdown()}
+      {todos && todos.length > 0 && <TodosCard items={todos} />}
+      {messages.length >= 4 && streaming === null && !runningTools && (
+        <TimelineScrubber
+          totalMessages={messages.length}
+          scrubIndex={scrubIndex}
+          onScrub={(i) => setScrubIndex(i)}
+          onReset={() => setScrubIndex(null)}
+          onBranch={
+            scrubIndex !== null && aiChatId
+              ? () => {
+                  // Find the LATEST user message at or before
+                  // scrubIndex — branch from there so the new chat
+                  // ends with a user prompt ready to send.
+                  for (let i = scrubIndex; i >= 0; i--) {
+                    if (messages[i].role === "user") {
+                      branchFromHere(i);
+                      setScrubIndex(null);
+                      return;
+                    }
+                  }
+                }
+              : undefined
+          }
+        />
+      )}
       <div className="ai-messages" ref={scrollRef}>
         {display.length === 0 && (
           <>
@@ -1815,11 +2116,25 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         )}
         {(() => {
           // Build a lookup of tool results by call id so each tool_call
-          // row can render its result inline (Claude-Code-style).
+          // row can render its result inline (Claude-Code-style). Two
+          // sources to merge:
+          //   1. Standalone `tool` role messages (Ollama / OpenAI flow,
+          //      where Codetta itself runs the tool and posts the result
+          //      back as the next message).
+          //   2. The `tool_results` array on assistant messages (Claude
+          //      Code flow, where the agent ran the tool internally and
+          //      we received its result via the same stream).
           const toolResultsById = new Map<string, string>();
           for (const msg of display) {
             if (msg.role === "tool" && msg.tool_call_id) {
               toolResultsById.set(msg.tool_call_id, msg.content);
+            }
+            if (msg.role === "assistant" && msg.tool_results) {
+              for (const tr of msg.tool_results) {
+                if (tr.tool_use_id) {
+                  toolResultsById.set(tr.tool_use_id, tr.content);
+                }
+              }
             }
           }
           return display.map((m, i) => {
@@ -1887,19 +2202,35 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               </details>
             );
           }
+          const dimmedByScrub = scrubIndex !== null && i > scrubIndex;
           return (
-            <div key={i} className={`ai-msg ai-msg-${m.role}`}>
+            <div
+              key={i}
+              className={`ai-msg ai-msg-${m.role}${dimmedByScrub ? " ai-msg-scrubbed-past" : ""}`}
+            >
               <span className="ai-msg-role">
                 {m.role === "user" ? "You" : "AI"}
                 {m.role === "user" && (
-                  <button
-                    className="ai-msg-regen"
-                    title="Re-send this message — wipes everything below"
-                    onClick={() => void regenerateFrom(i)}
-                    disabled={streaming !== null || runningTools}
-                  >
-                    ↻
-                  </button>
+                  <>
+                    <button
+                      className="ai-msg-regen"
+                      title="Re-send this message — wipes everything below"
+                      onClick={() => void regenerateFrom(i)}
+                      disabled={streaming !== null || runningTools}
+                    >
+                      ↻
+                    </button>
+                    {aiChatId && (
+                      <button
+                        className="ai-msg-branch"
+                        title="Branch from here — open a new chat tab with the conversation up to this turn, leaving this one intact"
+                        onClick={() => branchFromHere(i)}
+                        disabled={streaming !== null || runningTools}
+                      >
+                        ⎇
+                      </button>
+                    )}
+                  </>
                 )}
               </span>
               {m.tool_calls && m.tool_calls.length > 0 && (
@@ -2279,6 +2610,42 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           </span>
         </div>
       )}
+      {(lastUsage || chatTotalCost > 0) &&
+        streaming === null &&
+        !runningTools && (
+          <div
+            className="ai-usage-strip"
+            title={
+              lastUsage?.model
+                ? `Last turn — ${lastUsage.model}`
+                : "Chat usage"
+            }
+          >
+            {lastUsage && <UsageChip usage={lastUsage} />}
+            {chatTotalCost > 0 && (
+              <span className="ai-usage-total">
+                · chat total{" "}
+                <strong>${chatTotalCost.toFixed(4)}</strong>
+                {(() => {
+                  const budget = readBudgetUsd();
+                  if (budget <= 0) return null;
+                  const pct = Math.min(
+                    100,
+                    Math.round((chatTotalCost / budget) * 100),
+                  );
+                  return (
+                    <span
+                      className={`ai-usage-budget ${pct >= 100 ? "over" : pct >= 80 ? "warn" : ""}`}
+                      title={`Budget: $${budget.toFixed(2)}`}
+                    >
+                      {" "}({pct}% of ${budget.toFixed(2)})
+                    </span>
+                  );
+                })()}
+              </span>
+            )}
+          </div>
+        )}
       {recentTps !== null && recentTps < 8 && streaming === null && !runningTools && (
         <div className="ai-slow-banner">
           Slow generation ({recentTps.toFixed(1)} t/s). Likely VRAM bound.{" "}
@@ -2382,21 +2749,61 @@ const TOOL_LABELS: Record<string, string> = {
   search_web: "Web Search",
 };
 
+// Claude Code tool names use CamelCase (Read, Edit, Bash, Glob, etc.) so
+// the lowercase TOOL_LABELS table miss them entirely. These are the names
+// the agent actually emits in stream-json tool_use blocks.
+const CLAUDE_CODE_TOOL_LABELS: Record<string, string> = {
+  Read: "Read",
+  Write: "Write",
+  Edit: "Edit",
+  MultiEdit: "Edit",
+  Bash: "Bash",
+  BashOutput: "Bash output",
+  KillShell: "Kill shell",
+  Glob: "Glob",
+  Grep: "Grep",
+  WebFetch: "Web Fetch",
+  WebSearch: "Web Search",
+  TodoWrite: "Todos",
+  NotebookEdit: "Notebook edit",
+  Task: "Subagent",
+  ExitPlanMode: "Exit plan mode",
+};
+
 function friendlyToolName(name: string): string {
   if (TOOL_LABELS[name]) return TOOL_LABELS[name];
+  if (CLAUDE_CODE_TOOL_LABELS[name]) return CLAUDE_CODE_TOOL_LABELS[name];
+  // mcp__<server>__<tool> — strip the prefix and label by server.
+  const mcp = /^mcp__([^_]+)__(.+)$/.exec(name);
+  if (mcp) return `${mcp[1]} → ${mcp[2]}`;
   return name
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function primaryToolDetail(args: Record<string, unknown>): string {
+  // TodoWrite carries an array of {content, status} — show a "3 active,
+  // 2 done" summary instead of the noisy default.
+  if (Array.isArray(args.todos)) {
+    const total = args.todos.length;
+    const done = args.todos.filter(
+      (t: unknown) =>
+        t && typeof t === "object" &&
+        (t as Record<string, unknown>).status === "completed",
+    ).length;
+    return `${done}/${total} done`;
+  }
+  // Bash command, truncated.
+  if (typeof args.command === "string" && args.command.length > 0) {
+    const cmd = args.command.replace(/\s+/g, " ").trim();
+    return cmd.length > 80 ? cmd.slice(0, 80) + "…" : cmd;
+  }
   for (const k of [
     "path",
     "file_path",
     "url",
     "pattern",
     "query",
-    "command",
     "name",
   ]) {
     const v = args[k];
@@ -2414,6 +2821,278 @@ function resultPreview(result: string): string {
   return firstLine.length > 200 ? firstLine.slice(0, 200) + "…" : firstLine;
 }
 
+interface TimelineScrubberProps {
+  totalMessages: number;
+  scrubIndex: number | null;
+  onScrub: (i: number) => void;
+  onReset: () => void;
+  onBranch?: () => void;
+}
+
+function TimelineScrubber({
+  totalMessages,
+  scrubIndex,
+  onScrub,
+  onReset,
+  onBranch,
+}: TimelineScrubberProps) {
+  // Slider range is 0..totalMessages-1; full-conversation = max value,
+  // shown as live (no scrub badge).
+  const max = Math.max(0, totalMessages - 1);
+  const value = scrubIndex ?? max;
+  const isScrubbed = scrubIndex !== null && scrubIndex < max;
+  return (
+    <div className={`ai-scrubber ${isScrubbed ? "active" : ""}`}>
+      <input
+        type="range"
+        min={0}
+        max={max}
+        value={value}
+        onChange={(e) => {
+          const v = parseInt(e.target.value, 10);
+          // Snapping the right edge clears scrub so the user falls
+          // back to live view without a separate Reset click.
+          if (v >= max) onReset();
+          else onScrub(v);
+        }}
+        className="ai-scrubber-range"
+        title="Scrub through past turns"
+      />
+      <div className="ai-scrubber-info">
+        {isScrubbed ? (
+          <>
+            <span className="ai-scrubber-pos">
+              Turn {value + 1} / {totalMessages}
+            </span>
+            {onBranch && (
+              <button
+                className="ai-scrubber-btn"
+                onClick={onBranch}
+                title="Open a new chat tab with the conversation up to this point"
+              >
+                ⎇ Branch from here
+              </button>
+            )}
+            <button
+              className="ai-scrubber-btn"
+              onClick={onReset}
+              title="Drop scrub, jump back to live view"
+            >
+              ↩ Live
+            </button>
+          </>
+        ) : (
+          <span className="ai-scrubber-hint">
+            ← drag to revisit any earlier turn
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface ClaudeSessionsButtonProps {
+  cwd: string;
+  onResume: (id: string) => void | Promise<void>;
+}
+
+function ClaudeSessionsButton({ cwd, onResume }: ClaudeSessionsButtonProps) {
+  const [open, setOpen] = useState(false);
+  const [sessions, setSessions] = useState<ClaudeSession[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const list = await claudeCodeIpc.listSessions(cwd);
+      setSessions(list);
+    } catch (e) {
+      setSessions([]);
+      console.warn("listSessions failed", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Close on outside click.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest(".ai-cc-sessions-popover")) return;
+      if (t?.closest(".ai-cc-sessions-btn")) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  return (
+    <div className="ai-cc-sessions-wrap">
+      <button
+        className={`ai-cc-sessions-btn ${open ? "active" : ""}`}
+        onClick={() => {
+          setOpen((v) => {
+            const next = !v;
+            if (next) void load();
+            return next;
+          });
+        }}
+        title="Resume an on-disk Claude Code session for this workspace"
+      >
+        ⟲ Sessions
+      </button>
+      {open && (
+        <div className="ai-cc-sessions-popover">
+          {loading && (
+            <div className="ai-cc-sessions-empty">
+              <span className="ai-spinner" /> Loading…
+            </div>
+          )}
+          {!loading && sessions && sessions.length === 0 && (
+            <div className="ai-cc-sessions-empty">
+              No Claude Code sessions yet for this workspace.
+              <br />
+              <span className="ai-cc-sessions-hint">
+                Sessions appear after your first chat with Claude Code.
+              </span>
+            </div>
+          )}
+          {!loading &&
+            sessions &&
+            sessions.map((s) => (
+              <button
+                key={s.id}
+                className="ai-cc-session"
+                onClick={() => {
+                  void onResume(s.id);
+                  setOpen(false);
+                }}
+                title={`${s.turn_count} turn${s.turn_count === 1 ? "" : "s"} · ${s.cost_usd > 0 ? `$${s.cost_usd.toFixed(4)} · ` : ""}${formatRelative(s.last_turn_at_ms)}`}
+              >
+                <div className="ai-cc-session-title">{s.title}</div>
+                {s.preview && s.preview !== s.title && (
+                  <div className="ai-cc-session-preview">{s.preview}</div>
+                )}
+                <div className="ai-cc-session-meta">
+                  <span>
+                    {s.turn_count} turn{s.turn_count === 1 ? "" : "s"}
+                  </span>
+                  {s.cost_usd > 0 && <span>${s.cost_usd.toFixed(4)}</span>}
+                  <span>{formatRelative(s.last_turn_at_ms)}</span>
+                </div>
+              </button>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatRelative(ms: number): string {
+  if (!ms) return "";
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
+  return `${Math.round(diff / 86_400_000)}d ago`;
+}
+
+interface TodosCardProps {
+  items: Array<{
+    content: string;
+    status: "pending" | "in_progress" | "completed";
+    activeForm?: string;
+  }>;
+}
+
+function TodosCard({ items }: TodosCardProps) {
+  const [collapsed, setCollapsed] = useState(false);
+  const total = items.length;
+  const done = items.filter((t) => t.status === "completed").length;
+  const inProgress = items.find((t) => t.status === "in_progress");
+  const summary = inProgress
+    ? `${done}/${total} · doing: ${inProgress.activeForm ?? inProgress.content}`
+    : `${done}/${total} done`;
+  return (
+    <div className={`ai-todos ${collapsed ? "collapsed" : ""}`}>
+      <button
+        type="button"
+        className="ai-todos-head"
+        onClick={() => setCollapsed((c) => !c)}
+        title={collapsed ? "Show todos" : "Hide todos"}
+      >
+        <span className="ai-todos-icon">📋</span>
+        <span className="ai-todos-summary">{summary}</span>
+        <span className="ai-todos-caret">{collapsed ? "▸" : "▾"}</span>
+      </button>
+      {!collapsed && (
+        <ul className="ai-todos-list">
+          {items.map((t, i) => (
+            <li
+              key={i}
+              className={`ai-todo ai-todo-${t.status}`}
+              title={t.status}
+            >
+              <span className="ai-todo-mark">
+                {t.status === "completed"
+                  ? "✓"
+                  : t.status === "in_progress"
+                    ? "◐"
+                    : "○"}
+              </span>
+              <span className="ai-todo-text">
+                {t.status === "in_progress" && t.activeForm
+                  ? t.activeForm
+                  : t.content}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+interface UsageChipProps {
+  usage: {
+    cost?: number;
+    durationMs?: number;
+    model?: string;
+    tokens?: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheCreate: number;
+    };
+  };
+}
+
+function UsageChip({ usage }: UsageChipProps) {
+  const t = usage.tokens;
+  const fmtTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+  const cacheTotal = (t?.cacheRead ?? 0) + (t?.cacheCreate ?? 0);
+  const cachePct =
+    cacheTotal > 0 && t
+      ? Math.round(((t.cacheRead ?? 0) / cacheTotal) * 100)
+      : null;
+  const parts: string[] = [];
+  if (typeof usage.cost === "number") {
+    parts.push(`$${usage.cost.toFixed(4)}`);
+  }
+  if (t && (t.input || t.output)) {
+    parts.push(`${fmtTokens(t.input)} in / ${fmtTokens(t.output)} out`);
+  }
+  if (cachePct !== null) {
+    parts.push(`cache ${cachePct}%`);
+  }
+  if (typeof usage.durationMs === "number") {
+    parts.push(`${(usage.durationMs / 1000).toFixed(1)}s`);
+  }
+  if (parts.length === 0) return null;
+  return <span className="ai-usage-text">{parts.join(" · ")}</span>;
+}
+
 function ToolCallRow({
   call,
   result,
@@ -2421,6 +3100,15 @@ function ToolCallRow({
   call: ToolCall;
   result: string | undefined;
 }) {
+  // Edit / Write / MultiEdit get a richer view that shows the actual
+  // diff inline, since the bare args summary ("file_path foo.ts") tells
+  // the user nothing about *what changed*. Falls through to the generic
+  // row for all other tools.
+  const editDiffs = extractEditDiffs(call);
+  if (editDiffs && editDiffs.length > 0) {
+    return <EditDiffCard call={call} diffs={editDiffs} result={result} />;
+  }
+
   const [expanded, setExpanded] = useState(false);
   const label = friendlyToolName(call.function.name);
   const detail = primaryToolDetail(call.function.arguments);
@@ -2453,6 +3141,161 @@ function ToolCallRow({
           )}
         </button>
       )}
+    </div>
+  );
+}
+
+interface EditDiff {
+  oldText: string;
+  newText: string;
+}
+
+/**
+ * Pull the diffs out of an Edit/MultiEdit/Write tool call. Returns null
+ * when the tool isn't an editing one or the args don't have the expected
+ * shape (so callers fall back to the generic ToolCallRow rendering).
+ */
+function extractEditDiffs(call: ToolCall): EditDiff[] | null {
+  const name = call.function.name;
+  const args = call.function.arguments as Record<string, unknown>;
+  // Edit (Claude Code) — single old/new pair.
+  if (name === "Edit" || name === "edit_file" || name === "edit") {
+    const oldText =
+      typeof args.old_string === "string"
+        ? args.old_string
+        : typeof args.old_text === "string"
+          ? args.old_text
+          : "";
+    const newText =
+      typeof args.new_string === "string"
+        ? args.new_string
+        : typeof args.new_text === "string"
+          ? args.new_text
+          : "";
+    if (!oldText && !newText) return null;
+    return [{ oldText, newText }];
+  }
+  // MultiEdit — array of {old_string, new_string}.
+  if (name === "MultiEdit") {
+    const edits = Array.isArray(args.edits) ? args.edits : null;
+    if (!edits) return null;
+    const out: EditDiff[] = [];
+    for (const e of edits) {
+      if (!e || typeof e !== "object") continue;
+      const eo = e as Record<string, unknown>;
+      out.push({
+        oldText: typeof eo.old_string === "string" ? eo.old_string : "",
+        newText: typeof eo.new_string === "string" ? eo.new_string : "",
+      });
+    }
+    return out.length > 0 ? out : null;
+  }
+  // Write / create_file — full new content. Render as add-only diff.
+  if (name === "Write" || name === "write_file" || name === "create_file") {
+    const content =
+      typeof args.content === "string"
+        ? args.content
+        : typeof args.text === "string"
+          ? args.text
+          : "";
+    if (!content) return null;
+    return [{ oldText: "", newText: content }];
+  }
+  return null;
+}
+
+interface EditDiffCardProps {
+  call: ToolCall;
+  diffs: EditDiff[];
+  result: string | undefined;
+}
+
+function EditDiffCard({ call, diffs, result }: EditDiffCardProps) {
+  const [expanded, setExpanded] = useState(false);
+  const args = call.function.arguments as Record<string, unknown>;
+  const path =
+    (typeof args.file_path === "string" && args.file_path) ||
+    (typeof args.path === "string" && args.path) ||
+    "(unknown file)";
+  const label = friendlyToolName(call.function.name);
+  // Stats: lines added vs removed, summed across all edits.
+  let added = 0;
+  let removed = 0;
+  for (const d of diffs) {
+    added += d.newText
+      ? d.newText.split("\n").filter((l) => l.length > 0).length
+      : 0;
+    removed += d.oldText
+      ? d.oldText.split("\n").filter((l) => l.length > 0).length
+      : 0;
+  }
+  const isError =
+    typeof result === "string" && /^Error|error:/i.test(result.trim());
+  return (
+    <div className={`ai-tcall ai-tcall-edit ${isError ? "errored" : ""}`}>
+      <button
+        type="button"
+        className="ai-tcall-head ai-tcall-edit-head"
+        onClick={() => setExpanded((v) => !v)}
+        title={expanded ? "Hide diff" : "Show diff"}
+      >
+        <span className="ai-tcall-dot" />
+        <span className="ai-tcall-name">{label}</span>
+        <span className="ai-tcall-detail">{path}</span>
+        <span className="ai-tcall-edit-stats">
+          {removed > 0 && (
+            <span className="ai-tcall-edit-rm">−{removed}</span>
+          )}
+          {added > 0 && <span className="ai-tcall-edit-add">+{added}</span>}
+        </span>
+        <span className="ai-tcall-caret">{expanded ? "▾" : "▸"}</span>
+      </button>
+      {expanded && (
+        <div className="ai-tcall-edit-body">
+          {diffs.map((d, i) => (
+            <UnifiedDiff key={i} oldText={d.oldText} newText={d.newText} />
+          ))}
+          {result && (
+            <div
+              className={`ai-tcall-edit-result ${isError ? "errored" : "applied"}`}
+            >
+              {isError ? "✗" : "✓"} {result.split("\n")[0]}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface UnifiedDiffProps {
+  oldText: string;
+  newText: string;
+}
+
+/**
+ * Render two strings as a unified-diff-style block. We don't compute a
+ * proper LCS — the input is already structured as "exactly this old →
+ * exactly this new", so we just show old as removed lines and new as
+ * added lines. Fast, deterministic, no diff algorithm dependency.
+ */
+function UnifiedDiff({ oldText, newText }: UnifiedDiffProps) {
+  const oldLines = oldText ? oldText.split("\n") : [];
+  const newLines = newText ? newText.split("\n") : [];
+  return (
+    <div className="ai-diff">
+      {oldLines.map((line, i) => (
+        <div key={`o-${i}`} className="ai-diff-line ai-diff-rm">
+          <span className="ai-diff-mark">−</span>
+          <span className="ai-diff-text">{line || " "}</span>
+        </div>
+      ))}
+      {newLines.map((line, i) => (
+        <div key={`n-${i}`} className="ai-diff-line ai-diff-add">
+          <span className="ai-diff-mark">+</span>
+          <span className="ai-diff-text">{line || " "}</span>
+        </div>
+      ))}
     </div>
   );
 }

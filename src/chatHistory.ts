@@ -6,6 +6,21 @@ export interface ChatSession {
   messages: ChatMessage[];
   model: string;
   updatedAt: number;
+  /**
+   * Provider-side session id (currently only set by the Claude Code
+   * provider). When present we pass it as `resumeSessionId` on the
+   * next turn so the CLI's --resume keeps the server-side context
+   * window + prompt cache alive instead of re-paying cold-start every
+   * turn. Cleared when the user starts a new chat.
+   */
+  claudeSessionId?: string;
+  /**
+   * Cumulative USD cost of every Claude Code turn in this chat,
+   * summed from the `cost_usd` field of each `result` event. Lets the
+   * UI show running spend in the footer + warn at a configurable
+   * budget threshold. Only Claude Code populates this today.
+   */
+  totalCostUsd?: number;
 }
 
 const KEY = (wsId: string) => `lcp.ollama.history.${wsId}`;

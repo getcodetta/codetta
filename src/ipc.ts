@@ -99,6 +99,83 @@ export const search = {
     invoke<PackageScript[]>("read_package_scripts", { root }),
 };
 
+export interface ClaudeSession {
+  id: string;
+  title: string;
+  preview: string;
+  cost_usd: number;
+  turn_count: number;
+  last_turn_at_ms: number;
+}
+
+export interface LoadedToolCall {
+  id?: string;
+  function: {
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+}
+
+export interface LoadedToolResult {
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+}
+
+export interface LoadedMessage {
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  tool_calls?: LoadedToolCall[];
+  tool_results?: LoadedToolResult[];
+}
+
+export const claudeCode = {
+  /** List on-disk Claude Code sessions for the given workspace cwd. */
+  listSessions: (cwd: string) =>
+    invoke<ClaudeSession[]>("claude_code_list_sessions", { cwd }),
+  /** Reconstruct the full conversation from a session's JSONL file. */
+  loadSession: (cwd: string, sessionId: string) =>
+    invoke<LoadedMessage[]>("claude_code_load_session", {
+      cwd,
+      sessionId,
+    }),
+};
+
+export interface McpServer {
+  name: string;
+  scope: "user" | "project";
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export const claudeMcp = {
+  /** List installed MCP servers from user (~/.claude.json) +
+   *  project (.mcp.json) scopes, sorted by name. */
+  list: (cwd: string) =>
+    invoke<McpServer[]>("claude_mcp_list", { cwd }),
+  /** Add or replace an MCP server in the given scope. */
+  add: (
+    cwd: string,
+    name: string,
+    scope: "user" | "project",
+    command: string,
+    args: string[],
+    env: Record<string, string>,
+  ) =>
+    invoke<string>("claude_mcp_add", {
+      cwd,
+      name,
+      scope,
+      command,
+      args,
+      env,
+    }),
+  /** Remove an MCP server from the given scope (no-op if absent). */
+  remove: (cwd: string, name: string, scope: "user" | "project") =>
+    invoke<void>("claude_mcp_remove", { cwd, name, scope }),
+};
+
 export const git = {
   status: (path: string) => invoke<unknown>("git_status", { path }),
   diff: (path: string, file?: string) =>

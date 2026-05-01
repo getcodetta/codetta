@@ -23,6 +23,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Dialog } from "./components/Dialog";
 import { SettingsModal } from "./components/SettingsModal";
 import { TerminalPopoutWindow } from "./components/TerminalPopoutWindow";
+import { ClaudePermissionOverlay } from "./components/ClaudePermissionOverlay";
 import "./App.css";
 
 // When this document was opened as a terminal pop-out window, render only
@@ -349,6 +350,7 @@ function MainApp() {
       <DiffModal />
       <Dialog />
       <SettingsModal />
+      <ClaudePermissionOverlay />
       <RecentFilesOverlay
         open={recentOverlayOpen}
         files={recentList}

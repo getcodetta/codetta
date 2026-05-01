@@ -1,4 +1,6 @@
 mod claude_code;
+mod claude_mcp;
+mod claude_perm;
 mod fs_ops;
 mod git;
 mod pty;
@@ -7,6 +9,7 @@ mod watcher;
 mod workspace;
 
 use claude_code::ClaudeCodeState;
+use claude_perm::PermState;
 use pty::PtyState;
 use watcher::WatcherState;
 
@@ -18,6 +21,21 @@ pub fn run() {
         .manage(PtyState::default())
         .manage(WatcherState::default())
         .manage(ClaudeCodeState::default())
+        .manage(PermState::default())
+        .setup(|app| {
+            // Start the permission-callback HTTP server early so
+            // settings.local.json hooks always have an endpoint to
+            // POST to. Best-effort — log + continue if it fails so
+            // the app still launches in dangerously-skip-permissions
+            // fallback mode.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                if let Err(e) = claude_perm::start_server(handle) {
+                    eprintln!("[claude_perm] failed to start server: {}", e);
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             fs_ops::list_dir,
             fs_ops::read_file,
@@ -63,6 +81,13 @@ pub fn run() {
             claude_code::claude_code_check,
             claude_code::claude_code_chat,
             claude_code::claude_code_kill,
+            claude_code::claude_code_list_sessions,
+            claude_code::claude_code_load_session,
+            claude_perm::claude_perm_decide,
+            claude_perm::claude_perm_endpoint,
+            claude_mcp::claude_mcp_list,
+            claude_mcp::claude_mcp_add,
+            claude_mcp::claude_mcp_remove,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

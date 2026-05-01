@@ -15,6 +15,7 @@ import {
   type ToolPermission,
   type ToolPolicy,
 } from "../toolPermissions";
+import { McpServerBrowser } from "./McpServerBrowser";
 
 export function SettingsModal() {
   const [open, setOpen] = useState(false);
@@ -175,6 +176,18 @@ export function SettingsModal() {
               dialog each time. "Deny" disables the tool — the AI sees a
               denial message instead of executing.
             </div>
+          </Section>
+
+          <Section title="Claude Code — Spend budget">
+            <ClaudeCodeBudgetEditor />
+          </Section>
+
+          <Section title="Claude Code — Always-allow tools">
+            <ClaudeCodeAlwaysAllowEditor />
+          </Section>
+
+          <Section title="Claude Code — MCP servers">
+            <McpServerBrowser />
           </Section>
 
           <Section title="AI Providers (Bring Your Own Key)">
@@ -374,5 +387,138 @@ function Toggle({
         <span className="settings-toggle-knob" />
       </button>
     </div>
+  );
+}
+
+const CC_ALWAYS_ALLOW_KEY = "lcp.claudeCode.alwaysAllow";
+const CC_BUDGET_KEY = "lcp.claudeCode.budgetUsd";
+
+function ClaudeCodeBudgetEditor() {
+  const [val, setVal] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(CC_BUDGET_KEY);
+      const n = raw ? parseFloat(raw) : 0;
+      return Number.isFinite(n) && n > 0 ? n.toString() : "";
+    } catch {
+      return "";
+    }
+  });
+
+  const persist = (next: string) => {
+    setVal(next);
+    const n = parseFloat(next);
+    try {
+      if (Number.isFinite(n) && n > 0) {
+        localStorage.setItem(CC_BUDGET_KEY, n.toString());
+      } else {
+        localStorage.removeItem(CC_BUDGET_KEY);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <>
+      <Row label="Per-chat warning at">
+        <div className="cc-budget-input">
+          <span className="cc-budget-prefix">$</span>
+          <input
+            type="number"
+            min="0"
+            step="0.10"
+            placeholder="0  (disabled)"
+            value={val}
+            onChange={(e) => persist(e.target.value)}
+            className="cc-budget-field"
+          />
+          <span className="cc-budget-suffix">USD</span>
+        </div>
+      </Row>
+      <div className="settings-row settings-row-note">
+        Once a Claude Code chat's cumulative cost crosses this number, a
+        warning toast fires (once per chat). Useful for catching the
+        documented resume-cache-miss class of regressions where a
+        normally-cheap chat suddenly burns 20× more than expected.
+        Leave blank to disable. Subscription users (Pro / Max) can
+        ignore — Anthropic doesn't bill via usd_cost.
+      </div>
+    </>
+  );
+}
+
+function ClaudeCodeAlwaysAllowEditor() {
+  const [list, setList] = useState<string[]>(() => loadList());
+
+  function loadList(): string[] {
+    try {
+      const raw = localStorage.getItem(CC_ALWAYS_ALLOW_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.filter((s) => typeof s === "string").sort()
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function persist(next: string[]) {
+    setList(next);
+    try {
+      localStorage.setItem(CC_ALWAYS_ALLOW_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (list.length === 0) {
+    return (
+      <div className="settings-row settings-row-note">
+        No tools always-allowed yet. The next time Claude Code asks for
+        permission, click <strong>“Always allow {"{tool}"}”</strong> on
+        the card to add it here. (Bash is intentionally never always-
+        allowed — the <em>command</em> matters more than the tool.)
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="settings-row settings-row-note">
+        These tools auto-approve without showing the permission card.
+        Remove an entry to start asking again.
+      </div>
+      <div className="cc-allow-list">
+        {list.map((name) => (
+          <div key={name} className="cc-allow-row">
+            <code className="cc-allow-name">{name}</code>
+            <button
+              className="cc-allow-remove"
+              onClick={() => persist(list.filter((n) => n !== name))}
+              title={`Stop always-allowing ${name}`}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="settings-row">
+        <button
+          className="cc-allow-clear"
+          onClick={() => {
+            if (
+              confirm(
+                "Clear all always-allow entries? Claude Code will ask for permission on every tool call again until you re-add them.",
+              )
+            ) {
+              persist([]);
+            }
+          }}
+        >
+          Clear all
+        </button>
+      </div>
+    </>
   );
 }

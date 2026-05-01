@@ -33,6 +33,14 @@ export interface ChatProvider {
     messages: ChatMessage[];
     tools?: ToolDef[];
     signal?: AbortSignal;
+    /**
+     * Provider-specific session id captured from a previous turn (via
+     * the `session` ChatStreamEvent). When set, agentic providers like
+     * Claude Code resume the existing server-side session instead of
+     * spawning a fresh one — preserving context window + cache hits.
+     * Non-agentic providers ignore this.
+     */
+    resumeSessionId?: string;
   }): AsyncGenerator<ChatStreamEvent, void, unknown>;
 }
 

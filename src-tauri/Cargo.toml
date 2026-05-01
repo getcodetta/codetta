@@ -28,6 +28,11 @@ parking_lot = "0.12"
 anyhow = "1"
 notify = "6"
 notify-debouncer-mini = "0.4"
+# Tiny synchronous HTTP server for the Claude Code PreToolUse hook
+# callback endpoint. We host this locally so the CLI's hook command
+# (a curl POST) can ask the GUI for permission decisions and the GUI
+# can respond before the agent's tool call runs.
+tiny_http = "0.12"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

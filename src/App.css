@@ -1950,6 +1950,32 @@ input {
   border-color: var(--border);
   color: var(--fg);
 }
+.ai-msg-branch {
+  margin-left: 4px;
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 14px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.ai-msg-user:hover .ai-msg-branch {
+  opacity: 0.7;
+}
+.ai-msg-branch:hover {
+  opacity: 1 !important;
+  background: var(--bg-alt);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ai-msg-branch:disabled {
+  opacity: 0.3 !important;
+  cursor: not-allowed;
+}
 .ai-msg-regen:disabled {
   opacity: 0.3 !important;
   cursor: not-allowed;
@@ -2956,6 +2982,855 @@ input {
 }
 .ai-status-pull {
   font-family: var(--mono, monospace);
+}
+
+/* MCP server browser — installed list + curated catalog with one-
+   click install per scope. Lives inside the Settings modal. */
+.mcp-section-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  margin: 12px 0 6px;
+  padding: 0 2px;
+}
+.mcp-list,
+.mcp-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mcp-row,
+.mcp-cat-row {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  align-items: flex-start;
+}
+.mcp-row-main,
+.mcp-cat-main {
+  flex: 1;
+  min-width: 0;
+}
+.mcp-name {
+  font-family: var(--mono, monospace);
+  font-size: 12.5px;
+  color: var(--fg);
+  font-weight: 500;
+}
+.mcp-scope-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.mcp-scope-user {
+  color: #6ea8ff;
+  border-color: #6ea8ff;
+  background: rgba(110, 168, 255, 0.08);
+}
+.mcp-scope-project {
+  color: #22c55e;
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+}
+.mcp-row-cmd {
+  margin-top: 4px;
+  font-family: var(--mono, monospace);
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  word-break: break-all;
+}
+.mcp-row-cmd code {
+  background: transparent;
+}
+.mcp-remove-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.mcp-remove-btn:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+.mcp-warning {
+  border-left: 3px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+  padding: 8px 12px;
+}
+.mcp-cat-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mcp-cat-installed {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: #22c55e;
+  border: 1px solid #22c55e;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.08);
+}
+.mcp-cat-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.mcp-cat-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #f59e0b;
+  opacity: 0.85;
+}
+.mcp-cat-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.mcp-cat-docs {
+  font-size: 11px;
+  color: var(--fg-muted);
+  text-decoration: none;
+}
+.mcp-cat-docs:hover {
+  color: var(--accent);
+}
+.mcp-cat-install {
+  padding: 4px 12px;
+  font-size: 11px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.mcp-cat-install:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.mcp-cat-install:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Always-allow list editor in Settings — shows tool names the user
+   has whitelisted from the permission card with per-row remove. */
+.cc-allow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.cc-allow-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.cc-allow-name {
+  flex: 1;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  color: var(--fg);
+}
+.cc-allow-remove {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.cc-allow-remove:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+.cc-allow-clear {
+  padding: 5px 14px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.cc-allow-clear:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+/* Claude Code permission overlay — modal card surfaced when the
+   PreToolUse hook fires for a destructive tool. Floats above the
+   editor; user must Allow or Deny to unblock the agent. */
+.cc-perm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  pointer-events: auto;
+  backdrop-filter: blur(2px);
+}
+.cc-perm-card {
+  width: min(720px, 100%);
+  max-height: 80vh;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 13px;
+}
+.cc-perm-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  flex-shrink: 0;
+}
+.cc-perm-icon {
+  font-size: 16px;
+}
+.cc-perm-title {
+  flex: 1;
+  font-weight: 500;
+  color: var(--fg);
+}
+.cc-perm-title code {
+  font-family: var(--mono, monospace);
+  background: var(--bg-hi);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.cc-perm-ws {
+  font-size: 11px;
+  color: var(--fg-muted);
+  padding: 2px 8px;
+  background: var(--bg-hi);
+  border-radius: 999px;
+}
+.cc-perm-body {
+  padding: 14px 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.cc-perm-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.cc-perm-label {
+  width: 60px;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cc-perm-path {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  color: var(--fg);
+  word-break: break-all;
+}
+.cc-perm-desc {
+  color: var(--fg-dim);
+  margin-bottom: 8px;
+  font-style: italic;
+}
+.cc-perm-cmd,
+.cc-perm-content {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.cc-perm-hint {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  line-height: 1.5;
+}
+.cc-perm-edits {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cc-perm-diff {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.cc-perm-diff-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cc-perm-diff-mark {
+  width: 12px;
+  flex-shrink: 0;
+  text-align: right;
+  font-weight: 600;
+}
+.cc-perm-diff-text {
+  flex: 1;
+}
+.cc-perm-diff-rm {
+  background: rgba(239, 68, 68, 0.13);
+}
+.cc-perm-diff-rm .cc-perm-diff-mark {
+  color: #ef4444;
+}
+.cc-perm-diff-add {
+  background: rgba(34, 197, 94, 0.13);
+}
+.cc-perm-diff-add .cc-perm-diff-mark {
+  color: #22c55e;
+}
+.cc-perm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+  flex-shrink: 0;
+}
+.cc-perm-btn {
+  padding: 8px 18px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--bg);
+  color: var(--fg);
+  font-weight: 500;
+}
+.cc-perm-btn:hover {
+  background: var(--bg-hi);
+}
+.cc-perm-deny {
+  color: #ef4444;
+}
+.cc-perm-deny:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: #ef4444;
+}
+.cc-perm-allow {
+  background: var(--accent);
+  color: #0a0c10;
+  border-color: var(--accent);
+}
+.cc-perm-allow:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.cc-perm-allow-always {
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.cc-perm-allow-always:hover {
+  background: rgba(13, 110, 253, 0.10);
+  color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.cc-perm-queue {
+  text-align: center;
+  font-size: 11px;
+  color: var(--fg-muted);
+  padding: 4px 0 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* Claude Code session resume picker — header button + dropdown */
+.ai-cc-sessions-wrap {
+  position: relative;
+}
+.ai-cc-sessions-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ai-cc-sessions-btn:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.ai-cc-sessions-btn.active {
+  color: var(--fg);
+  background: var(--bg-hi);
+  border-color: var(--accent);
+}
+.ai-cc-sessions-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 320px;
+  max-width: 420px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+}
+.ai-cc-sessions-empty {
+  padding: 16px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-align: center;
+}
+.ai-cc-sessions-hint {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.ai-cc-session {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--fg);
+  border-bottom: 1px solid var(--border);
+}
+.ai-cc-session:last-child {
+  border-bottom: none;
+}
+.ai-cc-session:hover {
+  background: var(--bg-hi);
+}
+.ai-cc-session-title {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-cc-session-preview {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-cc-session-meta {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 10px;
+  font-family: var(--mono, monospace);
+  color: var(--fg-muted);
+}
+
+/* Edit / Write / MultiEdit tool calls — collapsible card showing the
+   actual diff inline so the user can see what the agent changed. */
+.ai-tcall-edit {
+  border-color: var(--border);
+}
+.ai-tcall-edit.errored {
+  border-color: var(--danger, #c43d3d);
+}
+.ai-tcall-edit-head {
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 5px 8px;
+}
+.ai-tcall-edit-head:hover {
+  background: var(--bg-hi);
+}
+.ai-tcall-edit-stats {
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--mono, monospace);
+  font-size: 10.5px;
+  margin-left: auto;
+}
+.ai-tcall-edit-rm {
+  color: #ef4444;
+}
+.ai-tcall-edit-add {
+  color: #22c55e;
+}
+.ai-tcall-caret {
+  font-size: 9px;
+  opacity: 0.65;
+  margin-left: 6px;
+}
+.ai-tcall-edit-body {
+  padding: 4px 0 6px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.ai-tcall-edit-result {
+  margin: 6px 8px 2px;
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 3px;
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  font-family: var(--mono, monospace);
+}
+.ai-tcall-edit-result.applied {
+  color: #22c55e;
+}
+.ai-tcall-edit-result.errored {
+  color: #ef4444;
+}
+.ai-diff {
+  font-family: var(--mono, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 4px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.ai-diff:not(:first-child) {
+  margin-top: 8px;
+}
+.ai-diff-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-diff-mark {
+  width: 12px;
+  flex-shrink: 0;
+  text-align: right;
+  user-select: none;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.ai-diff-text {
+  flex: 1;
+}
+.ai-diff-rm {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--fg);
+}
+.ai-diff-rm .ai-diff-mark {
+  color: #ef4444;
+}
+.ai-diff-add {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--fg);
+}
+.ai-diff-add .ai-diff-mark {
+  color: #22c55e;
+}
+
+/* Timeline scrubber — slider + branch action above the chat. Lets
+   the user revisit earlier turns and fork a new chat from any point
+   without disturbing the current conversation. The "no wrapper has
+   this" moat-builder per the roadmap. */
+.ai-scrubber {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.ai-scrubber.active {
+  background: rgba(110, 168, 255, 0.06);
+  border-bottom-color: var(--accent);
+}
+.ai-scrubber-range {
+  flex: 1;
+  height: 4px;
+  appearance: none;
+  background: var(--bg-hi);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+.ai-scrubber-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  cursor: grab;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.2);
+}
+.ai-scrubber-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  cursor: grab;
+}
+.ai-scrubber-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.ai-scrubber-pos {
+  font-family: var(--mono, monospace);
+  color: var(--accent);
+  font-weight: 500;
+}
+.ai-scrubber-hint {
+  opacity: 0.7;
+}
+.ai-scrubber-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.ai-scrubber-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Past-scrub messages — dimmed to signal they're visible but not the
+   current "viewing" position; the user can scrub past them at any
+   time. Pointer events stay enabled so existing actions (regenerate,
+   copy) still work — only opacity changes. */
+.ai-msg-scrubbed-past {
+  opacity: 0.35;
+  transition: opacity 0.15s;
+}
+.ai-msg-scrubbed-past:hover {
+  opacity: 0.7;
+}
+
+/* Sticky TodoWrite checklist — rendered above the message list while
+   an agent (Claude Code) is actively planning. Collapsible to a single
+   summary line so it doesn't dominate the panel on long sessions. */
+.ai-todos {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.ai-todos-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.ai-todos-head:hover {
+  color: var(--fg);
+  background: var(--bg-hi);
+}
+.ai-todos-icon {
+  font-size: 11px;
+  opacity: 0.8;
+}
+.ai-todos-summary {
+  flex: 1;
+  font-family: var(--mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-todos-caret {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.ai-todos-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.ai-todo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 3px 0;
+  line-height: 1.45;
+  font-family: var(--mono, monospace);
+  font-size: 11.5px;
+}
+.ai-todo-mark {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: 600;
+}
+.ai-todo-text {
+  flex: 1;
+  word-break: break-word;
+}
+.ai-todo-completed {
+  color: var(--fg-muted);
+  text-decoration: line-through;
+}
+.ai-todo-completed .ai-todo-mark {
+  color: #22c55e;
+}
+.ai-todo-in_progress {
+  color: var(--fg);
+}
+.ai-todo-in_progress .ai-todo-mark {
+  color: var(--accent);
+  animation: ai-todo-pulse 1.5s ease-in-out infinite;
+}
+@keyframes ai-todo-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.ai-todo-pending {
+  color: var(--fg-dim);
+}
+
+/* Last-turn usage chip — rendered between turns, shows the dollar cost,
+   token in/out, cache hit %, and wall time of the just-completed turn.
+   Surfaces the documented cache-miss class of cost regressions early. */
+.ai-usage-strip {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+  color: var(--fg-muted);
+  background: var(--bg-alt);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  cursor: default;
+}
+.ai-usage-text {
+  opacity: 0.85;
+}
+.ai-usage-strip:hover .ai-usage-text {
+  opacity: 1;
+  color: var(--fg-dim);
+}
+.ai-usage-total {
+  color: var(--fg-dim);
+  opacity: 0.85;
+}
+.ai-usage-total strong {
+  color: var(--fg);
+  font-weight: 500;
+}
+.ai-usage-budget {
+  font-size: 10.5px;
+  opacity: 0.7;
+}
+.ai-usage-budget.warn {
+  color: #f59e0b;
+  opacity: 1;
+}
+.ai-usage-budget.over {
+  color: #ef4444;
+  font-weight: 600;
+  opacity: 1;
+}
+
+/* Spend-budget input in Settings */
+.cc-budget-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+}
+.cc-budget-prefix,
+.cc-budget-suffix {
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-family: var(--mono, monospace);
+}
+.cc-budget-field {
+  width: 90px;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 13px;
+  font-family: var(--mono, monospace);
+  outline: none;
 }
 .ai-tps {
   padding: 2px 10px;

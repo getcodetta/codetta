@@ -64,9 +64,23 @@ export function invalidateClaudeCodeCache(): void {
 }
 
 /**
+ * On a resumed session Claude Code already has the prior history server-
+ * side, so we only need to send the most recent user turn. Falls back
+ * to the empty string if no user message exists (shouldn't happen).
+ */
+function lastUserMessage(messages: ChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === "user") return m.content;
+  }
+  return "";
+}
+
+/**
  * Flatten our internal ChatMessage history into a single prompt string for
- * `claude -p`. The CLI is one-shot; multi-turn continuity is achieved with
- * --resume <session-id>, but for simplicity we just concatenate prior turns.
+ * `claude -p`. Used only on the FIRST turn of a Claude Code conversation —
+ * subsequent turns reuse the server-side session via --resume and send
+ * just the latest user message.
  */
 function flattenMessages(messages: ChatMessage[]): string {
   const parts: string[] = [];
@@ -98,8 +112,14 @@ export const claudeCodeProvider: ChatProvider = {
     return DEFAULT_MODELS;
   },
 
-  async *chat({ model, messages, signal }) {
-    const prompt = flattenMessages(messages);
+  async *chat({ model, messages, signal, resumeSessionId }) {
+    // When resuming an existing Claude Code session, send only the LATEST
+    // user message — the CLI already has the server-side history. Sending
+    // the full transcript again would double-count it. On a fresh session
+    // we still flatten the whole thing so the model has context.
+    const prompt = resumeSessionId
+      ? lastUserMessage(messages)
+      : flattenMessages(messages);
     const cwd = (typeof window !== "undefined" &&
       (window as unknown as { __LCP_WS_ROOT?: string }).__LCP_WS_ROOT) ||
       undefined;
@@ -110,6 +130,7 @@ export const claudeCodeProvider: ChatProvider = {
         prompt,
         cwd,
         model,
+        resumeSessionId,
       });
     } catch (e) {
       throw new Error(`claude CLI failed to spawn: ${e}`);
@@ -149,7 +170,7 @@ export const claudeCodeProvider: ChatProvider = {
       try {
         const obj = JSON.parse(data.line);
         // Claude Code stream-json shape:
-        //   {"type":"system","subtype":"init",...}
+        //   {"type":"system","subtype":"init","session_id":"<uuid>",...}
         //   {"type":"assistant","message":{"role":"assistant","content":[
         //      {"type":"text","text":"..."},
         //      {"type":"tool_use","id":"...","name":"Read","input":{...}},
@@ -157,7 +178,17 @@ export const claudeCodeProvider: ChatProvider = {
         //   {"type":"user","message":{"role":"user","content":[
         //      {"type":"tool_result","tool_use_id":"...","content":"..."},
         //   ]}}
-        //   {"type":"result","subtype":"success",...}
+        //   {"type":"result","subtype":"success","session_id":"<uuid>",...}
+        // Capture the session id once at init so the chat panel can
+        // pass it back via resumeSessionId on the next turn.
+        if (
+          obj.type === "system" &&
+          obj.subtype === "init" &&
+          typeof obj.session_id === "string"
+        ) {
+          queue.push({ kind: "session", id: obj.session_id });
+          wake();
+        }
         if (obj.type === "assistant" && obj.message?.content) {
           for (const block of obj.message.content) {
             if (block.type === "text" && typeof block.text === "string") {
@@ -189,8 +220,70 @@ export const claudeCodeProvider: ChatProvider = {
           wake();
         }
         // Tool results from Claude Code's own loop arrive as user messages
-        // with tool_result blocks. We don't surface them as ChatStreamEvents
-        // since the loop on our side won't run them (Claude Code already did).
+        // with tool_result blocks. Surface them so the chat UI can render
+        // what each tool actually returned (Read file contents, Bash
+        // stdout, Glob hits, etc.) — without this the user sees only
+        // "I'll explore the codebase" → silence → final answer.
+        // End-of-turn report carries cost + token usage + total duration +
+        // model used. Surface it so the chat UI can show "$0.02 · 1.2k in /
+        // 567 out · cached 89% · 3.1s" in the status strip — invaluable for
+        // catching the documented resume-cache-miss spend regressions.
+        if (obj.type === "result") {
+          const u = (obj.usage ?? {}) as Record<string, unknown>;
+          const num = (v: unknown) =>
+            typeof v === "number" && Number.isFinite(v) ? v : 0;
+          queue.push({
+            kind: "usage",
+            cost: typeof obj.cost_usd === "number" ? obj.cost_usd : undefined,
+            durationMs:
+              typeof obj.duration_ms === "number"
+                ? obj.duration_ms
+                : undefined,
+            model: typeof obj.model === "string" ? obj.model : undefined,
+            tokens: {
+              input: num(u.input_tokens),
+              output: num(u.output_tokens),
+              cacheRead: num(u.cache_read_input_tokens),
+              cacheCreate: num(u.cache_creation_input_tokens),
+            },
+            isError: obj.is_error === true,
+          });
+          wake();
+        }
+        if (obj.type === "user" && obj.message?.content) {
+          for (const block of obj.message.content) {
+            if (block.type !== "tool_result") continue;
+            // Content can be a string OR an array of blocks (text + image).
+            // Flatten to a string for the simple chat-card renderer.
+            let text = "";
+            if (typeof block.content === "string") {
+              text = block.content;
+            } else if (Array.isArray(block.content)) {
+              text = block.content
+                .map((c: unknown) => {
+                  if (c && typeof c === "object") {
+                    const co = c as Record<string, unknown>;
+                    if (co.type === "text" && typeof co.text === "string") {
+                      return co.text;
+                    }
+                    if (co.type === "image") return "[image]";
+                  }
+                  return "";
+                })
+                .join("\n");
+            }
+            queue.push({
+              kind: "tool_result",
+              tool_use_id:
+                typeof block.tool_use_id === "string"
+                  ? block.tool_use_id
+                  : "",
+              content: text,
+              is_error: block.is_error === true,
+            });
+          }
+          wake();
+        }
       } catch {
         /* skip non-JSON lines */
       }

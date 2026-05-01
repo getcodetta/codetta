@@ -19,6 +19,19 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   /** Display-only: an opaque tag to associate a tool message with a call. */
   tool_call_id?: string;
+  /**
+   * Results of agentic provider tool calls (Claude Code Read / Edit /
+   * Bash / Glob / etc.) that the provider executed itself. Indexed by
+   * tool_use_id — the chat UI pairs each entry with its matching
+   * tool_call by id and renders a collapsible result card. We never
+   * send these BACK to the provider (Claude Code already saw them);
+   * they're purely a UI / persistence concern.
+   */
+  tool_results?: Array<{
+    tool_use_id: string;
+    content: string;
+    is_error?: boolean;
+  }>;
 }
 
 export interface ToolDef {
@@ -36,7 +49,47 @@ export interface ToolDef {
 
 export type ChatStreamEvent =
   | { kind: "content"; text: string }
-  | { kind: "tool_call"; call: ToolCall };
+  | { kind: "tool_call"; call: ToolCall }
+  /**
+   * Provider-emitted session identifier — agentic providers like Claude
+   * Code use this so subsequent turns can `--resume <id>` and keep the
+   * server-side context window alive instead of re-paying cold-start +
+   * re-stating the whole transcript every turn.
+   */
+  | { kind: "session"; id: string }
+  /**
+   * Result of a tool the provider executed itself (Claude Code runs its
+   * own internal Read / Edit / Bash / Glob loop). Pairs with the
+   * tool_call event by `tool_use_id`. Lets the chat UI render what the
+   * agent actually did/saw instead of pretending tool calls were silent.
+   */
+  | {
+      kind: "tool_result";
+      tool_use_id: string;
+      content: string;
+      is_error?: boolean;
+    }
+  /**
+   * End-of-turn usage report — Claude Code emits this in its `result`
+   * stream-json event. Lets the chat UI show cost + token breakdown so
+   * users notice runaway spend (especially with the documented
+   * resume-cache-miss class of bugs that have caused 20× cost spikes).
+   * Other providers may emit a similar event in the future; for now
+   * only Claude Code populates it.
+   */
+  | {
+      kind: "usage";
+      cost?: number;
+      durationMs?: number;
+      model?: string;
+      tokens?: {
+        input: number;
+        output: number;
+        cacheRead: number;
+        cacheCreate: number;
+      };
+      isError?: boolean;
+    };
 
 import { getProvider, parseQualifiedModel } from "./providers";
 import type { ProviderId } from "./providers";
@@ -71,12 +124,19 @@ export async function* chatStream(
   messages: ChatMessage[],
   signal?: AbortSignal,
   tools?: ToolDef[],
+  resumeSessionId?: string,
 ): AsyncGenerator<ChatStreamEvent, void, unknown> {
   const parsed = parseQualifiedModel(model);
   const providerId: ProviderId = parsed?.providerId ?? "ollama";
   const modelId = parsed?.modelId ?? model;
   const provider = getProvider(providerId);
-  yield* provider.chat({ model: modelId, messages, tools, signal });
+  yield* provider.chat({
+    model: modelId,
+    messages,
+    tools,
+    signal,
+    resumeSessionId,
+  });
 }
 
 /** Ollama-only: pull a model. Yields progress lines. */
