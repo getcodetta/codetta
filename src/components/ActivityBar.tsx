@@ -147,6 +147,14 @@ export function ActivityBar() {
           ✎
         </button>
         <button
+          className={`activity-icon ${sidebarVisible && hasSection("remote") ? "active" : ""}`}
+          title="Remote (SFTP) — click to toggle section. Manage connections in Settings."
+          onClick={() => switchView("remote")}
+          disabled={!activeId}
+        >
+          ☁
+        </button>
+        <button
           className={`activity-icon ${aiPanelVisible ? "active" : ""}`}
           title="AI Chat (local, via Ollama) — opens on the right"
           onClick={() => activeId && setAIPanelVisible(activeId, !aiPanelVisible)}

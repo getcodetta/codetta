@@ -9,6 +9,7 @@ import { SourceControlPanel } from "./SourceControlPanel";
 import { TasksPanel } from "./TasksPanel";
 import { TodosPanel } from "./TodosPanel";
 import { AIChatPanel } from "./AIChatPanel";
+import { RemoteSftpPanel } from "./RemoteSftpPanel";
 
 const VIEW_LABEL: Record<SidebarView, string> = {
   files: "Explorer",
@@ -16,6 +17,7 @@ const VIEW_LABEL: Record<SidebarView, string> = {
   tasks: "Tasks",
   todos: "TODO / FIXME",
   ai: "AI Chat",
+  remote: "Remote (SFTP)",
 };
 
 interface Props {
@@ -121,6 +123,8 @@ export function SidebarStack({ wsId, ws }: Props) {
         return <TodosPanel wsId={wsId} root={ws.meta.root} />;
       case "ai":
         return <AIChatPanel wsId={wsId} root={ws.meta.root} />;
+      case "remote":
+        return <RemoteSftpPanel wsId={wsId} root={ws.meta.root} />;
     }
   };
 
