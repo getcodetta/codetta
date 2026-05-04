@@ -1,54 +1,114 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 /**
- * Per-user allowlist of tools that auto-resolve to Allow without
- * showing the permission card. Lives in localStorage so it survives
- * app restarts but doesn't sync between machines. Granularity: tool
- * name only (e.g. "Read"). Bash always gets the card — never
- * always-allowed at the tool level since the *command* is what
- * matters and we don't pattern-match args yet.
+ * Per-user always-allow rules persisted in localStorage. Three kinds:
+ *   - Bare tool name (e.g. "Read") — auto-allow ANY call to that tool.
+ *     Bash is intentionally excluded from this path; see NEVER_BLANKET_ALLOW.
+ *   - "Bash:<prefix>" — auto-allow Bash calls whose command's first
+ *     whitespace-delimited token equals <prefix>. Lets the user say
+ *     "I always want grep / npm / git diff to run without asking" while
+ *     keeping `rm -rf` etc. behind the card.
+ *   - "Ext:<.ext>:<tool>" — auto-allow file-touching tools (Edit, Write,
+ *     Read, MultiEdit, NotebookEdit) when the target file's extension
+ *     matches. Per-tool so "always allow .ts edits" doesn't accidentally
+ *     also allow .ts writes. Stored lowercased, leading dot.
+ *
+ * Format: a JSON array of strings. Schema-loose for forward compat.
  */
 const ALLOW_ALWAYS_KEY = "lcp.claudeCode.alwaysAllow";
 
-function loadAlwaysAllow(): Set<string> {
+/** Tools whose primary input is a file path. Used for the per-extension
+ *  always-allow tier — irrelevant for tools like Bash or WebFetch. */
+const PATH_TOOLS = new Set([
+  "Edit",
+  "MultiEdit",
+  "Write",
+  "Read",
+  "NotebookEdit",
+]);
+
+interface ExtRule {
+  ext: string; // ".ts" lowercased, leading dot
+  tool: string;
+}
+
+interface AllowRules {
+  /** Tools auto-allowed in full (e.g. "Read", "Edit"). */
+  tools: Set<string>;
+  /** Bash command-prefix tokens auto-allowed (e.g. "grep", "npm"). */
+  bashPrefixes: Set<string>;
+  /** Per-tool file-extension allows (e.g. Edit on .ts). */
+  exts: ExtRule[];
+}
+
+function loadAllow(): AllowRules {
+  const out: AllowRules = {
+    tools: new Set(),
+    bashPrefixes: new Set(),
+    exts: [],
+  };
   try {
     const raw = localStorage.getItem(ALLOW_ALWAYS_KEY);
-    if (!raw) return new Set();
+    if (!raw) return out;
     const arr = JSON.parse(raw);
-    return new Set(Array.isArray(arr) ? arr.filter((s) => typeof s === "string") : []);
+    if (!Array.isArray(arr)) return out;
+    for (const v of arr) {
+      if (typeof v !== "string") continue;
+      if (v.startsWith("Bash:")) out.bashPrefixes.add(v.slice(5));
+      else if (v.startsWith("Ext:")) {
+        const rest = v.slice(4);
+        const colon = rest.indexOf(":");
+        if (colon < 0) continue;
+        const ext = rest.slice(0, colon).toLowerCase();
+        const tool = rest.slice(colon + 1);
+        if (ext && tool) out.exts.push({ ext, tool });
+      } else out.tools.add(v);
+    }
   } catch {
-    return new Set();
+    /* localStorage corrupted — start fresh */
   }
+  return out;
 }
 
-function persistAlwaysAllow(set: Set<string>): void {
+function persistAllow(rules: AllowRules): void {
+  const flat = [
+    ...rules.tools,
+    ...[...rules.bashPrefixes].map((p) => `Bash:${p}`),
+    ...rules.exts.map((r) => `Ext:${r.ext}:${r.tool}`),
+  ];
   try {
-    localStorage.setItem(ALLOW_ALWAYS_KEY, JSON.stringify([...set]));
+    localStorage.setItem(ALLOW_ALWAYS_KEY, JSON.stringify(flat));
   } catch {
-    /* localStorage full — best-effort */
+    /* full — best-effort */
   }
 }
 
-const NEVER_AUTO_ALLOW = new Set(["Bash"]);
+function pathFromInput(input: Record<string, unknown>): string | null {
+  const fp = input.file_path;
+  if (typeof fp === "string" && fp) return fp;
+  const np = input.notebook_path;
+  if (typeof np === "string" && np) return np;
+  return null;
+}
 
-/**
- * Floating modal that surfaces Claude Code's PreToolUse permission
- * requests as the agent runs. The Rust side hosts a localhost HTTP
- * server; the Claude CLI's PreToolUse hook (installed automatically
- * in `.claude/settings.local.json` per workspace) POSTs each tool
- * call to that server, which emits `claude:permission-request` and
- * blocks until the user clicks Allow / Deny.
- *
- * Why an app-level overlay instead of a per-chat-panel inline card?
- *   - Permission requests are blocking events from a subprocess. The
- *     user has to deal with them now, regardless of which chat panel
- *     is currently focused.
- *   - Multiple workspaces may be running Claude Code simultaneously;
- *     the cwd field on each request lets us label which workspace it
- *     came from without having to thread session IDs through panels.
- */
+function extFromPath(path: string): string | null {
+  const norm = path.replace(/\\/g, "/");
+  const base = norm.slice(norm.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0 || dot === base.length - 1) return null; // no ext or trailing dot
+  return base.slice(dot).toLowerCase();
+}
+
+/** Tools we refuse to add as bare-name always-allow even if user clicks. */
+const NEVER_BLANKET_ALLOW = new Set(["Bash"]);
+
+/** First whitespace-delimited token of a Bash command. */
+function bashFirstToken(cmd: string): string {
+  return cmd.trim().split(/\s+/, 1)[0] ?? "";
+}
+
 interface PermissionRequest {
   request_id: string;
   tool_name: string;
@@ -57,79 +117,117 @@ interface PermissionRequest {
   session_id?: string | null;
 }
 
+/**
+ * Decide whether an incoming request should auto-resolve to allow.
+ * Pure function — easy to test, no React state involvement.
+ */
+function shouldAutoAllow(req: PermissionRequest, rules: AllowRules): boolean {
+  if (rules.tools.has(req.tool_name) && !NEVER_BLANKET_ALLOW.has(req.tool_name)) {
+    return true;
+  }
+  if (req.tool_name === "Bash") {
+    const cmd =
+      typeof req.tool_input.command === "string"
+        ? req.tool_input.command
+        : "";
+    const first = bashFirstToken(cmd);
+    if (first && rules.bashPrefixes.has(first)) return true;
+  }
+  if (PATH_TOOLS.has(req.tool_name)) {
+    const p = pathFromInput(req.tool_input);
+    const ext = p ? extFromPath(p) : null;
+    if (ext && rules.exts.some((r) => r.ext === ext && r.tool === req.tool_name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Floating modal that surfaces Claude Code's PreToolUse permission
+ * requests. Two-tier always-allow:
+ *   - Tool-name (Read/Edit/Write/etc.) → auto-allow on next request
+ *   - Bash command prefix (grep, npm, git, …) → auto-allow that prefix
+ *
+ * Plus a "this session" tier that lives in memory only and resets on
+ * app restart — for "I'm doing focused work, stop interrupting me"
+ * without committing to a forever-allow.
+ */
 export function ClaudePermissionOverlay() {
   const [queue, setQueue] = useState<PermissionRequest[]>([]);
-  const [alwaysAllow, setAlwaysAllow] = useState<Set<string>>(() =>
-    loadAlwaysAllow(),
-  );
 
-  // Auto-resolve helper called for every incoming request — if the
-  // tool is in the always-allow set, decide immediately without ever
-  // queueing the card.
-  const autoResolveOrEnqueue = (req: PermissionRequest) => {
-    if (
-      alwaysAllow.has(req.tool_name) &&
-      !NEVER_AUTO_ALLOW.has(req.tool_name)
-    ) {
-      void invoke("claude_perm_decide", {
-        requestId: req.request_id,
-        decision: "allow",
-      }).catch((e) => console.warn("auto-allow failed", e));
-      return;
-    }
-    setQueue((q) => [...q, req]);
-  };
+  // Persisted always-allow. Mirrored to a ref so the listener (which
+  // is registered once and lives forever) can read fresh state without
+  // closure-staleness.
+  const [allow, setAllow] = useState<AllowRules>(() => loadAllow());
+  const allowRef = useRef(allow);
+  useEffect(() => {
+    allowRef.current = allow;
+  }, [allow]);
 
-  // Use a ref pattern so the listener (registered once) sees the
-  // up-to-date allowlist. Plain closure capture would freeze it.
-  const allowRef = (function useRefAllow() {
-    // useRef would import; reuse useState's setter pattern via a
-    // small inline closure module is overkill. Instead expose
-    // alwaysAllow through a stable accessor by re-deriving inside
-    // the listener:
-    return alwaysAllow;
-  })();
-  void allowRef;
+  // Session-only allow — in-memory, resets on app reload. Same shape
+  // as persisted rules so the auto-resolve check is uniform.
+  const sessionAllowRef = useRef<AllowRules>({
+    tools: new Set(),
+    bashPrefixes: new Set(),
+    exts: [],
+  });
 
   useEffect(() => {
     let offReq: (() => void) | undefined;
     let offCancel: (() => void) | undefined;
+
     void listen<PermissionRequest>("claude:permission-request", (e) => {
-      // Re-read from localStorage on each event so updates from
-      // "Allow always" propagate without reloading the listener.
-      const allow = loadAlwaysAllow();
-      if (allow.has(e.payload.tool_name) && !NEVER_AUTO_ALLOW.has(e.payload.tool_name)) {
+      const req = e.payload;
+      // Check both the persisted rules AND the in-memory session rules.
+      // Read latest via refs so we never miss a recent click.
+      if (
+        shouldAutoAllow(req, allowRef.current) ||
+        shouldAutoAllow(req, sessionAllowRef.current)
+      ) {
         void invoke("claude_perm_decide", {
-          requestId: e.payload.request_id,
+          requestId: req.request_id,
           decision: "allow",
         }).catch((err) => console.warn("auto-allow failed", err));
         return;
       }
-      setQueue((q) => [...q, e.payload]);
+      setQueue((q) => [...q, req]);
     }).then((u) => {
       offReq = u;
     });
-    // Server emits this when the hook timed out before the user
-    // clicked. Drop the orphaned card so the user isn't acting on
-    // a request the agent has already given up on.
+
     void listen<string>("claude:permission-cancelled", (e) => {
       const requestId = e.payload;
       setQueue((q) => q.filter((r) => r.request_id !== requestId));
     }).then((u) => {
       offCancel = u;
     });
+
     return () => {
       offReq?.();
       offCancel?.();
     };
   }, []);
-  void autoResolveOrEnqueue;
 
   if (queue.length === 0) return null;
   const req = queue[0];
-  const canAlwaysAllow = !NEVER_AUTO_ALLOW.has(req.tool_name);
+  const isBash = req.tool_name === "Bash";
+  const bashCmd =
+    isBash && typeof req.tool_input.command === "string"
+      ? req.tool_input.command
+      : "";
+  const bashPrefix = isBash ? bashFirstToken(bashCmd) : "";
+  const canBlanketAllow = !NEVER_BLANKET_ALLOW.has(req.tool_name);
+  // File-extension always-allow only makes sense for tools whose primary
+  // input is a file path (Edit/Write/Read/MultiEdit/NotebookEdit).
+  const fileExt = PATH_TOOLS.has(req.tool_name)
+    ? (() => {
+        const p = pathFromInput(req.tool_input);
+        return p ? extFromPath(p) : null;
+      })()
+    : null;
 
-  const decide = async (decision: "allow" | "deny") => {
+  const respond = async (decision: "allow" | "deny") => {
     try {
       await invoke("claude_perm_decide", {
         requestId: req.request_id,
@@ -141,12 +239,56 @@ export function ClaudePermissionOverlay() {
     setQueue((q) => q.slice(1));
   };
 
-  const allowAlways = async () => {
-    const next = new Set(alwaysAllow);
-    next.add(req.tool_name);
-    setAlwaysAllow(next);
-    persistAlwaysAllow(next);
-    await decide("allow");
+  const allowAlwaysTool = async () => {
+    const next: AllowRules = {
+      tools: new Set(allow.tools).add(req.tool_name),
+      bashPrefixes: new Set(allow.bashPrefixes),
+      exts: [...allow.exts],
+    };
+    setAllow(next);
+    persistAllow(next);
+    await respond("allow");
+  };
+
+  const allowAlwaysBashPrefix = async () => {
+    const next: AllowRules = {
+      tools: new Set(allow.tools),
+      bashPrefixes: new Set(allow.bashPrefixes).add(bashPrefix),
+      exts: [...allow.exts],
+    };
+    setAllow(next);
+    persistAllow(next);
+    await respond("allow");
+  };
+
+  const allowAlwaysExt = async () => {
+    if (!fileExt) return;
+    const exists = allow.exts.some(
+      (r) => r.ext === fileExt && r.tool === req.tool_name,
+    );
+    const next: AllowRules = {
+      tools: new Set(allow.tools),
+      bashPrefixes: new Set(allow.bashPrefixes),
+      exts: exists ? [...allow.exts] : [...allow.exts, { ext: fileExt, tool: req.tool_name }],
+    };
+    setAllow(next);
+    persistAllow(next);
+    await respond("allow");
+  };
+
+  // "Allow this session" — in-memory only, resets on app reload. For
+  // Bash we widen to the prefix; for path-tools we widen to the exact
+  // extension; for everything else we widen to the tool name. Same UX
+  // promise: stop asking until the app restarts.
+  const allowThisSession = async () => {
+    if (isBash && bashPrefix) {
+      sessionAllowRef.current.bashPrefixes.add(bashPrefix);
+    } else if (fileExt) {
+      sessionAllowRef.current.exts.push({ ext: fileExt, tool: req.tool_name });
+    } else {
+      sessionAllowRef.current.tools.add(req.tool_name);
+    }
+    await respond("allow");
   };
 
   return (
@@ -156,23 +298,54 @@ export function ClaudePermissionOverlay() {
         <div className="cc-perm-actions">
           <button
             className="cc-perm-btn cc-perm-deny"
-            onClick={() => void decide("deny")}
+            onClick={() => void respond("deny")}
             title="Block this tool call. The agent treats it as a failure and may try a different approach."
           >
             ✕ Deny
           </button>
-          {canAlwaysAllow && (
+          <button
+            className="cc-perm-btn cc-perm-allow-session"
+            onClick={() => void allowThisSession()}
+            title={
+              isBash && bashPrefix
+                ? `Auto-allow any "${bashPrefix} ..." for the rest of this Codetta session (resets on restart).`
+                : `Auto-allow ${req.tool_name} for the rest of this Codetta session (resets on restart).`
+            }
+          >
+            ✓ Allow this session
+          </button>
+          {isBash && bashPrefix && (
             <button
               className="cc-perm-btn cc-perm-allow-always"
-              onClick={() => void allowAlways()}
-              title={`Always allow ${req.tool_name} for this user. You can revoke from Settings.`}
+              onClick={() => void allowAlwaysBashPrefix()}
+              title={`Always allow Bash commands starting with "${bashPrefix}". Persisted across restarts. Manage in Settings.`}
+            >
+              ✓✓ Always allow{" "}
+              <code className="cc-perm-prefix">{bashPrefix}</code>
+            </button>
+          )}
+          {fileExt && (
+            <button
+              className="cc-perm-btn cc-perm-allow-always"
+              onClick={() => void allowAlwaysExt()}
+              title={`Always allow ${req.tool_name} on ${fileExt} files. Persisted. Manage in Settings.`}
+            >
+              ✓✓ Always allow {req.tool_name} on{" "}
+              <code className="cc-perm-prefix">{fileExt}</code>
+            </button>
+          )}
+          {canBlanketAllow && (
+            <button
+              className="cc-perm-btn cc-perm-allow-always"
+              onClick={() => void allowAlwaysTool()}
+              title={`Always allow every ${req.tool_name} call. Persisted. Manage in Settings.`}
             >
               ✓✓ Always allow {req.tool_name}
             </button>
           )}
           <button
             className="cc-perm-btn cc-perm-allow"
-            onClick={() => void decide("allow")}
+            onClick={() => void respond("allow")}
             title="Run this single call. You'll be prompted again next time."
           >
             ✓ Allow once
@@ -215,7 +388,6 @@ function PermissionInputRenderer({
   tool: string;
   input: Record<string, unknown>;
 }) {
-  // Bash — show the literal command, big.
   if (tool === "Bash") {
     const cmd =
       typeof input.command === "string" ? input.command : JSON.stringify(input);
@@ -232,7 +404,6 @@ function PermissionInputRenderer({
       </>
     );
   }
-  // Edit / MultiEdit — show file path + diff hunks.
   if (tool === "Edit" || tool === "MultiEdit") {
     const path =
       typeof input.file_path === "string" ? input.file_path : "(unknown)";
@@ -264,12 +435,10 @@ function PermissionInputRenderer({
       </>
     );
   }
-  // Write — show file path + new content (truncated).
   if (tool === "Write") {
     const path =
       typeof input.file_path === "string" ? input.file_path : "(unknown)";
-    const content =
-      typeof input.content === "string" ? input.content : "";
+    const content = typeof input.content === "string" ? input.content : "";
     const truncated = content.length > 4000;
     return (
       <>
@@ -283,7 +452,6 @@ function PermissionInputRenderer({
       </>
     );
   }
-  // NotebookEdit — show notebook path + cell info.
   if (tool === "NotebookEdit") {
     const path =
       typeof input.notebook_path === "string"
@@ -296,11 +464,8 @@ function PermissionInputRenderer({
       </div>
     );
   }
-  // Fallback — pretty-print the input as JSON.
   return (
-    <pre className="cc-perm-content">
-      {JSON.stringify(input, null, 2)}
-    </pre>
+    <pre className="cc-perm-content">{JSON.stringify(input, null, 2)}</pre>
   );
 }
 

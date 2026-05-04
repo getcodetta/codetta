@@ -112,7 +112,7 @@ export const claudeCodeProvider: ChatProvider = {
     return DEFAULT_MODELS;
   },
 
-  async *chat({ model, messages, signal, resumeSessionId }) {
+  async *chat({ model, messages, signal, resumeSessionId, chatSessionId }) {
     // When resuming an existing Claude Code session, send only the LATEST
     // user message — the CLI already has the server-side history. Sending
     // the full transcript again would double-count it. On a fresh session
@@ -131,6 +131,7 @@ export const claudeCodeProvider: ChatProvider = {
         cwd,
         model,
         resumeSessionId,
+        chatSessionId,
       });
     } catch (e) {
       throw new Error(`claude CLI failed to spawn: ${e}`);

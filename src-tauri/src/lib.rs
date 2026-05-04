@@ -5,6 +5,7 @@ mod fs_ops;
 mod git;
 mod pty;
 mod search;
+mod sftp;
 mod watcher;
 mod workspace;
 
@@ -81,6 +82,8 @@ pub fn run() {
             claude_code::claude_code_check,
             claude_code::claude_code_chat,
             claude_code::claude_code_kill,
+            claude_code::claude_code_attach,
+            claude_code::claude_code_clear_session,
             claude_code::claude_code_list_sessions,
             claude_code::claude_code_load_session,
             claude_perm::claude_perm_decide,
@@ -88,6 +91,14 @@ pub fn run() {
             claude_mcp::claude_mcp_list,
             claude_mcp::claude_mcp_add,
             claude_mcp::claude_mcp_remove,
+            sftp::sftp_test_connection,
+            sftp::sftp_list_dir,
+            sftp::sftp_read_file,
+            sftp::sftp_write_file,
+            sftp::sftp_delete,
+            sftp::sftp_mkdir,
+            sftp::sftp_upload_dir,
+            sftp::sftp_download_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

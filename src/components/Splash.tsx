@@ -1,5 +1,7 @@
 import { useStore } from "../store";
 
+const VERSION = "v0.2.0";
+
 export function Splash() {
   const progress = useStore((s) => s.hydrateProgress);
   const pct = Math.max(
@@ -9,18 +11,30 @@ export function Splash() {
   return (
     <div className="splash">
       <div className="splash-card">
-        <div className="splash-brand">Codetta</div>
-        <div className="splash-tagline">A lightweight desktop code editor with AI</div>
+        <div className="splash-mark">
+          <span className="splash-mark-letter">C</span>
+        </div>
+        <div className="splash-wordmark">
+          <span className="splash-wordmark-text">CODETTA</span>
+          <span className="splash-wordmark-version">{VERSION}</span>
+        </div>
+        <div className="splash-tagline">
+          A lightweight desktop code editor with first-class AI
+        </div>
         <div className="splash-progress-track">
           <div
             className="splash-progress-fill"
             style={{ width: `${pct}%` }}
           />
+          <div className="splash-progress-shimmer" />
         </div>
         <div className="splash-status">
-          <span className="splash-phase">{progress.phase}</span>
+          <span className="splash-phase">{progress.phase || "Loading…"}</span>
           <span className="splash-pct">{Math.round(pct)}%</span>
         </div>
+      </div>
+      <div className="splash-credit">
+        © {new Date().getFullYear()} Codetta · Open source
       </div>
     </div>
   );

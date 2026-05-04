@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   chatStream,
   ping,
@@ -207,11 +209,18 @@ function pickPriorityFiles(allFiles: string[]): string[] {
   return picked;
 }
 
-// Strip stale tool-result messages from a persisted chat session. Old
-// sessions may contain "Unknown tool: X" rows from before we learned to
-// skip the local tool-execution loop for agentic providers (Claude Code).
+// Strip messages that should never be rendered or replayed from a
+// persisted chat session:
+//   - role:"system" rows (older versions stored the rebuilt system prompt
+//     inside the saved messages, so reopening an old chat would show
+//     "[System]\nYou are a helpful coding assistant…" as a chat bubble).
+//     The system prompt is rebuilt fresh on every send, so dropping these
+//     is always safe.
+//   - "Unknown tool: X" tool rows from before we learned to skip the local
+//     tool-execution loop for agentic providers.
 function cleanStaleToolMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.filter((m) => {
+    if (m.role === "system") return false;
     if (m.role !== "tool") return true;
     if (/^Unknown tool:/i.test(m.content)) return false;
     return true;
@@ -684,9 +693,15 @@ function insertIntoActiveEditor(text: string): boolean {
 }
 
 export function AIChatPanel({ wsId, root, aiChatId }: Props) {
+  // Start in "ready" rather than "checking" so the panel renders the
+  // normal UI immediately on open. "Checking for Ollama…" used to flash
+  // up before model discovery finished, which was confusing for users
+  // who don't even use Ollama (they're on Claude Code or a cloud key).
+  // Discovery still runs in the background and may flip the state to
+  // "missing" / "no-models" if no models exist anywhere.
   const [status, setStatus] = useState<
     "checking" | "missing" | "ready" | "no-models"
-  >("checking");
+  >("ready");
   const [allModels, setAllModels] = useState<ProviderModel[]>([]);
   // Curated cloud models, shown in the browser regardless of key status so
   // users can discover what's available before setting up a key.
@@ -708,9 +723,12 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     : null;
   const [attachContext, setAttachContext] = useState(true);
   const [runningTools, setRunningTools] = useState(false);
-  // Compact descriptions of tool calls currently in flight (e.g. "read_file
-  // package.json"), so the user can see what the AI is doing at a glance.
-  const [activeToolLabels, setActiveToolLabels] = useState<string[]>([]);
+  // Tool calls currently in flight, with enough detail per row to render
+  // a per-line "Tool path" + a short preview of the change (so the user
+  // can see what's about to land instead of a truncated "+7" overflow).
+  const [activeToolLabels, setActiveToolLabels] = useState<
+    Array<{ name: string; detail: string; preview?: string }>
+  >([]);
   // Inline permission request — when a tool needs "ask" approval, instead
   // of popping a modal we render a card in the chat with multiple options.
   // The chat loop awaits a Promise that resolves when the user clicks one.
@@ -905,8 +923,132 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     (window as unknown as { __LCP_WS_ROOT?: string }).__LCP_WS_ROOT = root;
   }, [root]);
 
+  // Refresh-resume: on mount, ask Rust if there's an in-flight (or
+  // recently-completed-since-app-start) Claude Code stream for this
+  // chat session id. If yes, replay every buffered event so the user
+  // sees the partial assistant text + active tool calls exactly as they
+  // were before the page reload, then subscribe to live events going
+  // forward. Without this, a refresh during a long agentic turn would
+  // strand the user with an apparently-frozen UI while the subprocess
+  // kept running invisibly in the background.
+  useEffect(() => {
+    if (!sessionId) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
+    const replayLine = (line: { kind?: string; line?: string; code?: number }) => {
+      if (line.kind === "end") {
+        // Subprocess finished. Finalize: collect any accumulated streaming
+        // text + active tool calls into a real assistant message so it
+        // gets persisted. The next round will re-send a fresh system prompt.
+        setStreaming((acc) => {
+          const text = acc ?? "";
+          if (text.length > 0) {
+            const msg: ChatMessage = { role: "assistant", content: text };
+            setMessages((m) => [...m, msg]);
+          }
+          return null;
+        });
+        setRunningTools(false);
+        setActiveToolLabels([]);
+        return;
+      }
+      if (line.kind === "stderr" && line.line) {
+        setStreaming((acc) =>
+          (acc ?? "") + `\n[claude] ${line.line}`,
+        );
+        return;
+      }
+      if (line.kind !== "line" || !line.line) return;
+      try {
+        const obj = JSON.parse(line.line);
+        if (
+          obj.type === "system" &&
+          obj.subtype === "init" &&
+          typeof obj.session_id === "string"
+        ) {
+          setClaudeSessionId(obj.session_id);
+        }
+        if (obj.type === "assistant" && obj.message?.content) {
+          for (const block of obj.message.content) {
+            if (block.type === "text" && typeof block.text === "string") {
+              setStreaming((acc) => (acc ?? "") + block.text);
+            } else if (block.type === "tool_use") {
+              const args =
+                block.input && typeof block.input === "object"
+                  ? (block.input as Record<string, unknown>)
+                  : {};
+              const name = typeof block.name === "string" ? block.name : "tool";
+              const detail = toolDetailFor(name, args);
+              let preview: string | undefined;
+              if (name === "Edit" && typeof args.new_string === "string") {
+                preview = args.new_string;
+              } else if (name === "Write" && typeof args.content === "string") {
+                preview = args.content;
+              } else if (name === "Bash" && typeof args.command === "string") {
+                preview = args.command;
+              }
+              setActiveToolLabels((labels) => {
+                const next = labels.slice(-9);
+                next.push({ name, detail, preview });
+                return next;
+              });
+              setRunningTools(true);
+            }
+          }
+        }
+      } catch {
+        /* skip non-JSON */
+      }
+    };
+
+    void invoke<{
+      stream_id: string;
+      lines: Array<{ kind?: string; line?: string; code?: number }>;
+      ended: number | null;
+    } | null>("claude_code_attach", { chatSessionId: sessionId })
+      .then(async (att) => {
+        if (cancelled || !att) return;
+        // Replay everything we missed.
+        for (const ln of att.lines) replayLine(ln);
+        // If still running, subscribe for new events.
+        if (att.ended === null) {
+          try {
+            const u = await listen<{
+              kind?: string;
+              line?: string;
+              code?: number;
+            }>(`claude-stream:${att.stream_id}`, (e) => replayLine(e.payload));
+            if (cancelled) {
+              u();
+              return;
+            }
+            unlisten = u;
+          } catch (e) {
+            console.warn("resume listen failed", e);
+          }
+        }
+      })
+      .catch((e) => console.warn("resume attach failed", e));
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+    // We deliberately depend ONLY on sessionId (the chat-tab id), not on
+    // the message list — re-running this effect after every assistant
+    // message would re-replay buffered events.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
   useEffect(() => {
     if (selected) localStorage.setItem(STORAGE_KEY, selected);
+    // Mirror the selected model onto the chat descriptor so the AI
+    // chats rail can render a per-chat provider badge without each rail
+    // row mounting an AIChatPanel itself.
+    if (selected && aiChatId) {
+      useStore.getState().setAIChatModel(wsId, aiChatId, selected);
+    }
     // Pre-warm Ollama models on selection so the first chat doesn't pay the
     // cold-start cost (often 20-60s for a 32B model).
     if (!selected) return;
@@ -916,7 +1058,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     void warmupOllamaModel(parsed.modelId).finally(() => {
       setWarmingUp(false);
     });
-  }, [selected]);
+  }, [selected, aiChatId, wsId]);
 
   // Track whether user is parked at the bottom. We only auto-follow when
   // they were already at (or near) the bottom — otherwise we leave their
@@ -1066,7 +1208,28 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     const activeKey = ap && ap.kind === "tabs" ? ap.active : null;
     const parsed = activeKey ? parseKey(activeKey) : null;
     const sysParts: string[] = [
-      "You are a helpful coding assistant embedded in a code editor. Keep answers concise and reference the user's file when relevant.",
+      [
+        "You are a coding agent embedded in Codetta, a desktop code editor.",
+        "The user has a workspace open and you are running with the workspace root as the current working directory.",
+        "",
+        "OPERATING PRINCIPLES",
+        "- Investigate before answering. Ground every claim in real code — never guess at file paths, function names, or APIs.",
+        "- Read enough context to be useful. For non-trivial questions read 5+ relevant files before responding; for quick questions one file is fine.",
+        "- Run tools in parallel whenever they're independent (multiple reads, multiple greps in one turn).",
+        "- When changing code, keep edits minimal and focused on what the user asked. Don't refactor surrounding code, don't add speculative features, don't invent new abstractions.",
+        "- Default to no comments. Add a comment only when WHY is non-obvious.",
+        "- If something isn't in the codebase or you don't know it, say so — don't fabricate.",
+        "",
+        "COMMUNICATION",
+        "- Reply in concise prose with markdown formatting. Reference files using `path:line` format so they're clickable.",
+        "- Match response length to the question: a one-line question gets a one-line answer, not headers and sections.",
+        "- For multi-step work, give brief progress updates between tool batches.",
+        "- End with what changed and what's next, in 1-2 sentences. Skip long recaps.",
+        "",
+        "SAFETY",
+        "- Confirm before destructive actions (rm, dropping branches, force-push, deleting data).",
+        "- Don't push, deploy, or send messages to external systems without explicit user approval.",
+      ].join("\n"),
     ];
     // Auto-attach the project tree when:
     //   1. The user explicitly typed /tree (attachTree flag), OR
@@ -1284,6 +1447,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           // already have one captured from a prior turn in this chat.
           // Other providers ignore this param.
           selectedProvider === "claude-code" ? claudeSessionId : undefined,
+          // chatSessionId tags the in-flight stream in the Rust buffer
+          // so a frontend refresh can re-attach via attachToChat().
+          selectedProvider === "claude-code" ? sessionId : undefined,
         )) {
           if (ev.kind === "session") {
             // Captured the Claude Code session id — store it so the next
@@ -1362,24 +1528,30 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             // sees what's happening during long agentic streams (Claude
             // Code may emit many tool_use blocks before any text content).
             const args = ev.call.function.arguments;
-            const detail =
-              typeof args.path === "string"
-                ? args.path
-                : typeof args.file_path === "string"
-                  ? args.file_path
-                  : typeof args.pattern === "string"
-                    ? args.pattern
-                    : typeof args.query === "string"
-                      ? args.query
-                      : typeof args.command === "string"
-                        ? args.command.slice(0, 60)
-                        : "";
-            const label = detail
-              ? `${ev.call.function.name} ${detail}`
-              : ev.call.function.name;
+            const name = ev.call.function.name;
+            const detail = toolDetailFor(name, args);
+            // Preview: short snippet of the change so the user sees what's
+            // landing without scrolling. For Edit/MultiEdit show the new
+            // text, for Write show the content, for Bash echo the command.
+            let preview: string | undefined;
+            if (name === "Edit" && typeof args.new_string === "string") {
+              preview = args.new_string;
+            } else if (
+              name === "MultiEdit" &&
+              Array.isArray(args.edits) &&
+              args.edits.length > 0
+            ) {
+              const first = args.edits[0] as Record<string, unknown>;
+              if (typeof first.new_string === "string") preview = first.new_string;
+            } else if (name === "Write" && typeof args.content === "string") {
+              preview = args.content;
+            } else if (name === "Bash" && typeof args.command === "string") {
+              preview = args.command;
+            }
+            const entry = { name, detail, preview };
             setActiveToolLabels((labels) => {
               const next = labels.slice(-9);
-              next.push(label);
+              next.push(entry);
               return next;
             });
             setRunningTools(true);
@@ -1453,15 +1625,14 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         setActiveToolLabels(
           toolCallsThisRound.map((c) => {
             const args = c.function.arguments;
-            const path =
-              typeof args.path === "string"
-                ? args.path
-                : typeof args.query === "string"
-                  ? args.query
-                  : "";
-            return path
-              ? `${c.function.name} ${path}`
-              : c.function.name;
+            const detail = toolDetailFor(c.function.name, args);
+            let preview: string | undefined;
+            if (c.function.name === "edit_file" && typeof args.new_text === "string") {
+              preview = args.new_text;
+            } else if (c.function.name === "create_file" && typeof args.content === "string") {
+              preview = args.content;
+            }
+            return { name: c.function.name, detail, preview };
           }),
         );
         const finishToolCall = (call: ToolCall, result: string) => {
@@ -1928,8 +2099,18 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   };
 
   const display = useMemo(() => {
-    const arr: ChatMessage[] = [...messages];
-    if (streaming !== null) arr.push({ role: "assistant", content: streaming });
+    // System messages are infrastructure: they're rebuilt fresh per turn
+    // and shouldn't appear as chat bubbles. Hide them defensively in case
+    // any path (old session, future bug) leaves one in `messages`.
+    const arr: ChatMessage[] = messages.filter((m) => m.role !== "system");
+    // Only render the in-progress assistant bubble once there's actual
+    // content to show. While the stream is empty (model is still
+    // thinking, or running tools), skip the bubble — the inline status
+    // strip below already conveys "working on it" without a giant
+    // empty whitespace block in the conversation.
+    if (streaming !== null && streaming.trim().length > 0) {
+      arr.push({ role: "assistant", content: streaming });
+    }
     return arr;
   }, [messages, streaming]);
 
@@ -1953,13 +2134,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     editorState.selectionLines,
   ]);
 
-  if (status === "checking") {
-    return (
-      <div className="ai-panel">
-        <div className="ai-empty">Checking for Ollama…</div>
-      </div>
-    );
-  }
+  // No early-return for "checking" — render the normal panel and let
+  // model discovery populate the dropdown when it finishes. The previous
+  // "Checking for Ollama…" splash was misleading for users who don't
+  // run Ollama at all.
 
   if (status === "missing") {
     return (
@@ -2436,12 +2614,24 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           (streaming !== null && tokensPerSec !== null)) && (
           <div className="ai-inline-status">
             {runningTools && (
-              <span className="ai-thinking">
-                <span className="ai-spinner" />
-                {activeToolLabels.length > 0
-                  ? `Running: ${activeToolLabels.slice(0, 3).join(", ")}${activeToolLabels.length > 3 ? ` +${activeToolLabels.length - 3}` : ""}`
-                  : "Running tools…"}
-              </span>
+              <div className="ai-running-tools">
+                {activeToolLabels.length === 0 ? (
+                  <span className="ai-thinking">
+                    <span className="ai-spinner" /> Running tools…
+                  </span>
+                ) : (
+                  <>
+                    <span className="ai-thinking ai-running-header">
+                      <span className="ai-spinner" /> Running{" "}
+                      {activeToolLabels.length} tool
+                      {activeToolLabels.length === 1 ? "" : "s"}
+                    </span>
+                    {activeToolLabels.map((t, i) => (
+                      <RunningToolRow key={i} entry={t} />
+                    ))}
+                  </>
+                )}
+              </div>
             )}
             {streaming !== null &&
               warmingUp &&
@@ -3154,6 +3344,122 @@ function UsageChip({ usage }: UsageChipProps) {
   }
   if (parts.length === 0) return null;
   return <span className="ai-usage-text">{parts.join(" · ")}</span>;
+}
+
+// Pick the most-informative argument to show alongside the tool name
+// in the running-tools status rows. Falls through a list of common arg
+// names so this works for both Claude Code's tool catalog (file_path,
+// command, url, …) and our own (path, query, …).
+function toolDetailFor(
+  _name: string,
+  args: Record<string, unknown>,
+): string {
+  // url first for WebFetch — without this, WebFetch rows showed an
+  // empty detail and looked like floating buttons in the status panel.
+  for (const key of [
+    "url",
+    "path",
+    "file_path",
+    "notebook_path",
+    "pattern",
+    "query",
+    "prompt",
+    "command",
+  ]) {
+    const v = args[key];
+    if (typeof v === "string" && v.length > 0) {
+      return key === "command" ? v.slice(0, 200) : v;
+    }
+  }
+  return "";
+}
+
+// One-character icon per tool family. Helps the user scan a list of
+// 6+ in-flight calls without reading each name.
+function toolIconFor(name: string): string {
+  switch (name) {
+    case "Read":
+    case "Glob":
+      return "📄";
+    case "Grep":
+    case "WebSearch":
+      return "🔎";
+    case "Edit":
+    case "MultiEdit":
+      return "✏";
+    case "Write":
+    case "create_file":
+      return "✨";
+    case "Bash":
+      return "⌨";
+    case "WebFetch":
+      return "🌐";
+    case "TodoWrite":
+      return "✅";
+    case "NotebookEdit":
+      return "📓";
+    default:
+      return "•";
+  }
+}
+
+function RunningToolRow({
+  entry,
+}: {
+  entry: { name: string; detail: string; preview?: string };
+}) {
+  // Compact display detail. For paths: keep the last two segments
+  // ("…/projects/index.html"). For URLs: hostname + truncated path
+  // ("supple.com.au/author/bishal"). Plain strings: untouched.
+  const niceDetail = (() => {
+    if (!entry.detail) return "";
+    if (/^https?:\/\//i.test(entry.detail)) {
+      try {
+        const u = new URL(entry.detail);
+        const path = (u.pathname + (u.search || "")).replace(/\/$/, "");
+        const tail = path.length > 36 ? path.slice(0, 33) + "…" : path;
+        return u.host + tail;
+      } catch {
+        return entry.detail;
+      }
+    }
+    const norm = entry.detail.replace(/\\/g, "/");
+    if (!norm.includes("/")) return norm;
+    const parts = norm.split("/").filter(Boolean);
+    if (parts.length <= 2) return norm;
+    return "…/" + parts.slice(-2).join("/");
+  })();
+  const previewLines = entry.preview
+    ? entry.preview.split("\n").slice(0, 6).join("\n").trim()
+    : "";
+  const previewTruncated =
+    entry.preview && entry.preview.split("\n").length > 6;
+  const icon = toolIconFor(entry.name);
+  return (
+    <div className="ai-running-row">
+      <div className="ai-running-row-head">
+        <span className="ai-running-row-icon" aria-hidden>
+          {icon}
+        </span>
+        <span className="ai-running-row-name">{entry.name}</span>
+        {niceDetail && (
+          <span
+            className="ai-running-row-detail"
+            title={entry.detail}
+          >
+            {niceDetail}
+          </span>
+        )}
+        <span className="ai-spinner ai-spinner-sm ai-running-row-spinner" />
+      </div>
+      {previewLines && (
+        <pre className="ai-running-row-preview">
+          {previewLines}
+          {previewTruncated ? "\n…" : ""}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 function ToolCallRow({

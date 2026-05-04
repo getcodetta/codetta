@@ -47,6 +47,15 @@ function MainApp() {
   const [recentOverlayOpen, setRecentOverlayOpen] = useState(false);
   const [recentSelected, setRecentSelected] = useState(0);
   const [recentList, setRecentList] = useState<string[]>([]);
+  // Min-display latch for the splash. Without this, fast hydrations
+  // (warm OS cache, no workspaces to restore) flash the brand for a
+  // few frames or skip it entirely. We hold the splash visible until
+  // 700 ms after first paint regardless of hydration state.
+  const [splashMinElapsed, setSplashMinElapsed] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setSplashMinElapsed(true), 700);
+    return () => window.clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     bootstrapTheme();
@@ -311,7 +320,10 @@ function MainApp() {
     };
   }, [paletteOpen]);
 
-  if (!hydrated) {
+  // Min-display gate so the splash brand doesn't flash for 30 ms
+  // when hydration is fast. Holds the splash until BOTH conditions
+  // are met: hydrated AND we've been mounted for ~700 ms.
+  if (!hydrated || !splashMinElapsed) {
     return <Splash />;
   }
 

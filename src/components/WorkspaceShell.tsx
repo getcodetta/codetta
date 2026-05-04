@@ -5,6 +5,7 @@ import { TerminalCore } from "./TerminalCore";
 import { PaneNode } from "./PaneNode";
 import { SidebarStack } from "./SidebarStack";
 import { AIChatPanel } from "./AIChatPanel";
+import { AIChatsRail } from "./AIChatsRail";
 import { AIIcon } from "./AIIcon";
 import {
   aiKey,
@@ -138,6 +139,7 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
       data-sidebar-side={layout.sidebarSide}
     >
       {layout.sidebarVisible && <SidebarStack wsId={wsId} ws={ws} />}
+      <AIChatsRail wsId={wsId} ws={ws} />
       {layout.aiPanelVisible && (
         <>
           <div

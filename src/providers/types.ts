@@ -41,6 +41,14 @@ export interface ChatProvider {
      * Non-agentic providers ignore this.
      */
     resumeSessionId?: string;
+    /**
+     * Stable per-chat-tab id (the AIChatDescriptor.sessionId in the
+     * frontend). Agentic providers use this to register the in-flight
+     * stream in a per-chat-session buffer so a frontend refresh can
+     * re-attach via `claudeCode.attachToChat()` instead of losing the
+     * stream. Non-agentic providers ignore this.
+     */
+    chatSessionId?: string;
   }): AsyncGenerator<ChatStreamEvent, void, unknown>;
 }
 

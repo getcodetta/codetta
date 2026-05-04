@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -19,6 +19,27 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Default)]
 pub struct ClaudeCodeState {
     children: Mutex<HashMap<String, Arc<Mutex<Child>>>>,
+    /// Per-stream buffer of every event emitted, keyed by stream id.
+    /// Used by `claude_code_attach` so a frontend that just refreshed
+    /// can replay everything it missed and re-subscribe to live events.
+    /// Buffers stay until app restart or the chat is explicitly cleared.
+    buffers: Mutex<HashMap<String, StreamBuffer>>,
+    /// Reverse map: chat-session id (frontend's stable id per chat tab)
+    /// → most-recent stream id. Lets the frontend look up "is there a
+    /// stream still alive for this chat?" without remembering raw stream
+    /// ids across reloads.
+    session_streams: Mutex<HashMap<String, String>>,
+}
+
+#[derive(Clone)]
+pub struct StreamBuffer {
+    /// Kept for diagnostics — every buffer is also reachable via the
+    /// session_streams reverse map, but storing it here lets us correlate
+    /// without locking two maps at once when we just want the chat id.
+    #[allow(dead_code)]
+    pub chat_session_id: String,
+    pub lines: Vec<serde_json::Value>,
+    pub ended: Option<i32>,
 }
 
 /// Quick availability check — returns the version string or an error.
@@ -74,11 +95,72 @@ pub fn claude_code_check() -> Result<String, String> {
     Err("claude CLI not found on PATH or common install locations".to_string())
 }
 
-/// Tools that genuinely change state and warrant a confirm-card. We
-/// deliberately exclude Read / Glob / Grep / WebFetch / WebSearch /
-/// TodoWrite — those don't touch user files or run external programs,
-/// so prompting on every one of them is just noise.
-const PERMISSION_GATED_TOOLS: &str = "Bash|Edit|MultiEdit|Write|NotebookEdit";
+/// Tools that genuinely change state OR reach external networks and
+/// warrant a confirm-card. Read / Glob / Grep / TodoWrite are NOT in
+/// the list because they don't touch user files or run programs —
+/// prompting on every one of them would be noise. WebFetch and
+/// WebSearch ARE in the list because (a) the Claude CLI blocks them
+/// by default in non-interactive mode and the user otherwise has no
+/// way to grant access, and (b) hitting external URLs is a meaningful
+/// trust decision the user should make once and for all via the
+/// "Always allow" button.
+const PERMISSION_GATED_TOOLS: &str =
+    "Bash|Edit|MultiEdit|Write|NotebookEdit|WebFetch|WebSearch";
+
+/// Cached resolution of the working `claude` executable name. On
+/// Windows, npm-installed Claude Code is `claude.cmd`, which
+/// `Command::new("claude")` will not auto-resolve via PATHEXT — we
+/// must pass the explicit name. Probe variants once, cache the first
+/// that runs `--version` cleanly. Returns `None` if nothing works,
+/// in which case `build_claude_command` falls back to a shell-mediated
+/// invocation that picks up login-shell-only PATH entries.
+static CLAUDE_BIN: OnceLock<String> = OnceLock::new();
+
+fn resolve_claude_executable() -> Option<String> {
+    if let Some(cached) = CLAUDE_BIN.get() {
+        return Some(cached.clone());
+    }
+    let probe = |name: &str| -> bool {
+        let mut p = Command::new(name);
+        p.arg("--version");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            p.creation_flags(0x08000000);
+        }
+        p.output().map(|o| o.status.success()).unwrap_or(false)
+    };
+    #[cfg(windows)]
+    let names: &[&str] = &["claude.cmd", "claude.exe", "claude"];
+    #[cfg(not(windows))]
+    let names: &[&str] = &["claude"];
+    for n in names {
+        if probe(n) {
+            let _ = CLAUDE_BIN.set(n.to_string());
+            return Some(n.to_string());
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        #[cfg(windows)]
+        let rels: &[&str] = &[
+            "AppData/Roaming/npm/claude.cmd",
+            ".claude/local/claude.cmd",
+        ];
+        #[cfg(not(windows))]
+        let rels: &[&str] = &[".claude/local/claude", ".local/bin/claude"];
+        for rel in rels {
+            let path = home.join(rel);
+            if path.exists() {
+                let s = path.to_string_lossy().to_string();
+                if probe(&s) {
+                    let _ = CLAUDE_BIN.set(s.clone());
+                    return Some(s);
+                }
+            }
+        }
+    }
+    None
+}
 
 /// Build a Command that will invoke claude WITHOUT passing the prompt as an
 /// argument — the prompt is piped via stdin instead, which sidesteps the
@@ -93,18 +175,6 @@ fn build_claude_command(
     cwd: Option<&str>,
     use_hooks: bool,
 ) -> Command {
-    // Test direct invocation availability quickly.
-    let direct_works = {
-        let mut probe = Command::new("claude");
-        probe.arg("--version");
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            probe.creation_flags(0x08000000);
-        }
-        probe.output().map(|o| o.status.success()).unwrap_or(false)
-    };
-
     // "default" sentinel = don't pass --model, let Claude Code use its
     // own configured default (whatever `claude /login` set up).
     let model_to_pass = match model {
@@ -112,8 +182,8 @@ fn build_claude_command(
         other => other,
     };
 
-    if direct_works {
-        let mut cmd = Command::new("claude");
+    if let Some(exe) = resolve_claude_executable() {
+        let mut cmd = Command::new(&exe);
         // Use -p with no prompt argument — claude reads from stdin.
         cmd.arg("-p");
         cmd.arg("--output-format").arg("stream-json");
@@ -272,20 +342,47 @@ fn ensure_pretooluse_hook(workspace: &str, endpoint: &str) -> Result<(), String>
     Ok(())
 }
 
-/// Build the shell command that the PreToolUse hook runs. Uses Node
-/// (which Claude Code requires anyway, so it's guaranteed available)
-/// to read the JSON payload from stdin, POST it to our endpoint, read
-/// back the decision body, and exit with that code.
+/// Build the shell command that the PreToolUse hook runs.
+///
+/// Uses Node (Claude Code requires it anyway, so it's guaranteed
+/// available). Reads the JSON payload from stdin, POSTs it to our
+/// localhost permission server, and emits a Claude Code hook-protocol
+/// JSON response on stdout — NOT just an exit code.
+///
+/// Why JSON output and not just exit codes:
+/// the Claude Code harness treats a hook that exits 0 with no stdout
+/// as ambiguous (some versions interpret as "no decision", which can
+/// surface as a hook error). Always emitting the structured response
+/// `{"hookSpecificOutput":{"hookEventName":"PreToolUse",
+/// "permissionDecision":"allow"|"deny"}}` is the documented contract
+/// and works across every CC version we've tested.
+///
+/// Why fail OPEN (allow) on connection error or timeout:
+/// the most common reason the script can't reach the endpoint is that
+/// Codetta isn't running — for example, the user installed Codetta
+/// once, the hook was written into `.claude/settings.local.json`, then
+/// they later opened the same workspace from a terminal `claude`
+/// session. Failing closed (deny) would silently break their entire CLI
+/// in that workspace until they hand-deleted the hook config — a real
+/// bug we hit in v0.2.0 dogfooding.
+///
+/// Why a 3-second timeout:
+/// Codetta's server's own DECISION_TIMEOUT is 50s. If Codetta IS
+/// running, the user has up to that long to click. But if Codetta
+/// ISN'T running, ECONNREFUSED fires almost instantly via `r.on('error',...)`.
+/// The 3s timeout is purely a belt-and-suspenders for the very rare
+/// case where the connection *opens* but the server hangs without
+/// responding — fail open and let the agent proceed.
 ///
 /// Note: `path` MUST be `pathname + search` because our endpoint URL
 /// includes a `?token=<secret>` query string that the server uses to
 /// reject drive-by requests. Using `pathname` alone strips the token
 /// and the server returns 403.
 fn build_hook_command(endpoint: &str) -> String {
-    // Node one-liner. Single-quoted in JSON to keep escapes manageable.
-    // Logic: pipe stdin → POST endpoint → exit with response body as int.
+    // Node one-liner. Inlined for minimum config-file size.
+    // Logic: pipe stdin → POST endpoint → emit hook-protocol JSON.
     let js = format!(
-        r#"const http=require('http');let b='';process.stdin.on('data',c=>b+=c).on('end',()=>{{const u=new URL('{endpoint}');const r=http.request({{hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{{'content-length':Buffer.byteLength(b)}}}},res=>{{let d='';res.on('data',c=>d+=c).on('end',()=>process.exit(parseInt(String(d).trim(),10)||0))}});r.on('error',()=>process.exit(0));r.write(b);r.end()}});"#,
+        r#"const http=require('http');let b='';process.stdin.on('data',c=>b+=c).on('end',()=>{{let done=false;function out(d){{if(done)return;done=true;process.stdout.write(JSON.stringify({{hookSpecificOutput:{{hookEventName:'PreToolUse',permissionDecision:d}}}}));process.exit(0)}}const t=setTimeout(()=>out('allow'),3000);try{{const u=new URL('{endpoint}');const r=http.request({{hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{{'content-length':Buffer.byteLength(b)}}}},res=>{{let d='';res.on('data',c=>d+=c);res.on('end',()=>{{clearTimeout(t);out(parseInt(String(d).trim(),10)===2?'deny':'allow')}})}});r.on('error',()=>{{clearTimeout(t);out('allow')}});r.write(b);r.end()}}catch(_){{clearTimeout(t);out('allow')}}}});"#,
         endpoint = endpoint
     );
     format!("node -e \"{}\"", js.replace('"', "\\\""))
@@ -352,9 +449,30 @@ pub fn claude_code_chat(
     cwd: Option<String>,
     model: Option<String>,
     resume_session_id: Option<String>,
+    chat_session_id: Option<String>,
 ) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     let event_name = format!("claude-stream:{}", id);
+
+    // Register a buffer for this stream so the frontend can attach later
+    // (refresh-resume). If the same chat session was streaming before
+    // (rare — usually means user fired two sends back-to-back), evict
+    // the old buffer entry so we don't grow unbounded.
+    let chat_sid = chat_session_id.clone().unwrap_or_else(|| id.clone());
+    {
+        let mut streams = state.session_streams.lock();
+        if let Some(prev_stream) = streams.insert(chat_sid.clone(), id.clone()) {
+            state.buffers.lock().remove(&prev_stream);
+        }
+    }
+    state.buffers.lock().insert(
+        id.clone(),
+        StreamBuffer {
+            chat_session_id: chat_sid.clone(),
+            lines: Vec::new(),
+            ended: None,
+        },
+    );
 
     // Install / refresh the PreToolUse hook in this workspace so
     // destructive tool calls hit our permission card. If the perm
@@ -448,6 +566,7 @@ pub fn claude_code_chat(
     // can't blow up against the default Lines iterator buffer cap.
     let app_for_stdout = app.clone();
     let event_for_stdout = event_name.clone();
+    let id_for_stdout = id.clone();
     let last_activity_stdout = Arc::clone(&last_activity);
     thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -465,10 +584,13 @@ pub fn claude_code_chat(
                     }
                     last_activity_stdout
                         .store(started.elapsed().as_millis() as i64, Ordering::Relaxed);
-                    let _ = app_for_stdout.emit(
-                        &event_for_stdout,
-                        serde_json::json!({ "kind": "line", "line": line }),
-                    );
+                    let payload = serde_json::json!({ "kind": "line", "line": line });
+                    if let Some(state) = app_for_stdout.try_state::<ClaudeCodeState>() {
+                        if let Some(buf) = state.buffers.lock().get_mut(&id_for_stdout) {
+                            buf.lines.push(payload.clone());
+                        }
+                    }
+                    let _ = app_for_stdout.emit(&event_for_stdout, payload);
                 }
                 Err(_) => break,
             }
@@ -480,6 +602,7 @@ pub fn claude_code_chat(
     if let Some(stderr) = stderr {
         let app_for_stderr = app.clone();
         let event_for_stderr = event_name.clone();
+        let id_for_stderr = id.clone();
         let last_activity_stderr = Arc::clone(&last_activity);
         thread::spawn(move || {
             let mut reader = BufReader::new(stderr);
@@ -495,10 +618,14 @@ pub fn claude_code_chat(
                         }
                         last_activity_stderr
                             .store(started.elapsed().as_millis() as i64, Ordering::Relaxed);
-                        let _ = app_for_stderr.emit(
-                            &event_for_stderr,
-                            serde_json::json!({ "kind": "stderr", "line": line }),
-                        );
+                        let payload =
+                            serde_json::json!({ "kind": "stderr", "line": line });
+                        if let Some(state) = app_for_stderr.try_state::<ClaudeCodeState>() {
+                            if let Some(buf) = state.buffers.lock().get_mut(&id_for_stderr) {
+                                buf.lines.push(payload.clone());
+                            }
+                        }
+                        let _ = app_for_stderr.emit(&event_for_stderr, payload);
                     }
                     Err(_) => break,
                 }
@@ -511,6 +638,7 @@ pub fn claude_code_chat(
     // frontend doesn't hang forever (anthropics/claude-code#1920).
     let app_for_watchdog = app.clone();
     let event_for_watchdog = event_name.clone();
+    let id_for_watchdog = id.clone();
     let child_for_watchdog = Arc::clone(&child_arc);
     let last_activity_watchdog = Arc::clone(&last_activity);
     thread::spawn(move || {
@@ -529,16 +657,19 @@ pub fn claude_code_chat(
             let now = started.elapsed().as_millis() as i64;
             if now - last > IDLE_TIMEOUT.as_millis() as i64 {
                 // Hung. Force-kill and let the wait thread emit `end`.
-                let _ = app_for_watchdog.emit(
-                    &event_for_watchdog,
-                    serde_json::json!({
-                        "kind": "stderr",
-                        "line": format!(
-                            "[claude] no events for {}s — force-closing the stream (this is the documented anthropics/claude-code#1920 hang).",
-                            IDLE_TIMEOUT.as_secs()
-                        ),
-                    }),
-                );
+                let payload = serde_json::json!({
+                    "kind": "stderr",
+                    "line": format!(
+                        "[claude] no events for {}s — force-closing the stream (this is the documented anthropics/claude-code#1920 hang).",
+                        IDLE_TIMEOUT.as_secs()
+                    ),
+                });
+                if let Some(state) = app_for_watchdog.try_state::<ClaudeCodeState>() {
+                    if let Some(buf) = state.buffers.lock().get_mut(&id_for_watchdog) {
+                        buf.lines.push(payload.clone());
+                    }
+                }
+                let _ = app_for_watchdog.emit(&event_for_watchdog, payload);
                 let _ = child_for_watchdog.lock().kill();
                 return;
             }
@@ -555,15 +686,15 @@ pub fn claude_code_chat(
             Ok(s) => s.code().unwrap_or(-1),
             Err(_) => -1,
         };
-        let _ = app_for_wait.emit(
-            &event_for_wait,
-            serde_json::json!({ "kind": "end", "code": exit_code }),
-        );
-        // Drop the child reference from state (best-effort).
-        // We can't access State directly from a thread; do it via app state.
+        let payload = serde_json::json!({ "kind": "end", "code": exit_code });
         if let Some(state) = app_for_wait.try_state::<ClaudeCodeState>() {
+            if let Some(buf) = state.buffers.lock().get_mut(&id_for_wait) {
+                buf.lines.push(payload.clone());
+                buf.ended = Some(exit_code);
+            }
             state.children.lock().remove(&id_for_wait);
         }
+        let _ = app_for_wait.emit(&event_for_wait, payload);
     });
 
     Ok(id)
@@ -576,6 +707,59 @@ pub fn claude_code_kill(state: State<'_, ClaudeCodeState>, id: String) -> Result
     if let Some(child) = child {
         let mut guard = child.lock();
         let _ = guard.kill();
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct AttachResult {
+    /// Stream id the frontend should `listen` on for live events. Same
+    /// `claude-stream:<id>` channel as `claude_code_chat` returns.
+    pub stream_id: String,
+    /// Every event we've emitted so far for this stream, in order. The
+    /// frontend replays these through its normal parser before
+    /// subscribing to live events, so a refresh restores the chat to
+    /// exactly where it was — including in-flight tool calls and
+    /// partial assistant text.
+    pub lines: Vec<serde_json::Value>,
+    /// Exit code if the subprocess has already finished. None = still
+    /// running. The frontend uses this to decide whether to treat the
+    /// chat as live (spinner) or terminal (just replay and stop).
+    pub ended: Option<i32>,
+}
+
+/// Look up whether there's an in-flight (or recently-completed) stream
+/// for this chat session id, and return its buffered events plus the
+/// stream id to subscribe to. Returns `None` if no buffer exists, which
+/// is the common case for chats that haven't been used since app start.
+#[tauri::command]
+pub fn claude_code_attach(
+    state: State<'_, ClaudeCodeState>,
+    chat_session_id: String,
+) -> Option<AttachResult> {
+    let stream_id = state
+        .session_streams
+        .lock()
+        .get(&chat_session_id)
+        .cloned()?;
+    let buf = state.buffers.lock().get(&stream_id).cloned()?;
+    Some(AttachResult {
+        stream_id,
+        lines: buf.lines,
+        ended: buf.ended,
+    })
+}
+
+/// Drop the buffer + reverse mapping for a chat session. Called by the
+/// frontend after the user starts a fresh chat or explicitly clears, so
+/// subsequent attaches for that session don't replay stale state.
+#[tauri::command]
+pub fn claude_code_clear_session(
+    state: State<'_, ClaudeCodeState>,
+    chat_session_id: String,
+) -> Result<(), String> {
+    if let Some(stream_id) = state.session_streams.lock().remove(&chat_session_id) {
+        state.buffers.lock().remove(&stream_id);
     }
     Ok(())
 }
@@ -950,6 +1134,9 @@ fn extract_assistant_blocks(v: &serde_json::Value) -> (String, Vec<LoadedToolCal
 /// then replace any character that's not alphanumeric or '-' with '-'.
 /// Verified against `~/.claude/projects/` entries on Windows + WSL.
 fn encode_project_path(cwd: &str) -> String {
+    // `mut` is only needed on Windows (drive-letter lowercase below);
+    // the warning fires on other platforms where the block is empty.
+    #[allow(unused_mut)]
     let mut s = cwd.to_string();
     #[cfg(windows)]
     {
@@ -1007,4 +1194,136 @@ fn trim_oneline(s: &str, max: usize) -> String {
     let mut out: String = line.chars().take(max).collect();
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for the v0.2.0 dogfooding bug where the hook script
+    /// exited 0 with no stdout, and Claude Code's harness blocked the
+    /// agent's tool call as a hook error. The hook MUST always emit
+    /// the structured `hookSpecificOutput.permissionDecision` JSON.
+    #[test]
+    fn hook_command_embeds_protocol_output() {
+        let cmd = build_hook_command(
+            "http://127.0.0.1:14272/permission?token=abc",
+        );
+        // Sanity: it's a node -e invocation
+        assert!(cmd.starts_with("node -e \""));
+        // The hook protocol JSON shape must be emitted on every code path
+        assert!(
+            cmd.contains("hookSpecificOutput"),
+            "hook script must always emit hookSpecificOutput JSON"
+        );
+        assert!(
+            cmd.contains("permissionDecision"),
+            "hook script must always emit a permissionDecision"
+        );
+        // Three explicit code paths must call out(...) — server response,
+        // connection error, timeout — so the hook never silently exits
+        // with empty stdout.
+        let out_count = cmd.matches("out(").count();
+        assert!(
+            out_count >= 3,
+            "expected ≥3 out(...) calls (server/error/timeout); got {}",
+            out_count
+        );
+        // Token query string must be preserved (we use pathname+search,
+        // not pathname alone). Otherwise the server returns 403.
+        assert!(
+            cmd.contains("u.pathname+u.search"),
+            "hook must POST to pathname+search so the auth token survives"
+        );
+    }
+
+    /// CC's project-dir encoding: lowercase Windows drive letter,
+    /// every non-alphanumeric becomes '-'. Verified against actual
+    /// `~/.claude/projects/` entries on disk.
+    #[test]
+    fn encode_project_path_matches_claude_code() {
+        // Windows-style absolute path
+        if cfg!(windows) {
+            assert_eq!(
+                encode_project_path("C:\\Users\\Bishal-SEO\\Documents\\Codes\\lite-coder-pro"),
+                "c--Users-Bishal-SEO-Documents-Codes-lite-coder-pro"
+            );
+        }
+        // POSIX path (always run, since the alphanumeric branch is
+        // platform-independent)
+        assert_eq!(
+            encode_project_path("/home/user/projects/foo"),
+            "-home-user-projects-foo"
+        );
+        // Path with dots
+        assert_eq!(
+            encode_project_path("/var/lib/app.v2/data"),
+            "-var-lib-app-v2-data"
+        );
+    }
+
+    /// Claude Code stream-json `user` events can carry plain text OR
+    /// an array of blocks (text + tool_result + image). Loader must
+    /// pull both shapes correctly.
+    #[test]
+    fn extract_user_blocks_handles_string_and_array_content() {
+        // Plain string content
+        let v = serde_json::json!({
+            "type": "user",
+            "message": { "content": "what's up" }
+        });
+        let (text, results) = extract_user_blocks(&v);
+        assert_eq!(text, "what's up");
+        assert!(results.is_empty());
+
+        // Array with tool_result block
+        let v = serde_json::json!({
+            "type": "user",
+            "message": {
+                "content": [
+                    { "type": "tool_result", "tool_use_id": "abc", "content": "file contents" }
+                ]
+            }
+        });
+        let (text, results) = extract_user_blocks(&v);
+        assert!(text.is_empty());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tool_use_id, "abc");
+        assert_eq!(results[0].content, "file contents");
+
+        // Array with mixed text + tool_result
+        let v = serde_json::json!({
+            "type": "user",
+            "message": {
+                "content": [
+                    { "type": "text", "text": "hello" },
+                    { "type": "tool_result", "tool_use_id": "x", "content": "ok" }
+                ]
+            }
+        });
+        let (text, results) = extract_user_blocks(&v);
+        assert_eq!(text, "hello");
+        assert_eq!(results.len(), 1);
+    }
+
+    /// trim_oneline must not panic on multibyte chars at the boundary
+    /// — naive `.slice(0, max)` would crash on non-ASCII. We use
+    /// `chars().take()` so this works.
+    #[test]
+    fn trim_oneline_handles_multibyte() {
+        // ASCII shorter than max — verbatim
+        assert_eq!(trim_oneline("hello", 80), "hello");
+        // Multibyte that fits
+        assert_eq!(trim_oneline("héllo", 80), "héllo");
+        // Multibyte that overflows — must not panic
+        let long = "héllo wörld ".repeat(20);
+        let trimmed = trim_oneline(&long, 10);
+        assert_eq!(trimmed.chars().count(), 11); // 10 chars + ellipsis
+        assert!(trimmed.ends_with('…'));
+        // Multi-line — keep only the first
+        assert_eq!(
+            trim_oneline("first line\nsecond line", 80),
+            "first line"
+        );
+    }
 }

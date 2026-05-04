@@ -154,17 +154,118 @@ pub struct TodoHit {
     pub text: String,
 }
 
-#[tauri::command]
-pub fn scan_todos(
-    root: String,
-    max_results: Option<usize>,
-) -> Result<Vec<TodoHit>, String> {
-    let cap = max_results.unwrap_or(2000);
+// Files that frequently contain text but never meaningful TODOs.
+// Generated, minified, or lock files — skip outright.
+fn is_noise_filename(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    if n.ends_with(".min.js") || n.ends_with(".min.css") {
+        return true;
+    }
+    if n.ends_with(".map") || n.ends_with(".lock") {
+        return true;
+    }
+    matches!(
+        n.as_str(),
+        "package-lock.json"
+            | "yarn.lock"
+            | "pnpm-lock.yaml"
+            | "bun.lockb"
+            | "cargo.lock"
+            | "composer.lock"
+            | "gemfile.lock"
+            | "poetry.lock"
+            | "go.sum"
+    )
+}
+
+// Extensions where source-comment TODOs make sense. Anything else is
+// skipped to keep scans fast on large repos. Generous on purpose so
+// users don't lose TODOs in less common languages.
+fn has_scannable_ext(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let dot = match lower.rfind('.') {
+        Some(i) => i,
+        None => return false,
+    };
+    matches!(
+        &lower[dot..],
+        ".ts"
+            | ".tsx"
+            | ".js"
+            | ".jsx"
+            | ".mjs"
+            | ".cjs"
+            | ".vue"
+            | ".svelte"
+            | ".astro"
+            | ".rs"
+            | ".go"
+            | ".py"
+            | ".pyi"
+            | ".rb"
+            | ".php"
+            | ".java"
+            | ".kt"
+            | ".kts"
+            | ".scala"
+            | ".swift"
+            | ".m"
+            | ".mm"
+            | ".c"
+            | ".h"
+            | ".cc"
+            | ".cpp"
+            | ".cxx"
+            | ".hpp"
+            | ".hh"
+            | ".cs"
+            | ".lua"
+            | ".dart"
+            | ".elm"
+            | ".ex"
+            | ".exs"
+            | ".erl"
+            | ".clj"
+            | ".cljs"
+            | ".nim"
+            | ".zig"
+            | ".sh"
+            | ".bash"
+            | ".zsh"
+            | ".fish"
+            | ".ps1"
+            | ".sql"
+            | ".css"
+            | ".scss"
+            | ".sass"
+            | ".less"
+            | ".html"
+            | ".htm"
+            | ".xml"
+            | ".yaml"
+            | ".yml"
+            | ".toml"
+            | ".md"
+            | ".markdown"
+            | ".rst"
+            | ".tex"
+    )
+}
+
+const MAX_TODO_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_TODO_WALK: usize = 30_000;
+
+fn scan_todos_blocking(root: String, cap: usize) -> Vec<TodoHit> {
     let mut paths: Vec<String> = Vec::new();
-    walk_files(Path::new(&root), &mut paths, 50_000, |_p| true);
+    walk_files(Path::new(&root), &mut paths, MAX_TODO_WALK, |p| {
+        match p.file_name().and_then(|n| n.to_str()) {
+            Some(name) => has_scannable_ext(name) && !is_noise_filename(name),
+            None => false,
+        }
+    });
 
     let kinds: &[&str] = &["TODO", "FIXME", "XXX", "HACK", "NOTE"];
-    let mut hits = Vec::new();
+    let mut hits = Vec::with_capacity(cap.min(512));
 
     'outer: for p in paths {
         let pp = Path::new(&p);
@@ -172,7 +273,7 @@ pub fn scan_todos(
             Ok(m) => m,
             Err(_) => continue,
         };
-        if meta.len() > MAX_FILE_BYTES_FOR_SEARCH {
+        if meta.len() > MAX_TODO_FILE_BYTES {
             continue;
         }
         let bytes = match std::fs::read(pp) {
@@ -186,14 +287,24 @@ pub fn scan_todos(
             Ok(s) => s,
             Err(_) => continue,
         };
+        // Cheap pre-check: if the whole file doesn't contain "O" in
+        // an obvious keyword position, skip. (TODO/FIXME/XXX/HACK/NOTE
+        // all share at least one uppercase letter that's rare in code.)
+        // Skip the per-line cost entirely when nothing matches.
+        if !text.bytes().any(|b| matches!(b, b'T' | b'F' | b'X' | b'H' | b'N')) {
+            continue;
+        }
         for (i, line) in text.lines().enumerate() {
             for kind in kinds {
                 if let Some(idx) = line.find(kind) {
-                    // Confirm it's a comment-like context: precede char isn't alnum.
-                    let prev = line.as_bytes().get(idx.wrapping_sub(1));
+                    let prev = if idx == 0 {
+                        None
+                    } else {
+                        line.as_bytes().get(idx - 1).copied()
+                    };
                     let ok = match prev {
                         None => true,
-                        Some(b) => !(b.is_ascii_alphanumeric() || *b == b'_'),
+                        Some(b) => !(b.is_ascii_alphanumeric() || b == b'_'),
                     };
                     if !ok {
                         continue;
@@ -216,7 +327,18 @@ pub fn scan_todos(
             }
         }
     }
-    Ok(hits)
+    hits
+}
+
+#[tauri::command]
+pub async fn scan_todos(
+    root: String,
+    max_results: Option<usize>,
+) -> Result<Vec<TodoHit>, String> {
+    let cap = max_results.unwrap_or(2000);
+    tauri::async_runtime::spawn_blocking(move || scan_todos_blocking(root, cap))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]

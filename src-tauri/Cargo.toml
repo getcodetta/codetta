@@ -1,6 +1,6 @@
 [package]
 name = "codetta"
-version = "0.2.0"
+version = "0.3.0"
 description = "A lightweight desktop code editor with first-class AI."
 authors = ["Codetta Maintainers <getcodetta@gmail.com>"]
 edition = "2021"
@@ -33,6 +33,12 @@ notify-debouncer-mini = "0.4"
 # (a curl POST) can ask the GUI for permission decisions and the GUI
 # can respond before the agent's tool call runs.
 tiny_http = "0.12"
+# SFTP client. russh is pure Rust (no libssh2 / native deps), works on
+# Windows out of the box. russh-sftp layers the SFTP protocol on top.
+russh = "0.46"
+russh-sftp = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "fs"] }
+async-trait = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

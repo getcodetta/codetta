@@ -1,6 +1,15 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  getActiveSftp,
+  lookupRemoteLink,
+  rememberRemoteLink,
+} from "./sftpLinks";
+import {
+  error as toastError,
+  success as toastSuccess,
+} from "./notify";
+import {
   workspaces as wsApi,
   type WorkspaceMeta,
   fs as fsApi,
@@ -70,9 +79,18 @@ export interface AIChatDescriptor {
   id: string;
   title: string;
   sessionId: string;
+  /** Wall-clock creation timestamp. Doubles as the sort key in the AI
+   *  chats rail — drag-reorder rewrites this so the rail order is purely
+   *  a sort by `createdAt`, no separate order list to keep in sync. */
+  createdAt: number;
+  /** Last selected qualified model id (e.g. "claude-code:default",
+   *  "openai:gpt-4o", "ollama:llama3.1"). Used by the rail to render a
+   *  per-chat provider badge. The chat panel writes this when the user
+   *  picks a model. Optional for back-compat with older sessions. */
+  model?: string;
 }
 
-export type SidebarView = "files" | "git" | "tasks" | "todos" | "ai";
+export type SidebarView = "files" | "git" | "tasks" | "todos" | "ai" | "remote";
 
 export interface SidebarSection {
   view: SidebarView;
@@ -122,6 +140,10 @@ export interface WorkspaceLayout {
   /** AI panel is a dedicated right-side column, independent of sidebarSide. */
   aiPanelVisible: boolean;
   aiPanelW: number;
+  /** When true, the AI chats rail expands to ~220px and shows each
+   *  chat's full title + model + close button. When false (default), the
+   *  rail is a 36px-wide icon strip. Toggled from the rail header. */
+  aiRailExpanded: boolean;
 }
 
 export interface WorkspaceData {
@@ -457,6 +479,7 @@ interface AppState {
   setSidebarSide(wsId: string, side: "left" | "right"): void;
   setAIPanelVisible(wsId: string, visible: boolean): void;
   setAIPanelW(wsId: string, w: number): void;
+  setAIRailExpanded(wsId: string, expanded: boolean): void;
 
   addTerminal(
     wsId: string,
@@ -471,6 +494,11 @@ interface AppState {
   closeAIChat(wsId: string, id: string): void;
   setAIChatTitle(wsId: string, id: string, title: string): void;
   setAIChatSession(wsId: string, id: string, sessionId: string): void;
+  setAIChatModel(wsId: string, id: string, model: string): void;
+  /** Reorder by adjusting the dragged chat's createdAt to land just
+   *  before `beforeId`. Pass null to move to the end. The rail is sorted
+   *  by createdAt so this is the only state mutation needed. */
+  reorderAIChat(wsId: string, id: string, beforeId: string | null): void;
 }
 
 const defaultLayout = (): WorkspaceLayout => {
@@ -490,6 +518,7 @@ const defaultLayout = (): WorkspaceLayout => {
     sidebarSide: "left",
     aiPanelVisible: false,
     aiPanelW: 380,
+    aiRailExpanded: false,
   };
 };
 
@@ -516,6 +545,10 @@ function makeAIChatId(): string {
 function parseAIChatsRaw(raw: unknown): Record<string, AIChatDescriptor> {
   const out: Record<string, AIChatDescriptor> = {};
   if (!raw || typeof raw !== "object") return out;
+  // Stable insertion order from JSON.stringify — older saves had no
+  // createdAt; assign monotonically increasing timestamps so they keep
+  // their original order in the rail.
+  let migrationStamp = 0;
   for (const [id, val] of Object.entries(raw as Record<string, unknown>)) {
     if (!val || typeof val !== "object") continue;
     const v = val as Record<string, unknown>;
@@ -526,7 +559,10 @@ function parseAIChatsRaw(raw: unknown): Record<string, AIChatDescriptor> {
     ) {
       continue;
     }
-    out[id] = { id: v.id, title: v.title, sessionId: v.sessionId };
+    const createdAt =
+      typeof v.createdAt === "number" ? v.createdAt : ++migrationStamp;
+    const model = typeof v.model === "string" ? v.model : undefined;
+    out[id] = { id: v.id, title: v.title, sessionId: v.sessionId, createdAt, model };
   }
   return out;
 }
@@ -615,7 +651,7 @@ function normalizeLayout(raw: unknown): WorkspaceLayout {
         : [],
       sidebarW: typeof r.sidebarW === "number" ? r.sidebarW : 240,
       termH: typeof r.termH === "number" ? r.termH : 240,
-      sidebarView: (["files","git","tasks","todos","ai"] as SidebarView[]).includes(r.sidebarView as SidebarView) ? (r.sidebarView as SidebarView) : "files",
+      sidebarView: (["files","git","tasks","todos","ai","remote"] as SidebarView[]).includes(r.sidebarView as SidebarView) ? (r.sidebarView as SidebarView) : "files",
       pinned: Array.isArray((r as any).pinned) ? (r as any).pinned.filter((x: unknown) => typeof x === "string") : [],
       sidebarSections: parseSidebarSections((r as any).sidebarSections, (r.sidebarView as SidebarView) ?? "files"),
       sidebarSide: (r as any).sidebarSide === "right" ? "right" : "left",
@@ -624,6 +660,7 @@ function normalizeLayout(raw: unknown): WorkspaceLayout {
         typeof (r as any).aiPanelW === "number"
           ? Math.max(220, Math.min(800, (r as any).aiPanelW))
           : 380,
+      aiRailExpanded: (r as any).aiRailExpanded === true,
     };
   }
 
@@ -645,7 +682,7 @@ function normalizeLayout(raw: unknown): WorkspaceLayout {
       : [],
     sidebarW: typeof r.sidebarW === "number" ? r.sidebarW : 240,
     termH: typeof r.termH === "number" ? r.termH : 240,
-    sidebarView: (["files","git","tasks","todos","ai"] as SidebarView[]).includes(r.sidebarView as SidebarView) ? (r.sidebarView as SidebarView) : "files",
+    sidebarView: (["files","git","tasks","todos","ai","remote"] as SidebarView[]).includes(r.sidebarView as SidebarView) ? (r.sidebarView as SidebarView) : "files",
       pinned: Array.isArray((r as any).pinned) ? (r as any).pinned.filter((x: unknown) => typeof x === "string") : [],
       sidebarSections: parseSidebarSections((r as any).sidebarSections, (r.sidebarView as SidebarView) ?? "files"),
       sidebarSide: (r as any).sidebarSide === "right" ? "right" : "left",
@@ -654,6 +691,7 @@ function normalizeLayout(raw: unknown): WorkspaceLayout {
         typeof (r as any).aiPanelW === "number"
           ? Math.max(220, Math.min(800, (r as any).aiPanelW))
           : 380,
+      aiRailExpanded: (r as any).aiRailExpanded === true,
   };
 }
 
@@ -661,7 +699,13 @@ function parseSidebarSections(
   raw: unknown,
   fallback: SidebarView,
 ): SidebarSection[] {
-  const validViews: SidebarView[] = ["files", "git", "tasks", "todos"];
+  const validViews: SidebarView[] = [
+    "files",
+    "git",
+    "tasks",
+    "todos",
+    "remote",
+  ];
   if (Array.isArray(raw)) {
     const out: SidebarSection[] = [];
     for (const r of raw) {
@@ -1328,6 +1372,33 @@ export const useStore = create<AppState>((set, get) => {
           },
         };
       });
+      // Auto-push to remote if this file is linked AND has autoPush
+      // enabled AND the matching SFTP session is currently connected.
+      // Fire-and-forget: never block the save on a network round-trip,
+      // and don't surface routine successes — only errors.
+      const link = lookupRemoteLink(wsId, path);
+      if (link && link.autoPush) {
+        const active = getActiveSftp(wsId);
+        if (active && active.profileId === link.profileId) {
+          void invoke("sftp_write_file", {
+            args: { ...active.conn, path: link.remotePath, contents: content },
+          })
+            .then(() => {
+              rememberRemoteLink(wsId, path, {
+                ...link,
+                downloadedAt: Date.now(),
+              });
+              toastSuccess(`↥ Auto-pushed → ${link.remotePath}`);
+            })
+            .catch((e) => {
+              toastError(
+                `Auto-push failed for ${path.split(/[\\/]/).pop()}: ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              );
+            });
+        }
+      }
     },
 
     saveAllFiles: async (wsId) => {
@@ -1451,6 +1522,12 @@ export const useStore = create<AppState>((set, get) => {
           ...ws.layout,
           aiPanelW: Math.max(220, Math.min(800, w)),
         },
+      })),
+
+    setAIRailExpanded: (wsId, expanded) =>
+      updateWs(wsId, (w) => ({
+        ...w,
+        layout: { ...w.layout, aiRailExpanded: expanded },
       })),
 
     reorderSidebarSection: (wsId, view, beforeView) =>
@@ -1582,14 +1659,21 @@ export const useStore = create<AppState>((set, get) => {
     addAIChat: (wsId, location = "editor") => {
       const id = makeAIChatId();
       const k = aiKey(id);
-      const existingCount = Object.keys(
-        get().loaded[wsId]?.aiChats ?? {},
-      ).length;
-      const title = existingCount === 0 ? "AI Chat" : `AI Chat ${existingCount + 1}`;
+      const existing = Object.values(get().loaded[wsId]?.aiChats ?? {});
+      const title = existing.length === 0 ? "AI Chat" : `AI Chat ${existing.length + 1}`;
+      // createdAt must always be larger than every existing chat so a
+      // freshly-created chat appears at the bottom of the rail. Don't
+      // rely on Date.now() alone — drag-reorder may have pushed an
+      // older chat past `now` to slot it last.
+      const maxCreated = existing.reduce(
+        (acc, c) => (c.createdAt > acc ? c.createdAt : acc),
+        0,
+      );
       const desc: AIChatDescriptor = {
         id,
         title,
         sessionId: id,
+        createdAt: Math.max(Date.now(), maxCreated + 1),
       };
       updateWs(wsId, (w) => {
         const aiChats = { ...w.aiChats, [id]: desc };
@@ -1682,6 +1766,51 @@ export const useStore = create<AppState>((set, get) => {
         return {
           ...w,
           aiChats: { ...w.aiChats, [id]: { ...desc, sessionId } },
+        };
+      }),
+
+    setAIChatModel: (wsId, id, model) =>
+      updateWs(wsId, (w) => {
+        const desc = w.aiChats[id];
+        if (!desc || desc.model === model) return w;
+        return {
+          ...w,
+          aiChats: { ...w.aiChats, [id]: { ...desc, model } },
+        };
+      }),
+
+    reorderAIChat: (wsId, id, beforeId) =>
+      updateWs(wsId, (w) => {
+        const desc = w.aiChats[id];
+        if (!desc) return w;
+        if (beforeId === id) return w;
+        const sorted = Object.values(w.aiChats)
+          .filter((c) => c.id !== id)
+          .sort((a, b) => a.createdAt - b.createdAt);
+        // Compute the createdAt slot for `id`:
+        //   - beforeId is null  → after the last remaining chat
+        //   - beforeId matches  → halfway between target's predecessor and target
+        //   - beforeId unknown  → no-op
+        let newCreated: number;
+        if (beforeId === null) {
+          const last = sorted[sorted.length - 1];
+          newCreated = last ? last.createdAt + 1000 : Date.now();
+        } else {
+          const targetIdx = sorted.findIndex((c) => c.id === beforeId);
+          if (targetIdx < 0) return w;
+          const target = sorted[targetIdx];
+          const prev = sorted[targetIdx - 1];
+          newCreated = prev
+            ? (prev.createdAt + target.createdAt) / 2
+            : target.createdAt - 1000;
+        }
+        if (newCreated === desc.createdAt) return w;
+        return {
+          ...w,
+          aiChats: {
+            ...w.aiChats,
+            [id]: { ...desc, createdAt: newCreated },
+          },
         };
       }),
   };
