@@ -200,29 +200,47 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
             }
           />
         </div>
-        {layout.bottomVisible && layout.bottomRoot && (
+        {/*
+          Bottom panel: kept mounted (just visually hidden via display:none)
+          when bottomVisible is false. Unmounting + remounting it would
+          tear down the pane container DOM nodes that TerminalCore
+          portals into — and re-opening an xterm Terminal on a new DOM
+          node is fragile (silent loss of buffer + listeners). Keeping
+          the panel in the DOM means the same container ref stays valid
+          across hide/show, so terminals just disappear/reappear without
+          losing state. Pay-cost: a sliver of layout space; worth it.
+        */}
+        {layout.bottomRoot && (
           <>
+            {layout.bottomVisible && (
+              <div
+                className="hsplit"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  const startY = e.clientY;
+                  const startH = layout.termH;
+                  const onMove = (ev: MouseEvent) => {
+                    setTermH(
+                      wsId,
+                      Math.max(80, Math.min(800, startH - (ev.clientY - startY))),
+                    );
+                  };
+                  const onUp = () => {
+                    window.removeEventListener("mousemove", onMove);
+                    window.removeEventListener("mouseup", onUp);
+                  };
+                  window.addEventListener("mousemove", onMove);
+                  window.addEventListener("mouseup", onUp);
+                }}
+              />
+            )}
             <div
-              className="hsplit"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                const startY = e.clientY;
-                const startH = layout.termH;
-                const onMove = (ev: MouseEvent) => {
-                  setTermH(
-                    wsId,
-                    Math.max(80, Math.min(800, startH - (ev.clientY - startY))),
-                  );
-                };
-                const onUp = () => {
-                  window.removeEventListener("mousemove", onMove);
-                  window.removeEventListener("mouseup", onUp);
-                };
-                window.addEventListener("mousemove", onMove);
-                window.addEventListener("mouseup", onUp);
+              className="bottom-area"
+              style={{
+                height: layout.termH,
+                display: layout.bottomVisible ? undefined : "none",
               }}
-            />
-            <div className="bottom-area" style={{ height: layout.termH }}>
+            >
               <PaneNode
                 wsId={wsId}
                 ws={ws}

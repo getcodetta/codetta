@@ -75,7 +75,43 @@ pub fn read_file(path: String) -> Result<String, String> {
     if looks_binary(&bytes) {
         return Err("File appears to be binary.".to_string());
     }
-    String::from_utf8(bytes).map_err(|_| "File is not valid UTF-8.".to_string())
+    Ok(decode_text_bytes(&bytes))
+}
+
+/// Decode arbitrary text bytes, tolerating common non-UTF-8 encodings
+/// (GBK / GB2312 / Big5 / Shift-JIS / EUC-KR / Windows-125x). Strategy:
+///   1. Strip UTF-8 BOM if present and the rest is valid UTF-8.
+///   2. Honour explicit UTF-16 BOMs.
+///   3. Try plain UTF-8.
+///   4. Fall back to chardetng + encoding_rs for everything else.
+/// Always returns a String — never errors. Garbage in → "best-guess"
+/// out, which is exactly how every other editor handles legacy files.
+fn decode_text_bytes(bytes: &[u8]) -> String {
+    // 1. UTF-8 BOM (EF BB BF).
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        if let Ok(s) = std::str::from_utf8(&bytes[3..]) {
+            return s.to_string();
+        }
+    }
+    // 2. UTF-16 LE / BE BOMs.
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        let (cow, _, _) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+        return cow.into_owned();
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        let (cow, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+        return cow.into_owned();
+    }
+    // 3. Plain UTF-8 — most files.
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+    // 4. Sniff legacy encoding (GBK, Shift_JIS, etc.) and decode.
+    let mut detector = chardetng::EncodingDetector::new();
+    detector.feed(bytes, true);
+    let encoding = detector.guess(None, true);
+    let (cow, _, _) = encoding.decode(bytes);
+    cow.into_owned()
 }
 
 fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
