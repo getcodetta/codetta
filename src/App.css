@@ -3678,6 +3678,34 @@ input {
   color: var(--fg);
   flex-shrink: 0;
 }
+
+/* Queue indicator above the composer when messages are pending. */
+.ai-queue-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  margin: 4px 8px 0;
+  background: rgba(122, 79, 255, 0.10);
+  border: 1px solid rgba(122, 79, 255, 0.35);
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--fg);
+  flex-shrink: 0;
+}
+.ai-queue-indicator span { flex: 1 1 auto; }
+.ai-queue-clear {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid rgba(122, 79, 255, 0.45);
+  color: #b08aff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ai-queue-clear:hover { background: rgba(122, 79, 255, 0.15); }
 .ai-privacy-icon {
   font-size: 14px;
   line-height: 1;
@@ -4767,6 +4795,34 @@ input {
 .ai-compose-open-all:hover {
   color: var(--fg);
   border-color: var(--border-strong);
+}
+.ai-compose-revert {
+  background: transparent;
+  border: 1px solid rgba(220, 70, 70, 0.45);
+  color: #ff8989;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+  margin-left: 6px;
+}
+.ai-compose-revert:hover:not(:disabled) {
+  background: rgba(220, 70, 70, 0.12);
+  color: #ffc7c7;
+}
+.ai-compose-revert:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: var(--border);
+  color: var(--fg-muted);
+}
+.ai-compose-reverted {
+  color: #7ddc99;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  margin-left: 6px;
 }
 .ai-compose-files {
   display: flex;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -25,6 +25,11 @@ import { useStore, parseKey, findPaneById } from "../store";
 import { useEditorState, getActiveEditor } from "../editorState";
 import { matchExclusion, subscribePrivacy } from "../aiPrivacy";
 import { recordUsage, wouldExceedHardCap } from "../aiUsageLog";
+import {
+  captureSnapshot,
+  dropSnapshot,
+  lookupSnapshot,
+} from "../composeSnapshots";
 import {
   error as toastError,
   info as toastInfo,
@@ -791,7 +796,20 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const [warmingUp, setWarmingUp] = useState(false);
   // EMA of recent assistant generations for the slow-model banner.
   const [recentTps, setRecentTps] = useState<number | null>(null);
-  const [sessionId, setSessionId] = useState<string>(() => newSessionId());
+  // Initialize sessionId DIRECTLY from the chat-tab descriptor on
+  // first render. Was using a fresh newSessionId() which created a
+  // race: the setAIChatSession effect would briefly overwrite the
+  // descriptor with the throwaway id before the restore effect set
+  // it back. If a save fired during that window, the chat history
+  // got persisted under the throwaway id and refresh-resume couldn't
+  // find it. Reading synchronously here closes the race.
+  const [sessionId, setSessionId] = useState<string>(() => {
+    if (aiChatId) {
+      const desc = useStore.getState().loaded[wsId]?.aiChats[aiChatId];
+      if (desc?.sessionId) return desc.sessionId;
+    }
+    return newSessionId();
+  });
   // Claude Code provider session id, captured from stream-json `system/init`.
   // Lets us pass --resume on every follow-up turn so the CLI keeps the
   // server-side context window alive instead of re-paying cold-start cost.
@@ -1049,22 +1067,25 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         if (cancelled || !att) return;
         // Replay everything we missed.
         for (const ln of att.lines) replayLine(ln);
-        // If still running, subscribe for new events.
-        if (att.ended === null) {
-          try {
-            const u = await listen<{
-              kind?: string;
-              line?: string;
-              code?: number;
-            }>(`claude-stream:${att.stream_id}`, (e) => replayLine(e.payload));
-            if (cancelled) {
-              u();
-              return;
-            }
-            unlisten = u;
-          } catch (e) {
-            console.warn("resume listen failed", e);
+        // ALWAYS subscribe for live events — even when att.ended is
+        // set, there can be a brief race where the watchdog/wait
+        // thread emits an "end" line right after we read the buffer
+        // but before we'd have noticed. A live listener is harmless
+        // when the channel is silent (no events ever fire) and
+        // critical when the channel is still active.
+        try {
+          const u = await listen<{
+            kind?: string;
+            line?: string;
+            code?: number;
+          }>(`claude-stream:${att.stream_id}`, (e) => replayLine(e.payload));
+          if (cancelled) {
+            u();
+            return;
           }
+          unlisten = u;
+        } catch (e) {
+          console.warn("resume listen failed", e);
         }
       })
       .catch((e) => console.warn("resume attach failed", e));
@@ -1206,29 +1227,99 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     useStore.getState().setAIChatTitle(wsId, aiChatId, title);
   }, [wsId, aiChatId, messages]);
 
-  // Persist session whenever messages change (debounced).
+  // Persist session whenever messages change. Used to be debounced
+  // 400ms but a refresh during that window orphaned the chat — the
+  // descriptor still pointed to a sessionId whose saved row had only
+  // the old messages, so restore looked broken. Save immediately
+  // (writes are localStorage-cheap) AND register a beforeunload
+  // hook to flush one last time on page close.
   useEffect(() => {
     if (messages.length === 0) return;
-    const t = window.setTimeout(() => {
+    const session: ChatSession = {
+      id: sessionId,
+      title: deriveTitle(messages),
+      messages,
+      model: selected,
+      updatedAt: Date.now(),
+      claudeSessionId,
+      totalCostUsd: chatTotalCost > 0 ? chatTotalCost : undefined,
+    };
+    saveSession(wsId, session);
+    setSessions(loadSessions(wsId));
+  }, [messages, sessionId, wsId, selected, claudeSessionId, chatTotalCost]);
+
+  // Last-resort flush: if the page is about to close (refresh, tab
+  // close), write the current state synchronously even if a streaming
+  // message hasn't fully accumulated. Captures partial assistant text
+  // into a transient assistant message so refresh-resume has data to
+  // re-attach to.
+  useEffect(() => {
+    if (!sessionId) return;
+    const onBeforeUnload = () => {
+      const assistantSoFar = streaming;
+      const finalMessages =
+        assistantSoFar !== null && assistantSoFar.trim().length > 0
+          ? [
+              ...messages,
+              { role: "assistant" as const, content: assistantSoFar },
+            ]
+          : messages;
+      if (finalMessages.length === 0) return;
       const session: ChatSession = {
         id: sessionId,
-        title: deriveTitle(messages),
-        messages,
+        title: deriveTitle(finalMessages),
+        messages: finalMessages,
         model: selected,
         updatedAt: Date.now(),
         claudeSessionId,
         totalCostUsd: chatTotalCost > 0 ? chatTotalCost : undefined,
       };
       saveSession(wsId, session);
-      setSessions(loadSessions(wsId));
-    }, 400);
-    return () => window.clearTimeout(t);
-  }, [messages, sessionId, wsId, selected, claudeSessionId, chatTotalCost]);
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [
+    messages,
+    streaming,
+    sessionId,
+    wsId,
+    selected,
+    claudeSessionId,
+    chatTotalCost,
+  ]);
+
+  // Queue of follow-up messages typed while a turn is in flight.
+  // Drains automatically once the active turn finishes.
+  const queueRef = useRef<string[]>([]);
+  const [queueLen, setQueueLen] = useState(0);
+  const drainQueue = useCallback(async () => {
+    while (queueRef.current.length > 0) {
+      const next = queueRef.current.shift();
+      setQueueLen(queueRef.current.length);
+      if (!next) continue;
+      // Re-check running state — user may have hit Stop, in which
+      // case we drop the queue.
+      if (abortRef.current?.signal.aborted) {
+        queueRef.current = [];
+        setQueueLen(0);
+        return;
+      }
+      await sendUserText(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const send = async () => {
     const text = input.trim();
     if (!text) return;
     setInput("");
+    if (streaming !== null || runningTools) {
+      // Active turn — queue this message instead of dropping it.
+      queueRef.current.push(text);
+      setQueueLen(queueRef.current.length);
+      toastInfo(`Queued (${queueRef.current.length} pending)`);
+      return;
+    }
     await sendUserText(text);
   };
 
@@ -1236,7 +1327,14 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     text: string,
     baseMessages: ChatMessage[] = messages,
   ) => {
-    if (!text || !selected || streaming !== null || runningTools) return;
+    if (!text || !selected) return;
+    if (streaming !== null || runningTools) {
+      // Defensive: caller shouldn't get here, but if they do, queue
+      // rather than drop.
+      queueRef.current.push(text);
+      setQueueLen(queueRef.current.length);
+      return;
+    }
 
     // Cross-chat hard-cap check. Per-workspace budget takes precedence
     // (if one is set on this workspace), then the global cap. The
@@ -1492,6 +1590,25 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // skip our N-round tool-execution loop and just stream once.
     const isAgenticProvider = selectedProvider === "claude-code";
     const MAX_ROUNDS = isAgenticProvider ? 1 : 8;
+
+    // Snapshot every open buffer's contents BEFORE the turn fires so
+    // the ComposeCard's "Revert all" button can roll back changes if
+    // the user doesn't like them. Keyed by the index where the next
+    // assistant message will land (= current messages length, since
+    // we just pushed the user message).
+    if (isAgenticProvider) {
+      const wsState = useStore.getState().loaded[wsId];
+      if (wsState?.files) {
+        // Pending assistant message lands at baseMessages.length + 1
+        // (user msg pushed in this turn + assistant about to land).
+        captureSnapshot(
+          wsId,
+          aiChatId,
+          baseMessages.length + 1,
+          wsState.files,
+        );
+      }
+    }
     try {
       const knownToolNames = new Set(TOOLS.map((t) => t.function.name));
       for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -1825,10 +1942,21 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       setAttachTree(false);
       setAttachedFiles([]);
       setAttachTerminal(false);
+      // Drain any messages the user typed while this turn was in
+      // flight. Fires after a microtask so the React state from the
+      // finally block has settled.
+      if (queueRef.current.length > 0) {
+        setTimeout(() => void drainQueue(), 0);
+      }
     }
   };
 
   const stop = () => {
+    // Stop also clears the queue — Stop should mean "I want to
+    // change direction now," not "process my queued follow-ups
+    // anyway with whatever the agent half-finished."
+    queueRef.current = [];
+    setQueueLen(0);
     abortRef.current?.abort();
   };
 
@@ -2606,7 +2734,12 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 return (
                   <div className="ai-tcalls">
                     {useCompose && (
-                      <ComposeCard wsId={wsId} calls={fileCalls} />
+                      <ComposeCard
+                        wsId={wsId}
+                        chatId={aiChatId}
+                        msgIndex={i}
+                        calls={fileCalls}
+                      />
                     )}
                     {(useCompose ? otherCalls : m.tool_calls).map((c, j) => (
                       <ToolCallRow
@@ -2882,17 +3015,34 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         );
       })()}
       {renderModelChip()}
+      {queueLen > 0 && (
+        <div className="ai-queue-indicator">
+          <span>
+            {queueLen} message{queueLen === 1 ? "" : "s"} queued — will send
+            when the current turn finishes
+          </span>
+          <button
+            className="ai-queue-clear"
+            onClick={() => {
+              queueRef.current = [];
+              setQueueLen(0);
+              toastInfo("Queued messages discarded");
+            }}
+            title="Discard queued messages"
+          >
+            Clear
+          </button>
+        </div>
+      )}
       <div className="ai-input-row">
         <textarea
           ref={inputRef}
           className="ai-input"
           rows={2}
           placeholder={
-            streaming !== null
-              ? "Streaming… (Esc to stop)"
-              : runningTools
-                ? "Running tools… (Esc to stop)"
-                : "Ask the model, or type / for commands… (Enter to send, Shift+Enter newline, ↑ to recall)"
+            streaming !== null || runningTools
+              ? "Type to queue (sends when this turn finishes; Esc to stop)…"
+              : "Ask the model, or type / for commands… (Enter to send, Shift+Enter newline, ↑ to recall)"
           }
           value={input}
           onChange={(e) => {
@@ -3712,11 +3862,133 @@ function diffStats(diffs: EditDiff[]): { added: number; removed: number } {
  * shortcuts. Replaces the per-call inline rows for those calls so
  * the chat doesn't sprawl into 5 separate diff cards.
  */
+/** Revert button rendered inside the ComposeCard header. Looks up
+ *  the pre-turn snapshot captured by sendUserText, then writes each
+ *  touched-path's old content back to disk. Only enabled when (a) a
+ *  snapshot exists for this turn and (b) at least one of the
+ *  touched paths is in the snapshot. */
+function ComposeRevertButton({
+  wsId,
+  chatId,
+  msgIndex,
+  touchedPaths,
+}: {
+  wsId: string;
+  chatId: string | undefined;
+  msgIndex: number;
+  touchedPaths: string[];
+}) {
+  const [reverted, setReverted] = useState(false);
+  const snap = lookupSnapshot(wsId, chatId, msgIndex);
+  // Only paths that were both modified by the agent AND captured in
+  // the pre-turn snapshot can be reverted. A file the agent created
+  // (Write to a brand-new path) won't be in the snapshot — we leave
+  // those alone since "revert" would mean delete, which is too
+  // destructive for a one-click action.
+  const restorable = snap
+    ? touchedPaths.filter((p) => snap.files.has(p))
+    : [];
+  const eligible = restorable.length;
+  const canRevert = !reverted && eligible > 0;
+
+  const onClick = async () => {
+    if (!snap || eligible === 0) return;
+    const ok = await dialogConfirm(
+      `Revert ${eligible} file${eligible === 1 ? "" : "s"} back to the pre-turn state? Local edits made AFTER the agent's turn will also be discarded.`,
+      {
+        title: "Revert all changes",
+        okLabel: "Revert",
+        cancelLabel: "Cancel",
+        danger: true,
+      },
+    );
+    if (!ok) return;
+    let okCount = 0;
+    const failures: string[] = [];
+    for (const path of restorable) {
+      try {
+        const before = snap.files.get(path);
+        if (before === undefined) continue;
+        // Write to disk via the IPC layer + update the in-memory
+        // buffer so Monaco picks it up immediately.
+        await fs.writeFile(path, before);
+        useStore.setState((s) => {
+          const w = s.loaded[wsId];
+          if (!w?.files[path]) return s;
+          return {
+            loaded: {
+              ...s.loaded,
+              [wsId]: {
+                ...w,
+                files: {
+                  ...w.files,
+                  [path]: { contents: before, original: before },
+                },
+              },
+            },
+          };
+        });
+        okCount++;
+      } catch (e) {
+        failures.push(
+          `${path.split(/[\\/]/).pop()}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    setReverted(true);
+    dropSnapshot(wsId, chatId, msgIndex);
+    if (failures.length === 0) {
+      toastSuccess(`Reverted ${okCount} file${okCount === 1 ? "" : "s"}`);
+    } else {
+      toastError(
+        `Reverted ${okCount}/${restorable.length}; ${failures.length} failed (see console)`,
+      );
+      console.warn("Compose revert failures:", failures);
+    }
+  };
+
+  if (reverted) {
+    return (
+      <span className="ai-compose-reverted" title="Files restored to pre-turn state">
+        ✓ Reverted
+      </span>
+    );
+  }
+  if (!canRevert) {
+    return (
+      <button
+        className="ai-compose-revert"
+        disabled
+        title={
+          snap
+            ? "No restorable files in the pre-turn snapshot (the agent may have created new files)"
+            : "No pre-turn snapshot available — Revert only works for turns started after page load with this feature live"
+        }
+      >
+        Revert
+      </button>
+    );
+  }
+  return (
+    <button
+      className="ai-compose-revert"
+      onClick={() => void onClick()}
+      title={`Roll ${eligible} file${eligible === 1 ? "" : "s"} back to pre-turn state`}
+    >
+      ↶ Revert {eligible}
+    </button>
+  );
+}
+
 function ComposeCard({
   wsId,
+  chatId,
+  msgIndex,
   calls,
 }: {
   wsId: string;
+  chatId: string | undefined;
+  msgIndex: number;
   calls: ToolCall[];
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -3785,6 +4057,12 @@ function ComposeCard({
         >
           Open all
         </button>
+        <ComposeRevertButton
+          wsId={wsId}
+          chatId={chatId}
+          msgIndex={msgIndex}
+          touchedPaths={byPath.map(([p]) => p)}
+        />
       </div>
       {!collapsed && (
         <div className="ai-compose-files">
