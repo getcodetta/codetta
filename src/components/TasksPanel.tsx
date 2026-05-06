@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../store";
-import { pty } from "../ipc";
+import { fs, pty } from "../ipc";
 
 interface PackageScript {
   name: string;
@@ -13,19 +13,50 @@ interface Props {
   root: string;
 }
 
+type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
+
+// Detect the project's package manager by which lockfile is present.
+// Falls back to npm when nothing definitive is found. Order matters:
+// pnpm/yarn/bun lockfiles co-existing with package-lock.json is rare
+// but real (CI artifacts), so check the more specific ones first.
+async function detectPackageManager(root: string): Promise<PackageManager> {
+  const candidates: Array<{ file: string; pm: PackageManager }> = [
+    { file: "pnpm-lock.yaml", pm: "pnpm" },
+    { file: "bun.lockb", pm: "bun" },
+    { file: "bun.lock", pm: "bun" },
+    { file: "yarn.lock", pm: "yarn" },
+    { file: "package-lock.json", pm: "npm" },
+  ];
+  for (const { file, pm } of candidates) {
+    try {
+      const path = `${root.replace(/[\\/]+$/, "")}/${file}`;
+      // fs.readFile rejects when the file doesn't exist — cheaper than
+      // pulling a stat helper just for "exists?".
+      await fs.readFile(path);
+      return pm;
+    } catch {
+      /* not present, try next */
+    }
+  }
+  return "npm";
+}
+
 export function TasksPanel({ wsId, root }: Props) {
   const [scripts, setScripts] = useState<PackageScript[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [pm, setPm] = useState<PackageManager>("npm");
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const out = await invoke<PackageScript[]>("read_package_scripts", {
-        root,
-      });
+      const [out, detected] = await Promise.all([
+        invoke<PackageScript[]>("read_package_scripts", { root }),
+        detectPackageManager(root),
+      ]);
       setScripts(out);
+      setPm(detected);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setScripts([]);
@@ -43,7 +74,12 @@ export function TasksPanel({ wsId, root }: Props) {
     const unsub = useStore.subscribe((state) => {
       const desc = state.loaded[wsId]?.terminals[termId];
       if (desc?.ptyId) {
-        void pty.write(desc.ptyId, `npm run ${name}\r`);
+        // pnpm/yarn/bun let you skip "run" for non-reserved script names,
+        // but the explicit form works with all four and avoids the
+        // "missing script" footgun for scripts that share names with
+        // built-in commands ("test", "start").
+        const cmd = pm === "yarn" ? `yarn run ${name}` : `${pm} run ${name}`;
+        void pty.write(desc.ptyId, `${cmd}\r`);
         unsub();
       }
     });
@@ -52,7 +88,18 @@ export function TasksPanel({ wsId, root }: Props) {
   return (
     <div className="tasks-panel">
       <div className="tasks-header">
-        <span>Tasks</span>
+        <span>
+          Tasks
+          {scripts.length > 0 && (
+            <span
+              className="tasks-pm"
+              title={`Detected ${pm} from lockfile — scripts will run via "${pm} run <script>"`}
+            >
+              {" "}
+              · {pm}
+            </span>
+          )}
+        </span>
         <button onClick={() => void refresh()}>⟳</button>
       </div>
       {error && <div className="tasks-empty">{error}</div>}

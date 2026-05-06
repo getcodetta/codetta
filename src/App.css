@@ -1986,6 +1986,11 @@ input {
   padding: 2px 8px;
   font-size: 11px;
 }
+.tasks-pm {
+  color: var(--accent);
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
 .tasks-list {
   display: flex;
   flex-direction: column;
