@@ -2085,6 +2085,33 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     abortRef.current?.abort();
   };
 
+  // Make the "Stop (Esc)" tooltip honest — Esc previously only worked
+  // when the chat textarea was focused, so a user reading the streamed
+  // output (focus on chat scroll area) couldn't actually use the
+  // documented shortcut. Now a window-level listener fires when the
+  // turn is in flight AND the user isn't typing in some other input
+  // elsewhere in the app (don't steal Esc from the file dialog, the
+  // settings modal, etc.). The textarea-bound handler still wins
+  // when its own slash-menu / attachment paths apply.
+  useEffect(() => {
+    if (streaming === null && !runningTools) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const t = e.target as HTMLElement | null;
+      // Skip if focus is in OUR chat input — its onKeyDown owns Esc
+      // there (slash-menu close, etc.). Also skip text fields in
+      // unrelated overlays (settings, dialog) so we don't steal.
+      if (t) {
+        if (t.tagName === "TEXTAREA" || t.tagName === "INPUT") return;
+        if (t.isContentEditable) return;
+      }
+      e.preventDefault();
+      stop();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [streaming, runningTools]);
+
   const regenerateFrom = async (index: number) => {
     if (streaming !== null || runningTools) return;
     const target = messages[index];
