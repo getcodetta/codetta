@@ -344,15 +344,38 @@ export function SourceControlPanel({ wsId, root }: Props) {
       <div className="git-commit">
         <textarea
           rows={2}
-          placeholder="Commit message"
+          placeholder="Commit message · Ctrl+Enter to commit"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            // Match the muscle memory people bring from VS Code's source
+            // control: Ctrl/Cmd+Enter inside the message box runs the
+            // commit if there are staged files. Plain Enter still adds
+            // a newline since most messages are >1 line.
+            if (
+              (e.ctrlKey || e.metaKey) &&
+              e.key === "Enter" &&
+              !busy &&
+              message.trim() &&
+              staged.length > 0
+            ) {
+              e.preventDefault();
+              void commit();
+            }
+          }}
         />
         <div className="git-commit-actions">
           <button
             className="primary"
             onClick={() => void commit()}
             disabled={!!busy || !message.trim() || staged.length === 0}
+            title={
+              staged.length === 0
+                ? "Stage at least one file first"
+                : !message.trim()
+                  ? "Type a commit message"
+                  : "Commit staged changes (Ctrl+Enter from message box)"
+            }
           >
             Commit
           </button>
