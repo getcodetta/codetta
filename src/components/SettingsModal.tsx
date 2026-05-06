@@ -899,14 +899,17 @@ function ClaudeCodeAlwaysAllowEditor() {
       <div className="settings-row">
         <button
           className="cc-allow-clear"
-          onClick={() => {
-            if (
-              confirm(
-                "Clear all always-allow entries? Claude Code will ask for permission on every tool call again until you re-add them.",
-              )
-            ) {
-              persist([]);
-            }
+          onClick={async () => {
+            const ok = await dialogConfirm(
+              "Clear all always-allow entries? Claude Code will ask for permission on every tool call again until you re-add them.",
+              {
+                title: "Clear always-allow",
+                okLabel: "Clear",
+                cancelLabel: "Cancel",
+                danger: true,
+              },
+            );
+            if (ok) persist([]);
           }}
         >
           Clear all
@@ -1642,14 +1645,17 @@ function AIUsageDashboard() {
       <div className="settings-row">
         <button
           className="cc-allow-clear"
-          onClick={() => {
-            if (
-              confirm(
-                "Delete the entire AI usage log? This is local-only, but you'll lose monthly history.",
-              )
-            ) {
-              clearUsage();
-            }
+          onClick={async () => {
+            const ok = await dialogConfirm(
+              "Delete the entire AI usage log? This is local-only, but you'll lose monthly history.",
+              {
+                title: "Clear usage log",
+                okLabel: "Delete",
+                cancelLabel: "Cancel",
+                danger: true,
+              },
+            );
+            if (ok) clearUsage();
           }}
         >
           Clear log
