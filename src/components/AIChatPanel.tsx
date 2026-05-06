@@ -24,6 +24,7 @@ import { openSettings } from "../settingsBus";
 import { useStore, parseKey, findPaneById } from "../store";
 import { useEditorState, getActiveEditor } from "../editorState";
 import { matchExclusion, subscribePrivacy } from "../aiPrivacy";
+import { ClaudePermissionOverlay } from "./ClaudePermissionOverlay";
 import { recordUsage, wouldExceedHardCap } from "../aiUsageLog";
 import {
   captureSnapshot,
@@ -1195,7 +1196,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, streaming]);
+  }, [messages, streaming, streamingBlocks, streamingToolCalls]);
 
   // Reset chat & restore appropriate session when workspace or bound
   // chat-tab changes.
@@ -3167,12 +3168,33 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         );
       })()}
       {renderModelChip()}
+      {/* Inline permission card — replaces the old full-window overlay.
+          Renders nothing when there are no pending requests; otherwise
+          shows the request just above the input where the user is
+          already focused, instead of dimming the whole window. */}
+      <ClaudePermissionOverlay />
       {queueLen > 0 && (
         <div className="ai-queue-indicator">
           <span>
             {queueLen} message{queueLen === 1 ? "" : "s"} queued — will send
             when the current turn finishes
           </span>
+          <button
+            className="ai-queue-send-now"
+            onClick={() => {
+              // Stop the current turn (preserving the queue), then the
+              // finally-block in sendUserText will drain it. Without
+              // this, the user's only options are wait or discard —
+              // there's no "I'm done waiting, send my next message
+              // right now" affordance.
+              if (queueRef.current.length === 0) return;
+              abortRef.current?.abort();
+              toastInfo("Stopping current turn — queued message will send next");
+            }}
+            title="Stop the current turn and send the queued message now"
+          >
+            ⏭ Send now
+          </button>
           <button
             className="ai-queue-clear"
             onClick={() => {

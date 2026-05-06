@@ -155,6 +155,20 @@ export const claudeCodeProvider: ChatProvider = {
     // Per-flag rather than per-message-id because Claude Code's
     // stream_event records don't reliably propagate message_id.
     let currentMsgGotDeltas = false;
+    // Track per-content-block tool_use buffers so we can emit each
+    // tool_call EAGERLY at content_block_stop — not at the trailing
+    // `assistant` event. Eager emission preserves the true text →
+    // tool_use → text → tool_use interleave inside a single
+    // assistant message; without it, all text deltas merge into one
+    // block followed by all tool_use blocks at end (which the UI
+    // then renders out of order). Indexed by content_block index.
+    const toolUseBlocks = new Map<
+      number,
+      { id?: string; name?: string; jsonBuf: string }
+    >();
+    // Set of tool_use ids we've already emitted via stream_event so
+    // the wrapping `assistant` event handler can skip duplicates.
+    const emittedToolUseIds = new Set<string>();
 
     const handle = (data: { kind: string; line?: string; code?: number }) => {
       if (data.kind === "end") {
@@ -209,6 +223,62 @@ export const claudeCodeProvider: ChatProvider = {
           const ev = obj.event;
           if (ev.type === "message_start") {
             currentMsgGotDeltas = false;
+            toolUseBlocks.clear();
+          } else if (
+            ev.type === "content_block_start" &&
+            ev.content_block?.type === "tool_use" &&
+            typeof ev.index === "number"
+          ) {
+            // Open buffer for this tool_use block. id + name come on
+            // start; arguments accumulate via input_json_delta below.
+            toolUseBlocks.set(ev.index, {
+              id:
+                typeof ev.content_block.id === "string"
+                  ? ev.content_block.id
+                  : undefined,
+              name:
+                typeof ev.content_block.name === "string"
+                  ? ev.content_block.name
+                  : undefined,
+              jsonBuf: "",
+            });
+          } else if (
+            ev.type === "content_block_delta" &&
+            typeof ev.index === "number" &&
+            ev.delta?.type === "input_json_delta" &&
+            typeof ev.delta.partial_json === "string"
+          ) {
+            const buf = toolUseBlocks.get(ev.index);
+            if (buf) buf.jsonBuf += ev.delta.partial_json;
+          } else if (
+            ev.type === "content_block_stop" &&
+            typeof ev.index === "number" &&
+            toolUseBlocks.has(ev.index)
+          ) {
+            // Close out the tool_use block — emit tool_call NOW so
+            // the chronological log gets text → tool → text instead
+            // of text+text → tool+tool. Falls back gracefully on
+            // empty / malformed JSON.
+            const buf = toolUseBlocks.get(ev.index)!;
+            toolUseBlocks.delete(ev.index);
+            let args: Record<string, unknown> = {};
+            if (buf.jsonBuf.trim().length > 0) {
+              try {
+                const parsed = JSON.parse(buf.jsonBuf);
+                if (parsed && typeof parsed === "object") {
+                  args = parsed as Record<string, unknown>;
+                }
+              } catch {
+                /* leave args = {} — assistant event will repair if it fires */
+              }
+            }
+            const call: ToolCall = {
+              id: buf.id,
+              function: { name: buf.name ?? "tool", arguments: args },
+            };
+            if (buf.id) emittedToolUseIds.add(buf.id);
+            queue.push({ kind: "tool_call", call });
+            wake();
           } else if (
             ev.type === "content_block_delta" &&
             ev.delta?.type === "text_delta" &&
@@ -243,8 +313,12 @@ export const claudeCodeProvider: ChatProvider = {
                 : block.text;
               queue.push({ kind: "content", text });
             } else if (block.type === "tool_use") {
+              // If we already emitted this tool_use eagerly via
+              // content_block_stop, skip — would duplicate the row.
+              const id = typeof block.id === "string" ? block.id : undefined;
+              if (id && emittedToolUseIds.has(id)) continue;
               const call: ToolCall = {
-                id: typeof block.id === "string" ? block.id : undefined,
+                id,
                 function: {
                   name: typeof block.name === "string" ? block.name : "tool",
                   arguments:

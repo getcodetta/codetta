@@ -312,9 +312,16 @@ export function ClaudePermissionOverlay() {
     await respond("allow");
   };
 
+  // Renders INLINE inside the chat panel (above the input) instead of as
+  // a full-window modal overlay. The user repeatedly asked for this:
+  // a centered modal blocks the conversation context, makes you lose
+  // your scroll position, and feels like the AI is interrupting *you*
+  // rather than asking *for permission*. Inline keeps the agent's
+  // last text message + the request side by side so you can see what
+  // led to the ask. Mounted by AIChatPanel; App.tsx no longer renders it.
   return (
-    <div className="cc-perm-overlay">
-      <div className="cc-perm-card" onClick={(e) => e.stopPropagation()}>
+    <div className="cc-perm-inline">
+      <div className="cc-perm-card">
         <PermissionCardBody req={req} />
         <div className="cc-perm-actions">
           <button

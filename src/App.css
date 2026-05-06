@@ -3694,7 +3694,8 @@ input {
   flex-shrink: 0;
 }
 .ai-queue-indicator span { flex: 1 1 auto; }
-.ai-queue-clear {
+.ai-queue-clear,
+.ai-queue-send-now {
   flex-shrink: 0;
   background: transparent;
   border: 1px solid rgba(122, 79, 255, 0.45);
@@ -3705,7 +3706,12 @@ input {
   cursor: pointer;
   font-family: inherit;
 }
+.ai-queue-send-now {
+  border-color: rgba(80, 200, 120, 0.55);
+  color: #6dd49a;
+}
 .ai-queue-clear:hover { background: rgba(122, 79, 255, 0.15); }
+.ai-queue-send-now:hover { background: rgba(80, 200, 120, 0.15); }
 .ai-privacy-icon {
   font-size: 14px;
   line-height: 1;
@@ -4412,29 +4418,25 @@ input {
 /* Claude Code permission overlay — modal card surfaced when the
    PreToolUse hook fires for a destructive tool. Floats above the
    editor; user must Allow or Deny to unblock the agent. */
-.cc-perm-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 5000;
-  background: rgba(0, 0, 0, 0.55);
+/* Inline variant — sits inside the chat panel above the input, no full
+   window dim. Far less intrusive than the old centered modal. */
+.cc-perm-inline {
+  margin: 8px 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  flex-direction: column;
   pointer-events: auto;
-  backdrop-filter: blur(2px);
 }
 .cc-perm-card {
-  width: min(720px, 100%);
-  max-height: 80vh;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  width: 100%;
+  max-height: 60vh;
+  background: var(--bg-elev);
+  border: 1px solid var(--accent, #7a4fff);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  font-size: 13px;
+  font-size: 12px;
 }
 .cc-perm-head {
   display: flex;

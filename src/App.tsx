@@ -23,7 +23,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Dialog } from "./components/Dialog";
 import { SettingsModal } from "./components/SettingsModal";
 import { TerminalPopoutWindow } from "./components/TerminalPopoutWindow";
-import { ClaudePermissionOverlay } from "./components/ClaudePermissionOverlay";
 import "./App.css";
 
 // When this document was opened as a terminal pop-out window, render only
@@ -362,7 +361,9 @@ function MainApp() {
       <DiffModal />
       <Dialog />
       <SettingsModal />
-      <ClaudePermissionOverlay />
+      {/* ClaudePermissionOverlay now mounts inline inside AIChatPanel
+          so the request appears in the chat next to the agent text
+          that triggered it, not as a full-screen modal. */}
       <RecentFilesOverlay
         open={recentOverlayOpen}
         files={recentList}
