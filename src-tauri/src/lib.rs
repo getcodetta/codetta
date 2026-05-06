@@ -23,6 +23,7 @@ pub fn run() {
         .manage(WatcherState::default())
         .manage(ClaudeCodeState::default())
         .manage(PermState::default())
+        .manage(sftp::SftpPoolState::default())
         .setup(|app| {
             // Start the permission-callback HTTP server early so
             // settings.local.json hooks always have an endpoint to
@@ -99,6 +100,7 @@ pub fn run() {
             sftp::sftp_mkdir,
             sftp::sftp_upload_dir,
             sftp::sftp_download_dir,
+            sftp::sftp_disconnect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

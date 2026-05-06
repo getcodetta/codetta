@@ -620,6 +620,8 @@ interface SftpProfile {
   /** Optional remote folder to land in on connect. Mirror of the field
    *  in the panel-side schema; both editors round-trip it untouched. */
   defaultPath?: string;
+  /** Optional path to an OpenSSH private key. Mirror of the panel field. */
+  privateKeyPath?: string;
 }
 
 function loadSftpProfiles(): SftpProfile[] {
@@ -730,6 +732,7 @@ function SftpProfilesEditor() {
           port: p.port,
           user: p.user,
           password: p.password,
+          privateKeyPath: p.privateKeyPath?.trim() || undefined,
         },
       });
       setTestState({
@@ -862,6 +865,16 @@ function SftpProfilesEditor() {
               placeholder="/var/www/site (optional — defaults to SSH home)"
               onChange={(e) =>
                 setEditing({ ...editing, defaultPath: e.target.value })
+              }
+            />
+          </Row>
+          <Row label="Private key">
+            <input
+              className="sftp-field"
+              value={editing.privateKeyPath ?? ""}
+              placeholder="C:/Users/me/.ssh/id_ed25519 (optional — leave blank for password)"
+              onChange={(e) =>
+                setEditing({ ...editing, privateKeyPath: e.target.value })
               }
             />
           </Row>

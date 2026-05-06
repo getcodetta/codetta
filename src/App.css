@@ -2247,16 +2247,57 @@ input {
   color: var(--accent);
 }
 .remote-panel-pwd {
-  padding: 4px 10px;
+  padding: 4px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+.remote-breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0;
   font-family: var(--mono, monospace);
   font-size: 10.5px;
   color: var(--fg-muted);
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex-shrink: 0;
+}
+.remote-bc-row { display: inline-flex; align-items: center; }
+.remote-bc-home {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 4px;
+  margin-right: 4px;
+  border-right: 1px solid var(--border);
+  line-height: 1;
+}
+.remote-bc-home:hover { color: var(--fg); }
+.remote-bc-segment {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 1px 4px;
+  font-family: inherit;
+  font-size: inherit;
+  border-radius: 3px;
+}
+.remote-bc-segment:hover {
+  background: var(--bg-hi);
+  color: var(--fg);
+}
+.remote-bc-current {
+  color: var(--fg);
+  padding: 1px 4px;
+  font-weight: 500;
+}
+.remote-bc-sep {
+  color: var(--fg-muted);
+  opacity: 0.6;
+  padding: 0 1px;
 }
 .remote-tree {
   flex: 1 1 auto;
@@ -5840,6 +5881,17 @@ input {
   padding: 4px;
   position: absolute;
   inset: 0;
+}
+
+/* Auto-push indicator: subtle ↥ next to the tab name when this file
+   is linked to a remote path with autoPush enabled. Saves push to
+   remote in the background. */
+.tab-autopush-mark {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 11px;
+  margin-left: 1px;
+  opacity: 0.85;
 }
 
 /* Marker shown next to a popped-out terminal's tab name. */

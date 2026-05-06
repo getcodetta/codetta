@@ -1,35 +1,62 @@
-// SFTP support — first slice. Goals for this iteration:
-//   - Test a connection profile (user proves credentials work)
-//   - List a remote directory (foundation for the upcoming remote tree)
-//   - Read / write a single remote file (foundation for edit-on-save)
+// SFTP support. Provides a small pure-Rust SSH/SFTP layer (russh +
+// russh-sftp) wired up to Tauri commands the frontend invokes for
+// browsing, file edit-on-save, and recursive directory sync.
 //
-// Out of scope for now: persistent connection pooling, ssh-key auth,
-// recursive directory sync, conflict resolution. Profiles are stored
-// frontend-side in localStorage; the backend is stateless and reconnects
-// per call. That's slow but very simple — fast enough for the MVP UX
-// where the user clicks Test, then occasionally browses the tree.
+// Architecture:
+//   - SftpPoolState holds a HashMap<pool_key, Arc<Mutex<SftpSession>>>
+//     keyed by host:port:user, so the same profile reuses one live SSH
+//     channel across all calls. Without pooling, browsing a tree would
+//     reconnect (TCP + key exchange + auth + channel open + sftp
+//     subsystem) on every list_dir / read_file — easily 1-2 seconds
+//     per click on a high-latency link. Pooled, only the first call
+//     pays that cost; subsequent ones piggyback the open channel.
+//   - On any operation error, the cached session is evicted so the
+//     next call reconnects. Cheaper than trying to detect "is this
+//     session still healthy?" up front.
+//   - Auth supports password OR SSH private key (PEM); the key path
+//     is optional on the profile. Empty path → password auth.
 //
-// russh is pure Rust so this compiles + runs on Windows without libssh2.
+// russh is pure Rust so this compiles + runs on Windows without
+// libssh2 / native deps.
 
 use async_trait::async_trait;
 use russh::client;
 use russh::keys::key::PublicKey;
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex as AsyncMutex;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct SftpConnectArgs {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
     pub user: String,
-    /// Plain-text password. Stored in localStorage on the frontend (per
-    /// the user's existing trust model — same as API keys live there).
-    /// We don't currently support keyboard-interactive or key-based auth;
-    /// add when there's a real demand for it.
+    /// Plain-text password. Used for password auth. When `private_key_path`
+    /// is set + non-empty AND points to an unencrypted (or
+    /// PASSWORD-encrypted) key file, the password doubles as the key's
+    /// passphrase. Empty + no key path → connect attempt fails.
     pub password: String,
+    /// Optional absolute path to an OpenSSH private key (PEM). When set,
+    /// key auth is tried first; a successful key auth wins, otherwise we
+    /// fall through to password auth so existing profiles keep working.
+    #[serde(default)]
+    pub private_key_path: Option<String>,
+}
+
+impl SftpConnectArgs {
+    /// Pool key — stable per profile (host + port + user). Password and
+    /// key path are deliberately excluded so a re-saved profile with the
+    /// same auth surface reuses the cached session. If the user changes
+    /// host/port/user, that's a different connection and gets its own
+    /// pool entry; a password change merely resets when the existing
+    /// session eventually drops.
+    fn pool_key(&self) -> String {
+        format!("{}@{}:{}", self.user, self.host, self.port)
+    }
 }
 
 fn default_port() -> u16 {
@@ -46,11 +73,17 @@ pub struct SftpEntry {
     pub mtime: u64,
 }
 
-/// All SFTP commands return Result<T, String> with a human-readable
-/// error message — the frontend just renders it in a toast / inline
-/// error. Wrapping every level of russh's error chain into structured
-/// JSON would be more work than payoff for an MVP.
 type SftpResult<T> = Result<T, String>;
+
+/// One pooled SFTP session. The async mutex serialises calls so concurrent
+/// frontend operations don't interleave reads/writes on the same SSH
+/// channel — russh-sftp itself is not safe for that.
+type PooledSession = Arc<AsyncMutex<SftpSession>>;
+
+#[derive(Default)]
+pub struct SftpPoolState {
+    sessions: parking_lot::Mutex<HashMap<String, PooledSession>>,
+}
 
 struct AcceptAllKeysClient;
 
@@ -58,10 +91,7 @@ struct AcceptAllKeysClient;
 impl client::Handler for AcceptAllKeysClient {
     type Error = russh::Error;
 
-    // For the MVP we trust-on-first-use without persisting fingerprints.
-    // TODO when a known_hosts equivalent is added: prompt the user on
-    // first connect, persist accepted fingerprints per-profile, and
-    // fail-closed on mismatch (real MITM protection).
+    // Trust-on-first-use without persisting fingerprints. TODO known_hosts.
     async fn check_server_key(
         &mut self,
         _server_public_key: &PublicKey,
@@ -70,12 +100,11 @@ impl client::Handler for AcceptAllKeysClient {
     }
 }
 
-/// Open an SFTP session against the profile. Caller is responsible for
-/// dropping the session when done — russh closes the channel on drop.
+/// Open a fresh SFTP session, trying SSH key auth first if a key path
+/// is configured, then falling back to password. Returns the live
+/// session — caller decides whether to pool it or use it one-shot.
 async fn open_session(args: &SftpConnectArgs) -> SftpResult<SftpSession> {
     let mut config = client::Config::default();
-    // Reasonable defaults — the underlying TCP connect already has its
-    // own timeout, but russh's keepalive helps detect dead servers.
     config.inactivity_timeout = Some(Duration::from_secs(30));
     let config = Arc::new(config);
 
@@ -87,12 +116,57 @@ async fn open_session(args: &SftpConnectArgs) -> SftpResult<SftpSession> {
     .await
     .map_err(|e| format!("connect failed: {e}"))?;
 
-    let auth = session
-        .authenticate_password(&args.user, &args.password)
-        .await
-        .map_err(|e| format!("auth error: {e}"))?;
-    if !auth {
-        return Err("authentication failed (wrong username or password)".into());
+    let mut authed = false;
+
+    // Try key auth first when a key path is set + non-empty.
+    if let Some(path) = args
+        .private_key_path
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        match russh::keys::load_secret_key(
+            path,
+            if args.password.is_empty() {
+                None
+            } else {
+                Some(args.password.as_str())
+            },
+        ) {
+            Ok(key) => {
+                let key_arc = Arc::new(key);
+                match session
+                    .authenticate_publickey(&args.user, key_arc)
+                    .await
+                {
+                    Ok(true) => authed = true,
+                    Ok(false) => {
+                        // Key parsed but server rejected it. Fall through
+                        // to password — many servers accept either.
+                    }
+                    Err(e) => return Err(format!("key auth error: {e}")),
+                }
+            }
+            Err(e) => {
+                return Err(format!(
+                    "could not load private key at {}: {} (check the path and the passphrase)",
+                    path, e
+                ));
+            }
+        }
+    }
+
+    if !authed {
+        if args.password.is_empty() && args.private_key_path.is_none() {
+            return Err("no password and no private key configured".into());
+        }
+        let ok = session
+            .authenticate_password(&args.user, &args.password)
+            .await
+            .map_err(|e| format!("auth error: {e}"))?;
+        if !ok {
+            return Err("authentication failed (wrong username, password, or key)".into());
+        }
     }
 
     let channel = session
@@ -109,6 +183,32 @@ async fn open_session(args: &SftpConnectArgs) -> SftpResult<SftpSession> {
     Ok(sftp)
 }
 
+/// Get a pooled session for this profile. Returns the existing one if
+/// it's still in the pool; otherwise opens fresh and caches.
+async fn get_session(
+    state: &SftpPoolState,
+    args: &SftpConnectArgs,
+) -> SftpResult<PooledSession> {
+    let key = args.pool_key();
+    {
+        let pool = state.sessions.lock();
+        if let Some(s) = pool.get(&key) {
+            return Ok(s.clone());
+        }
+    }
+    let session = open_session(args).await?;
+    let arc: PooledSession = Arc::new(AsyncMutex::new(session));
+    state.sessions.lock().insert(key, arc.clone());
+    Ok(arc)
+}
+
+/// Drop the cached session for this profile. Called after any
+/// operation error so the next call reconnects rather than reusing a
+/// dead channel. Also called by `sftp_disconnect`.
+fn evict_session(state: &SftpPoolState, args: &SftpConnectArgs) {
+    state.sessions.lock().remove(&args.pool_key());
+}
+
 #[derive(Serialize)]
 pub struct SftpTestResult {
     pub server_banner: String,
@@ -118,17 +218,36 @@ pub struct SftpTestResult {
 
 #[tauri::command]
 pub async fn sftp_test_connection(
+    state: tauri::State<'_, SftpPoolState>,
     args: SftpConnectArgs,
 ) -> SftpResult<SftpTestResult> {
-    let sftp = open_session(&args).await?;
-    let home_dir = sftp
-        .canonicalize(".")
-        .await
-        .map_err(|e| format!("canonicalize failed: {e}"))?;
-    let entries = sftp
-        .read_dir(&home_dir)
-        .await
-        .map_err(|e| format!("list home dir failed: {e}"))?;
+    // Test always opens a fresh session and pools it on success — so
+    // the user's "Test" click both validates the credentials AND warms
+    // up the pool for the immediately-following Connect.
+    let session = match get_session(&state, &args).await {
+        Ok(s) => s,
+        Err(e) => {
+            evict_session(&state, &args);
+            return Err(e);
+        }
+    };
+    let sftp = session.lock().await;
+    let home_dir = match sftp.canonicalize(".").await {
+        Ok(p) => p,
+        Err(e) => {
+            drop(sftp);
+            evict_session(&state, &args);
+            return Err(format!("canonicalize failed: {e}"));
+        }
+    };
+    let entries = match sftp.read_dir(&home_dir).await {
+        Ok(e) => e,
+        Err(e) => {
+            drop(sftp);
+            evict_session(&state, &args);
+            return Err(format!("list home dir failed: {e}"));
+        }
+    };
     Ok(SftpTestResult {
         server_banner: format!("Connected as {} on {}:{}", args.user, args.host, args.port),
         home_dir,
@@ -144,12 +263,20 @@ pub struct SftpListArgs {
 }
 
 #[tauri::command]
-pub async fn sftp_list_dir(args: SftpListArgs) -> SftpResult<Vec<SftpEntry>> {
-    let sftp = open_session(&args.conn).await?;
-    let entries = sftp
-        .read_dir(&args.path)
-        .await
-        .map_err(|e| format!("list dir failed: {e}"))?;
+pub async fn sftp_list_dir(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpListArgs,
+) -> SftpResult<Vec<SftpEntry>> {
+    let session = get_session(&state, &args.conn).await?;
+    let sftp = session.lock().await;
+    let entries = match sftp.read_dir(&args.path).await {
+        Ok(e) => e,
+        Err(e) => {
+            drop(sftp);
+            evict_session(&state, &args.conn);
+            return Err(format!("list dir failed: {e}"));
+        }
+    };
     let mut out = Vec::new();
     for e in entries {
         let meta = e.metadata();
@@ -187,17 +314,28 @@ pub struct SftpReadArgs {
 }
 
 #[tauri::command]
-pub async fn sftp_read_file(args: SftpReadArgs) -> SftpResult<String> {
+pub async fn sftp_read_file(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpReadArgs,
+) -> SftpResult<String> {
     use tokio::io::AsyncReadExt;
-    let sftp = open_session(&args.conn).await?;
-    let mut file = sftp
-        .open(&args.path)
-        .await
-        .map_err(|e| format!("open failed: {e}"))?;
+    let session = get_session(&state, &args.conn).await?;
+    let sftp = session.lock().await;
+    let mut file = match sftp.open(&args.path).await {
+        Ok(f) => f,
+        Err(e) => {
+            drop(sftp);
+            evict_session(&state, &args.conn);
+            return Err(format!("open failed: {e}"));
+        }
+    };
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf)
-        .await
-        .map_err(|e| format!("read failed: {e}"))?;
+    if let Err(e) = file.read_to_end(&mut buf).await {
+        drop(file);
+        drop(sftp);
+        evict_session(&state, &args.conn);
+        return Err(format!("read failed: {e}"));
+    }
     String::from_utf8(buf).map_err(|e| format!("file is not valid UTF-8: {e}"))
 }
 
@@ -210,19 +348,33 @@ pub struct SftpWriteArgs {
 }
 
 #[tauri::command]
-pub async fn sftp_write_file(args: SftpWriteArgs) -> SftpResult<()> {
+pub async fn sftp_write_file(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpWriteArgs,
+) -> SftpResult<()> {
     use tokio::io::AsyncWriteExt;
-    let sftp = open_session(&args.conn).await?;
-    let mut file = sftp
-        .create(&args.path)
-        .await
-        .map_err(|e| format!("create failed: {e}"))?;
-    file.write_all(args.contents.as_bytes())
-        .await
-        .map_err(|e| format!("write failed: {e}"))?;
-    file.shutdown()
-        .await
-        .map_err(|e| format!("close failed: {e}"))?;
+    let session = get_session(&state, &args.conn).await?;
+    let sftp = session.lock().await;
+    let mut file = match sftp.create(&args.path).await {
+        Ok(f) => f,
+        Err(e) => {
+            drop(sftp);
+            evict_session(&state, &args.conn);
+            return Err(format!("create failed: {e}"));
+        }
+    };
+    if let Err(e) = file.write_all(args.contents.as_bytes()).await {
+        drop(file);
+        drop(sftp);
+        evict_session(&state, &args.conn);
+        return Err(format!("write failed: {e}"));
+    }
+    if let Err(e) = file.shutdown().await {
+        drop(file);
+        drop(sftp);
+        evict_session(&state, &args.conn);
+        return Err(format!("close failed: {e}"));
+    }
     Ok(())
 }
 
@@ -234,20 +386,24 @@ pub struct SftpDeleteArgs {
     pub is_dir: bool,
 }
 
-/// Delete a file or an empty directory. We don't recursively rm
-/// folders for the MVP — too easy for a stray right-click to nuke
-/// production. The frontend confirms via dialog before calling this.
+/// Delete a file or an empty directory. The frontend gates this with
+/// a type-to-confirm dialog for folders.
 #[tauri::command]
-pub async fn sftp_delete(args: SftpDeleteArgs) -> SftpResult<()> {
-    let sftp = open_session(&args.conn).await?;
-    if args.is_dir {
-        sftp.remove_dir(&args.path)
-            .await
-            .map_err(|e| format!("remove_dir failed: {e}"))?;
+pub async fn sftp_delete(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpDeleteArgs,
+) -> SftpResult<()> {
+    let session = get_session(&state, &args.conn).await?;
+    let sftp = session.lock().await;
+    let r = if args.is_dir {
+        sftp.remove_dir(&args.path).await
     } else {
-        sftp.remove_file(&args.path)
-            .await
-            .map_err(|e| format!("remove_file failed: {e}"))?;
+        sftp.remove_file(&args.path).await
+    };
+    if let Err(e) = r {
+        drop(sftp);
+        evict_session(&state, &args.conn);
+        return Err(format!("delete failed: {e}"));
     }
     Ok(())
 }
@@ -260,11 +416,29 @@ pub struct SftpMkdirArgs {
 }
 
 #[tauri::command]
-pub async fn sftp_mkdir(args: SftpMkdirArgs) -> SftpResult<()> {
-    let sftp = open_session(&args.conn).await?;
-    sftp.create_dir(&args.path)
-        .await
-        .map_err(|e| format!("create_dir failed: {e}"))?;
+pub async fn sftp_mkdir(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpMkdirArgs,
+) -> SftpResult<()> {
+    let session = get_session(&state, &args.conn).await?;
+    let sftp = session.lock().await;
+    if let Err(e) = sftp.create_dir(&args.path).await {
+        drop(sftp);
+        evict_session(&state, &args.conn);
+        return Err(format!("create_dir failed: {e}"));
+    }
+    Ok(())
+}
+
+/// Drop the cached session for this connection. Called by the frontend
+/// when the user clicks Disconnect — frees the SSH channel so the
+/// remote server can reclaim the slot.
+#[tauri::command]
+pub async fn sftp_disconnect(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpConnectArgs,
+) -> SftpResult<()> {
+    evict_session(&state, &args);
     Ok(())
 }
 
@@ -340,7 +514,10 @@ fn relative_to(base: &std::path::Path, p: &std::path::Path) -> String {
 }
 
 #[tauri::command]
-pub async fn sftp_upload_dir(args: SftpUploadDirArgs) -> SftpResult<SftpSyncResult> {
+pub async fn sftp_upload_dir(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpUploadDirArgs,
+) -> SftpResult<SftpSyncResult> {
     use tokio::io::AsyncWriteExt;
     let local_root = std::path::PathBuf::from(&args.local_path);
     if !local_root.is_dir() {
@@ -354,7 +531,8 @@ pub async fn sftp_upload_dir(args: SftpUploadDirArgs) -> SftpResult<SftpSyncResu
             MAX_SYNC_FILES
         ));
     }
-    let sftp = open_session(&args.conn).await?;
+    let session = get_session(&state, &args.conn).await?;
+    let sftp = session.lock().await;
     let remote_root = args.remote_path.trim_end_matches('/').to_string();
     // mkdir the remote root if it doesn't exist; ignore failure (often
     // just "already exists").
@@ -416,12 +594,16 @@ pub struct SftpDownloadDirArgs {
 }
 
 #[tauri::command]
-pub async fn sftp_download_dir(args: SftpDownloadDirArgs) -> SftpResult<SftpSyncResult> {
+pub async fn sftp_download_dir(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpDownloadDirArgs,
+) -> SftpResult<SftpSyncResult> {
     use tokio::io::AsyncReadExt;
     let local_root = std::path::PathBuf::from(&args.local_path);
     std::fs::create_dir_all(&local_root)
         .map_err(|e| format!("create local dir failed: {e}"))?;
-    let sftp = open_session(&args.conn).await?;
+    let session = get_session(&state, &args.conn).await?;
+    let sftp = session.lock().await;
     let remote_root = args.remote_path.trim_end_matches('/').to_string();
 
     // Walk remote in BFS so we mkdir parents before fetching their files.

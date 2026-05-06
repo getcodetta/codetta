@@ -10,7 +10,7 @@ import {
   success as toastSuccess,
 } from "../notify";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
-import { confirm as dialogConfirm } from "../dialog";
+import { confirm as dialogConfirm, prompt as dialogPrompt } from "../dialog";
 import {
   rememberRemoteLink,
   lookupRemoteLink,
@@ -35,6 +35,11 @@ interface SftpProfile {
   /** Optional remote folder to open on connect, e.g. "/var/www/site".
    *  When empty, falls back to the SSH home dir. */
   defaultPath?: string;
+  /** Optional absolute path to an OpenSSH private key (PEM). When set,
+   *  the backend tries key auth first; if the key is encrypted, the
+   *  password field doubles as the passphrase. Falls back to password
+   *  auth if the server rejects the key. */
+  privateKeyPath?: string;
 }
 
 interface SftpConnectArgs {
@@ -42,6 +47,7 @@ interface SftpConnectArgs {
   port: number;
   user: string;
   password: string;
+  privateKeyPath?: string;
 }
 
 interface SftpEntry {
@@ -72,6 +78,8 @@ function loadProfiles(): SftpProfile[] {
         ...p,
         defaultPath:
           typeof p.defaultPath === "string" ? p.defaultPath : undefined,
+        privateKeyPath:
+          typeof p.privateKeyPath === "string" ? p.privateKeyPath : undefined,
       }));
   } catch {
     return [];
@@ -95,11 +103,18 @@ function emptyProfile(): SftpProfile {
     user: "",
     password: "",
     defaultPath: "",
+    privateKeyPath: "",
   };
 }
 
 function profileToConn(p: SftpProfile): SftpConnectArgs {
-  return { host: p.host, port: p.port, user: p.user, password: p.password };
+  return {
+    host: p.host,
+    port: p.port,
+    user: p.user,
+    password: p.password,
+    privateKeyPath: p.privateKeyPath?.trim() || undefined,
+  };
 }
 
 function joinRemote(parent: string, name: string): string {
@@ -159,6 +174,11 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
     | { kind: "connected"; home: string }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
+  // Currently-viewed root in the remote tree. null → use the home dir
+  // we discovered on connect. Set to a different absolute path when the
+  // user clicks a breadcrumb segment to drill up. Reset on disconnect /
+  // connect so a new session starts at home.
+  const [viewPath, setViewPath] = useState<string | null>(null);
   // Tree data keyed by absolute remote path. The root node is at the
   // home dir we discovered on connect. Values mutate in place via the
   // setTree(prev => ...) updater pattern so React still sees a new
@@ -218,6 +238,14 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
   };
 
   const disconnect = () => {
+    if (profile) {
+      // Best-effort evict from the Rust pool so the SSH channel
+      // closes promptly. We don't await — disconnect should feel
+      // instant from the user's POV.
+      void invoke("sftp_disconnect", { args: profileToConn(profile) }).catch(
+        () => {},
+      );
+    }
     setTree(new Map());
     setStatus({ kind: "idle" });
     setActiveSftp(wsId, null);
@@ -306,6 +334,9 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
         conn: profileToConn(p),
         cwd: home,
       });
+      // Reset viewPath so a fresh connect always lands at home rather
+      // than wherever the previous session was browsing.
+      setViewPath(null);
       void loadDir(home, p, next);
     } catch (e) {
       setStatus({
@@ -459,6 +490,58 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
     await loadDir(parentPath, profile, tree);
   };
 
+  // Push every open buffer in this workspace that (a) is linked to a
+  // remote path on the currently-connected profile AND (b) is dirty
+  // (contents !== original on disk). Saves first, then pushes.
+  // Reports the count + any failures via toast.
+  const pushAllDirty = async () => {
+    if (!profile) return;
+    const ws = useStore.getState().loaded[wsId];
+    if (!ws) return;
+    const candidates: { path: string; remotePath: string }[] = [];
+    for (const [path, f] of Object.entries(ws.files)) {
+      const link = lookupRemoteLink(wsId, path);
+      if (!link || link.profileId !== profile.id) continue;
+      if (f.contents === f.original) continue;
+      candidates.push({ path, remotePath: link.remotePath });
+    }
+    if (candidates.length === 0) {
+      toastInfo("No dirty linked files to push.");
+      return;
+    }
+    toastInfo(`Pushing ${candidates.length} file${candidates.length === 1 ? "" : "s"}…`);
+    let okCount = 0;
+    const failures: string[] = [];
+    for (const c of candidates) {
+      try {
+        // Save first so the on-disk contents match what we push.
+        await useStore.getState().saveFile(wsId, c.path);
+        const contents = await fs.readFile(c.path);
+        await invoke("sftp_write_file", {
+          args: { ...profileToConn(profile), path: c.remotePath, contents },
+        });
+        rememberRemoteLink(wsId, c.path, {
+          profileId: profile.id,
+          remotePath: c.remotePath,
+          downloadedAt: Date.now(),
+        });
+        okCount++;
+      } catch (e) {
+        failures.push(
+          `${c.path.split(/[\\/]/).pop()}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    if (failures.length === 0) {
+      toastSuccess(`Pushed ${okCount} file${okCount === 1 ? "" : "s"}`);
+    } else {
+      toastError(
+        `Pushed ${okCount}/${candidates.length}; ${failures.length} failed (see console)`,
+      );
+      console.warn("Push-all failures:", failures);
+    }
+  };
+
   // Push the active editor file to its tracked remote path. If the
   // file has no remote link, falls through to a "save as" prompt.
   const pushActiveFile = async () => {
@@ -518,10 +601,32 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
 
   const deleteRemote = async (remotePath: string, name: string, isDir: boolean) => {
     if (!profile) return;
-    const ok = await dialogConfirm(
-      `Delete ${isDir ? "folder" : "file"} on remote?\n\n${remotePath}\n\nThis cannot be undone.`,
-    );
-    if (!ok) return;
+    if (isDir) {
+      // Folder deletes are gated with type-to-confirm — a stray click
+      // shouldn't be able to wipe out a server directory. The user
+      // must type the folder name exactly. (The backend additionally
+      // refuses to recursively rm — only empty dirs delete; full
+      // tree removal would be its own feature with extra guards.)
+      const typed = await dialogPrompt(
+        `DELETE FOLDER on remote?\n\n${remotePath}\n\nThis cannot be undone.\n\nType the folder name (${name}) to confirm:`,
+        "",
+        {
+          title: "Confirm folder delete",
+          okLabel: "Delete",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (typed === null) return;
+      if (typed.trim() !== name) {
+        toastError(`Cancelled — typed "${typed}", expected "${name}"`);
+        return;
+      }
+    } else {
+      const ok = await dialogConfirm(
+        `Delete file on remote?\n\n${remotePath}\n\nThis cannot be undone.`,
+      );
+      if (!ok) return;
+    }
     try {
       await invoke("sftp_delete", {
         args: { ...profileToConn(profile), path: remotePath, is_dir: isDir },
@@ -847,6 +952,17 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
   }
 
   const home = status.home;
+  // viewPath overrides home when the user has navigated to an ancestor
+  // via the breadcrumb. Falls back to home when null.
+  const viewRoot = viewPath ?? home;
+  const navigateTo = (path: string) => {
+    if (!profile) return;
+    setViewPath(path === home ? null : path);
+    if (!tree.has(path)) {
+      tree.set(path, emptyDirNode());
+      void loadDir(path, profile, tree);
+    }
+  };
   const activeLink = activeFilePath
     ? lookupRemoteLink(wsId, activeFilePath)
     : null;
@@ -904,6 +1020,13 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
           </button>
           <button
             className="remote-icon-btn"
+            onClick={() => void pushAllDirty()}
+            title="Push every dirty linked file in this workspace to its tracked remote path"
+          >
+            ⇈
+          </button>
+          <button
+            className="remote-icon-btn"
             onClick={() => void uploadHere(home)}
             title="Upload a local file to home"
           >
@@ -925,12 +1048,16 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
           </button>
         </div>
       </div>
-      <div className="remote-panel-pwd" title={home}>
-        {home}
+      <div className="remote-panel-pwd" title={viewRoot}>
+        <RemoteBreadcrumb
+          path={viewRoot}
+          home={home}
+          onJump={navigateTo}
+        />
       </div>
       <div className="remote-tree">
         <RemoteDirChildren
-          path={home}
+          path={viewRoot}
           tree={tree}
           depth={0}
           onToggle={toggleDir}
@@ -947,6 +1074,64 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
           onClose={() => setCtxMenu(null)}
         />
       )}
+    </div>
+  );
+}
+
+interface RemoteBreadcrumbProps {
+  path: string;
+  home: string;
+  onJump: (path: string) => void;
+}
+
+/** Render an absolute remote path as clickable breadcrumb segments.
+ *  Click any segment to drill up; the final segment is the current
+ *  view (rendered as plain text, not a button). Includes a "🏠"
+ *  shortcut back to home when we've drilled away from it. */
+function RemoteBreadcrumb({ path, home, onJump }: RemoteBreadcrumbProps) {
+  // Split absolute path into [/, /a, /a/b, /a/b/c] segments. Keep the
+  // root slash as its own click target so the user can always go to /.
+  const parts = path.split("/").filter(Boolean);
+  const segments: { label: string; full: string }[] = [
+    { label: "/", full: "/" },
+  ];
+  let acc = "";
+  for (const p of parts) {
+    acc += "/" + p;
+    segments.push({ label: p, full: acc });
+  }
+  const showHome = path !== home;
+  return (
+    <div className="remote-breadcrumb">
+      {showHome && (
+        <button
+          className="remote-bc-home"
+          onClick={() => onJump(home)}
+          title={`Jump to home (${home})`}
+        >
+          🏠
+        </button>
+      )}
+      {segments.map((seg, i) => {
+        const isLast = i === segments.length - 1;
+        const isRoot = i === 0;
+        return (
+          <span key={seg.full} className="remote-bc-row">
+            {!isRoot && <span className="remote-bc-sep">/</span>}
+            {isLast ? (
+              <span className="remote-bc-current">{seg.label}</span>
+            ) : (
+              <button
+                className="remote-bc-segment"
+                onClick={() => onJump(seg.full)}
+                title={seg.full}
+              >
+                {seg.label}
+              </button>
+            )}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -1033,6 +1218,16 @@ function RemoteProfileForm({
           placeholder="/var/www/site (default: SSH home)"
           onChange={(e) =>
             onChange({ ...profile, defaultPath: e.target.value })
+          }
+        />
+      </label>
+      <label className="remote-form-field">
+        <span>Private key path (optional)</span>
+        <input
+          value={profile.privateKeyPath ?? ""}
+          placeholder="C:/Users/me/.ssh/id_ed25519 (leave blank for password)"
+          onChange={(e) =>
+            onChange({ ...profile, privateKeyPath: e.target.value })
           }
         />
       </label>
@@ -1132,6 +1327,18 @@ function RemoteDirChildren({
         const childPath = joinRemote(path, entry.name);
         const isDir = entry.kind === "dir";
         const isExpanded = isDir && node.expanded.has(entry.name);
+        // Build a tooltip with the full remote path + size + mtime
+        // so the user can hover any row to see when it was last changed
+        // (useful for "did my push actually go through?" verification).
+        const mtimeStr = entry.mtime
+          ? new Date(entry.mtime * 1000).toLocaleString()
+          : "(no mtime)";
+        const sizeStr = isDir ? "" : `\nsize: ${formatBytes(entry.size)}`;
+        const tip =
+          `${childPath}\nmodified: ${mtimeStr}${sizeStr}\n` +
+          (isDir
+            ? "click to expand · right-click for actions"
+            : "click to open · right-click for actions");
         return (
           <div key={entry.name}>
             <div
@@ -1149,11 +1356,7 @@ function RemoteDirChildren({
                   ? onFolderMenu(e, childPath, entry.name)
                   : onFileMenu(e, childPath, entry.name)
               }
-              title={
-                isDir
-                  ? `${childPath} — click to expand · right-click for actions`
-                  : `${childPath} — click to open · right-click for actions`
-              }
+              title={tip}
             >
               <span className="tree-caret">
                 {isDir ? (isExpanded ? "▾" : "▸") : ""}

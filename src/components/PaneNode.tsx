@@ -20,6 +20,7 @@ import { openPalette } from "../paletteBus";
 import { prompt as dialogPrompt } from "../dialog";
 import { popOutTerminal, redockTerminal } from "../terminalPopout";
 import { AIIcon } from "./AIIcon";
+import { lookupRemoteLink } from "../sftpLinks";
 
 function basename(p: string): string {
   const norm = p.replace(/\\/g, "/");
@@ -564,6 +565,25 @@ function TabsPaneView(
                     ↗
                   </span>
                 ) : null}
+                {(() => {
+                  // Auto-push indicator: tiny ↥ glyph for files with a
+                  // remote link AND autoPush enabled, so the user knows
+                  // at a glance which buffers will push to remote on
+                  // save. Cheap to compute (localStorage lookup keyed
+                  // by absolute path); only runs for file tabs.
+                  if (parsed?.kind !== "file") return null;
+                  const link = lookupRemoteLink(wsId, parsed.path);
+                  if (!link?.autoPush) return null;
+                  return (
+                    <span
+                      className="tab-autopush-mark"
+                      title={`Auto-push on save → ${link.remotePath}`}
+                    >
+                      {" "}
+                      ↥
+                    </span>
+                  );
+                })()}
               </span>
               {!isPinned && (
                 <button
