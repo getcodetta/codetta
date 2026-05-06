@@ -728,8 +728,18 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   // Tool calls currently in flight, with enough detail per row to render
   // a per-line "Tool path" + a short preview of the change (so the user
   // can see what's about to land instead of a truncated "+7" overflow).
+  // Each entry tracks status so done rows can render a checkmark
+  // instead of the perpetual-spinner illusion. id matches the
+  // tool_use_id so tool_result events can flip the matching label
+  // to "done" the moment the result lands.
   const [activeToolLabels, setActiveToolLabels] = useState<
-    Array<{ name: string; detail: string; preview?: string }>
+    Array<{
+      id?: string;
+      name: string;
+      detail: string;
+      preview?: string;
+      status: "running" | "done" | "error";
+    }>
   >([]);
   // Inline permission request — when a tool needs "ask" approval, instead
   // of popping a modal we render a card in the chat with multiple options.
@@ -990,12 +1000,38 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               } else if (name === "Bash" && typeof args.command === "string") {
                 preview = args.command;
               }
+              const id = typeof block.id === "string" ? block.id : undefined;
               setActiveToolLabels((labels) => {
                 const next = labels.slice(-9);
-                next.push({ name, detail, preview });
+                next.push({
+                  id,
+                  name,
+                  detail,
+                  preview,
+                  status: "running" as const,
+                });
                 return next;
               });
               setRunningTools(true);
+            }
+          }
+        }
+        // Tool results during resume — flip the matching label to done.
+        if (obj.type === "user" && obj.message?.content) {
+          for (const block of obj.message.content) {
+            if (
+              block.type === "tool_result" &&
+              typeof block.tool_use_id === "string"
+            ) {
+              const id = block.tool_use_id;
+              const isError = block.is_error === true;
+              setActiveToolLabels((labels) =>
+                labels.map((l) =>
+                  l.id === id
+                    ? { ...l, status: isError ? "error" : "done" }
+                    : l,
+                ),
+              );
             }
           }
         }
@@ -1593,7 +1629,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             } else if (name === "Bash" && typeof args.command === "string") {
               preview = args.command;
             }
-            const entry = { name, detail, preview };
+            const entry = {
+              id: ev.call.id,
+              name,
+              detail,
+              preview,
+              status: "running" as const,
+            };
             setActiveToolLabels((labels) => {
               const next = labels.slice(-9);
               next.push(entry);
@@ -1602,8 +1644,17 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             setRunningTools(true);
           } else if (ev.kind === "tool_result") {
             // Agentic providers (Claude Code) ran the tool themselves
-            // and report the result. Stash for attachment to the
-            // assistant message at end of round.
+            // and report the result. Flip the matching activeToolLabels
+            // entry to "done" so the user can see WHICH calls actually
+            // finished (was a misleading 10-spinners-forever otherwise).
+            setActiveToolLabels((labels) =>
+              labels.map((l) =>
+                l.id && l.id === ev.tool_use_id
+                  ? { ...l, status: ev.is_error ? "error" : "done" }
+                  : l,
+              ),
+            );
+            // Stash for attachment to the assistant message at end of round.
             toolResultsThisRound.push({
               tool_use_id: ev.tool_use_id,
               content: ev.content,
@@ -1677,10 +1728,25 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             } else if (c.function.name === "create_file" && typeof args.content === "string") {
               preview = args.content;
             }
-            return { name: c.function.name, detail, preview };
+            return {
+              id: c.id,
+              name: c.function.name,
+              detail,
+              preview,
+              status: "running" as const,
+            };
           }),
         );
         const finishToolCall = (call: ToolCall, result: string) => {
+          // Mark this label as done so the UI flips its spinner to a
+          // checkmark (only really matters for parallel reads where
+          // some finish before others; sequential writes look the
+          // same either way).
+          setActiveToolLabels((labels) =>
+            labels.map((l) =>
+              l.id && l.id === call.id ? { ...l, status: "done" as const } : l,
+            ),
+          );
           const trimmed =
             result.length > 16000
               ? result.slice(0, 16000) + "\n…[truncated]"
@@ -2682,18 +2748,34 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   <span className="ai-thinking">
                     <span className="ai-spinner" /> Running tools…
                   </span>
-                ) : (
-                  <>
-                    <span className="ai-thinking ai-running-header">
-                      <span className="ai-spinner" /> Running{" "}
-                      {activeToolLabels.length} tool
-                      {activeToolLabels.length === 1 ? "" : "s"}
-                    </span>
-                    {activeToolLabels.map((t, i) => (
-                      <RunningToolRow key={i} entry={t} />
-                    ))}
-                  </>
-                )}
+                ) : (() => {
+                  // Header shows accurate "X of N done" counter so the
+                  // user can see progress as results land — was a
+                  // perpetual "Running 10 tools" spinner before, even
+                  // when 9 had already finished.
+                  const done = activeToolLabels.filter(
+                    (t) => t.status === "done" || t.status === "error",
+                  ).length;
+                  const total = activeToolLabels.length;
+                  const allDone = done === total;
+                  return (
+                    <>
+                      <span className="ai-thinking ai-running-header">
+                        {allDone ? (
+                          <span className="ai-running-check">✓</span>
+                        ) : (
+                          <span className="ai-spinner" />
+                        )}
+                        {allDone
+                          ? `Finished ${total} tool${total === 1 ? "" : "s"}`
+                          : `${done} of ${total} done · ${total - done} running`}
+                      </span>
+                      {activeToolLabels.map((t, i) => (
+                        <RunningToolRow key={i} entry={t} />
+                      ))}
+                    </>
+                  );
+                })()}
               </div>
             )}
             {streaming !== null &&
@@ -3469,7 +3551,12 @@ function toolIconFor(name: string): string {
 function RunningToolRow({
   entry,
 }: {
-  entry: { name: string; detail: string; preview?: string };
+  entry: {
+    name: string;
+    detail: string;
+    preview?: string;
+    status?: "running" | "done" | "error";
+  };
 }) {
   // Compact display detail. For paths: keep the last two segments
   // ("…/projects/index.html"). For URLs: hostname + truncated path
@@ -3498,8 +3585,9 @@ function RunningToolRow({
   const previewTruncated =
     entry.preview && entry.preview.split("\n").length > 6;
   const icon = toolIconFor(entry.name);
+  const status = entry.status ?? "running";
   return (
-    <div className="ai-running-row">
+    <div className={`ai-running-row ai-running-row-${status}`}>
       <div className="ai-running-row-head">
         <span className="ai-running-row-icon" aria-hidden>
           {icon}
@@ -3513,7 +3601,15 @@ function RunningToolRow({
             {niceDetail}
           </span>
         )}
-        <span className="ai-spinner ai-spinner-sm ai-running-row-spinner" />
+        {status === "running" && (
+          <span className="ai-spinner ai-spinner-sm ai-running-row-spinner" />
+        )}
+        {status === "done" && (
+          <span className="ai-running-row-check" title="Finished">✓</span>
+        )}
+        {status === "error" && (
+          <span className="ai-running-row-x" title="Errored">✗</span>
+        )}
       </div>
       {previewLines && (
         <pre className="ai-running-row-preview">
