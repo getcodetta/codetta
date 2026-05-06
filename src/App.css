@@ -2601,7 +2601,10 @@ input {
 }
 .settings-modal {
   width: min(880px, 95vw);
-  max-height: 85vh;
+  /* Fixed height — was max-height which let each TOC section's
+     content resize the whole modal. Now the body scrolls within a
+     stable container regardless of which section is active. */
+  height: min(720px, 85vh);
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -2659,10 +2662,11 @@ input {
 
 /* New 2-column layout: TOC sidebar + scrollable body. */
 .settings-layout {
-  flex: 1;
+  flex: 1 1 0;
   display: grid;
   grid-template-columns: 200px 1fr;
   min-height: 0;
+  overflow: hidden;
 }
 .settings-toc {
   border-right: 1px solid var(--border);
