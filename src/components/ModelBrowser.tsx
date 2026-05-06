@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -61,6 +61,21 @@ export function ModelBrowser({
   const [activeCat, setActiveCat] = useState<CatalogModel["category"] | "all">(
     "all",
   );
+
+  // Esc closes the modal — the close button's tooltip already promised
+  // "Close (Esc)" but the keydown handler was missing, so users hitting
+  // Esc to dismiss had to mouse to the × instead. Standard modal UX.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   const filteredOllama = useMemo(() => {
     const q = query.trim().toLowerCase();
