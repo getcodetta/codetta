@@ -24,6 +24,7 @@ import { openSettings } from "../settingsBus";
 import { useStore, parseKey, findPaneById } from "../store";
 import { useEditorState, getActiveEditor } from "../editorState";
 import { matchExclusion, subscribePrivacy } from "../aiPrivacy";
+import { recordUsage, wouldExceedHardCap } from "../aiUsageLog";
 import {
   error as toastError,
   info as toastInfo,
@@ -1201,6 +1202,19 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   ) => {
     if (!text || !selected || streaming !== null || runningTools) return;
 
+    // Cross-chat hard-cap check. If the user has set a monthly cap
+    // and this month's recorded spend already meets/exceeds it,
+    // refuse to send rather than silently rack up another turn's
+    // worth of API cost. Different from the per-chat warning
+    // budget (which only toasts).
+    const cap = wouldExceedHardCap();
+    if (cap.exceeds) {
+      toastError(
+        `🛑 Monthly AI hard cap reached: $${cap.current.toFixed(2)} / $${cap.cap.toFixed(2)}. Raise the cap in Settings → AI Usage to send.`,
+      );
+      return;
+    }
+
     // Compose context: active file path + (when reasonable) its content.
     const ws = useStore.getState().loaded[wsId];
     const ap = ws?.layout.activePaneId
@@ -1481,6 +1495,19 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               durationMs: ev.durationMs,
               model: ev.model,
               tokens: ev.tokens,
+            });
+            // Append to the cross-chat usage log so the dashboard +
+            // monthly hard cap have data to work with. Skipped if
+            // the turn was free (Ollama, subscription Claude Code).
+            recordUsage({
+              provider: selectedProvider,
+              model: ev.model ?? selected,
+              costUsd: typeof ev.cost === "number" ? ev.cost : 0,
+              tokensIn:
+                (ev.tokens?.input ?? 0) + (ev.tokens?.cacheRead ?? 0),
+              tokensOut: ev.tokens?.output ?? 0,
+              wsId,
+              chatId: aiChatId,
             });
             // Roll into the per-chat running total. Triggers a
             // budget-warning toast the first time we cross the

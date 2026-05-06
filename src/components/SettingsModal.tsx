@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   setEditorSettings,
@@ -23,6 +23,16 @@ import {
   matchExclusion,
   savePrivacySettings,
 } from "../aiPrivacy";
+import {
+  clearUsage,
+  loadHardCap,
+  loadUsage,
+  saveHardCap,
+  subscribeUsage,
+  summarizeByMonth,
+  thisMonthTotal,
+  type UsageRecord,
+} from "../aiUsageLog";
 import { invoke } from "@tauri-apps/api/core";
 
 export function SettingsModal() {
@@ -188,6 +198,10 @@ export function SettingsModal() {
               dialog each time. "Deny" disables the tool — the AI sees a
               denial message instead of executing.
             </div>
+          </Section>
+
+          <Section title="AI Usage — Cross-chat dashboard">
+            <AIUsageDashboard />
           </Section>
 
           <Section title="Claude Code — Spend budget">
@@ -1075,6 +1089,167 @@ function AIPrivacyEditor() {
           </div>
         </>
       )}
+    </>
+  );
+}
+
+// ---------- AI usage dashboard ----------
+
+function AIUsageDashboard() {
+  const [records, setRecords] = useState<UsageRecord[]>(() => loadUsage());
+  const [cap, setCap] = useState<string>(() => {
+    const v = loadHardCap();
+    return v > 0 ? v.toString() : "";
+  });
+
+  useEffect(() => subscribeUsage(() => setRecords(loadUsage())), []);
+
+  const months = useMemo(() => summarizeByMonth(records), [records]);
+  const thisMonth = useMemo(() => thisMonthTotal(records), [records]);
+  const recent = useMemo(() => records.slice(-12).reverse(), [records]);
+
+  const persistCap = (next: string) => {
+    setCap(next);
+    const n = parseFloat(next);
+    saveHardCap(Number.isFinite(n) && n > 0 ? n : 0);
+  };
+
+  const capNum = parseFloat(cap);
+  const capActive = Number.isFinite(capNum) && capNum > 0;
+  const pctOfCap = capActive ? Math.min(100, (thisMonth / capNum) * 100) : 0;
+
+  return (
+    <>
+      <div className="settings-row settings-row-note">
+        Cross-chat ledger of every AI turn that produced a measurable
+        cost. Used to enforce a monthly hard cap and show what's
+        being spent where. <strong>Prompt + response contents are
+        not stored</strong> — only timestamps, models, costs, and
+        token counts.
+      </div>
+
+      <div className="ai-usage-summary">
+        <div className="ai-usage-stat">
+          <span className="ai-usage-num">${thisMonth.toFixed(2)}</span>
+          <span className="ai-usage-lbl">This month</span>
+        </div>
+        <div className="ai-usage-stat">
+          <span className="ai-usage-num">{records.length}</span>
+          <span className="ai-usage-lbl">Logged turns (lifetime)</span>
+        </div>
+        <div className="ai-usage-stat">
+          <span className="ai-usage-num">
+            ${months.reduce((s, m) => s + m.total, 0).toFixed(2)}
+          </span>
+          <span className="ai-usage-lbl">Lifetime total</span>
+        </div>
+      </div>
+
+      <Row label="Monthly hard cap (USD)">
+        <div className="cc-budget-input">
+          <span className="cc-budget-prefix">$</span>
+          <input
+            type="number"
+            min="0"
+            step="0.50"
+            placeholder="0  (no cap)"
+            value={cap}
+            onChange={(e) => persistCap(e.target.value)}
+            className="cc-budget-field"
+          />
+          <span className="cc-budget-suffix">USD</span>
+        </div>
+      </Row>
+      {capActive && (
+        <div className="ai-usage-bar">
+          <div
+            className="ai-usage-bar-fill"
+            style={{
+              width: `${pctOfCap}%`,
+              background:
+                pctOfCap >= 100
+                  ? "#dc4646"
+                  : pctOfCap >= 80
+                    ? "#ffb061"
+                    : "var(--accent)",
+            }}
+          />
+        </div>
+      )}
+      <div className="settings-row settings-row-note">
+        When this month's spend reaches the cap, new AI turns are
+        blocked with a toast. Raise the cap or delete it to continue.
+        Distinct from the per-chat warning budget below — that just
+        toasts; this one stops sends.
+      </div>
+
+      {months.length > 0 && (
+        <>
+          <div className="cc-allow-subhead">By month</div>
+          <div className="ai-usage-months">
+            {months.slice(0, 6).map((m) => (
+              <div key={m.month} className="ai-usage-month-row">
+                <span className="ai-usage-month-name">{m.month}</span>
+                <span className="ai-usage-month-total">
+                  ${m.total.toFixed(2)}
+                </span>
+                <span className="ai-usage-month-detail">
+                  {m.turns} turn{m.turns === 1 ? "" : "s"} ·{" "}
+                  {(m.tokensIn + m.tokensOut).toLocaleString()} tokens
+                </span>
+                <span className="ai-usage-month-providers">
+                  {Object.entries(m.perProvider)
+                    .filter(([, v]) => v > 0)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([p, v]) => `${p} $${v.toFixed(2)}`)
+                    .join(" · ") || "free"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {recent.length > 0 && (
+        <>
+          <div className="cc-allow-subhead">Recent turns</div>
+          <div className="ai-usage-recent">
+            {recent.map((r, i) => (
+              <div key={r.ts + ":" + i} className="ai-usage-recent-row">
+                <span className="ai-usage-recent-ts">
+                  {new Date(r.ts).toLocaleString()}
+                </span>
+                <span className="ai-usage-recent-model">
+                  <code>{r.provider}:{r.model}</code>
+                </span>
+                <span className="ai-usage-recent-tokens">
+                  {(r.tokensIn + r.tokensOut).toLocaleString()} tok
+                </span>
+                <span className="ai-usage-recent-cost">
+                  {r.costUsd > 0 ? `$${r.costUsd.toFixed(4)}` : "free"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="settings-row">
+        <button
+          className="cc-allow-clear"
+          onClick={() => {
+            if (
+              confirm(
+                "Delete the entire AI usage log? This is local-only, but you'll lose monthly history.",
+              )
+            ) {
+              clearUsage();
+            }
+          }}
+        >
+          Clear log
+        </button>
+      </div>
     </>
   );
 }

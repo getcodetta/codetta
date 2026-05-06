@@ -4892,6 +4892,130 @@ input {
 }
 
 /* Spend-budget input in Settings */
+/* ---------- AI usage dashboard ---------- */
+.ai-usage-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+.ai-usage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ai-usage-num {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--fg);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.ai-usage-lbl {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-muted);
+}
+.ai-usage-bar {
+  height: 8px;
+  background: var(--bg-alt);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 6px 0;
+  border: 1px solid var(--border);
+}
+.ai-usage-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 240ms ease, background 240ms ease;
+}
+.ai-usage-months {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ai-usage-month-row {
+  display: grid;
+  grid-template-columns: 70px 70px 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 6px 8px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.ai-usage-month-name {
+  font-family: var(--mono, monospace);
+  color: var(--fg);
+  font-weight: 600;
+}
+.ai-usage-month-total {
+  font-family: var(--mono, monospace);
+  color: var(--accent, #7c9eff);
+  font-weight: 600;
+  text-align: right;
+}
+.ai-usage-month-detail {
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.ai-usage-month-providers {
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-usage-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.ai-usage-recent-row {
+  display: grid;
+  grid-template-columns: 130px 1fr 70px 70px;
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-usage-recent-row:last-child { border-bottom: none; }
+.ai-usage-recent-ts { color: var(--fg-muted); font-family: var(--mono, monospace); }
+.ai-usage-recent-model code {
+  background: var(--bg-alt);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--fg);
+}
+.ai-usage-recent-tokens,
+.ai-usage-recent-cost {
+  color: var(--fg-muted);
+  font-family: var(--mono, monospace);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ai-usage-recent-cost { color: var(--fg); font-weight: 500; }
+@media (max-width: 560px) {
+  .ai-usage-month-row,
+  .ai-usage-recent-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .cc-budget-input {
   display: inline-flex;
   align-items: center;
