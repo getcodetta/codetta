@@ -156,7 +156,7 @@ export function ActivityBar() {
         </button>
         <button
           className={`activity-icon ${aiPanelVisible ? "active" : ""}`}
-          title="AI Chat (local, via Ollama) — opens on the right"
+          title="AI Chat (Claude Code · Anthropic · OpenAI · Ollama) — opens on the right"
           onClick={() => activeId && setAIPanelVisible(activeId, !aiPanelVisible)}
           disabled={!activeId}
         >
