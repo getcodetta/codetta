@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   setEditorSettings,
@@ -37,6 +37,12 @@ import { invoke } from "@tauri-apps/api/core";
 
 export function SettingsModal() {
   const [open, setOpen] = useState(false);
+  const [view, setView] = useState<"form" | "json">("form");
+  // Sections discovered from the rendered DOM after mount. Map slug
+  // → display title. Drives the side TOC.
+  const [toc, setToc] = useState<{ slug: string; title: string }[]>([]);
+  const [activeSlug, setActiveSlug] = useState<string>("");
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const settings = useEditorSettings();
   const [theme, setTheme] = useTheme();
   const activeId = useStore((s) => s.activeId);
@@ -46,7 +52,10 @@ export function SettingsModal() {
   const setSidebarSide = useStore((s) => s.setSidebarSide);
 
   useEffect(() => {
-    return onSettingsOpen(() => setOpen(true));
+    return onSettingsOpen(() => {
+      setOpen(true);
+      setView("form");
+    });
   }, []);
 
   useEffect(() => {
@@ -57,6 +66,51 @@ export function SettingsModal() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
+
+  // Discover sections + observe scroll position to highlight the
+  // active TOC entry. Re-runs when the form view (re)mounts.
+  useEffect(() => {
+    if (!open || view !== "form") return;
+    const body = bodyRef.current;
+    if (!body) return;
+    // Tiny delay so child sections finish mounting.
+    const t = window.setTimeout(() => {
+      const sections = Array.from(
+        body.querySelectorAll<HTMLElement>("[data-section]"),
+      );
+      setToc(
+        sections.map((s) => ({
+          slug: s.dataset.section ?? "",
+          title: s.dataset.title ?? "",
+        })),
+      );
+      if (sections[0]) setActiveSlug(sections[0].dataset.section ?? "");
+      // IntersectionObserver to track which section is most visible.
+      const io = new IntersectionObserver(
+        (entries) => {
+          // Pick the first entry that's intersecting and most onscreen.
+          const visible = entries
+            .filter((e) => e.isIntersecting)
+            .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+          if (visible[0]) {
+            const s = (visible[0].target as HTMLElement).dataset.section;
+            if (s) setActiveSlug(s);
+          }
+        },
+        { root: body, threshold: [0.2, 0.5, 0.8] },
+      );
+      sections.forEach((s) => io.observe(s));
+      return () => io.disconnect();
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [open, view]);
+
+  const jumpTo = (slug: string) => {
+    const el = bodyRef.current?.querySelector(
+      `#settings-section-${slug}`,
+    ) as HTMLElement | null;
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   if (!open) return null;
 
@@ -70,6 +124,25 @@ export function SettingsModal() {
       >
         <div className="settings-header">
           <span>Settings</span>
+          <div className="settings-view-tabs" role="tablist" aria-label="Settings view">
+            <button
+              role="tab"
+              aria-selected={view === "form"}
+              className={`settings-view-tab ${view === "form" ? "active" : ""}`}
+              onClick={() => setView("form")}
+            >
+              Form
+            </button>
+            <button
+              role="tab"
+              aria-selected={view === "json"}
+              className={`settings-view-tab ${view === "json" ? "active" : ""}`}
+              onClick={() => setView("json")}
+              title="View / edit raw localStorage settings as JSON"
+            >
+              JSON
+            </button>
+          </div>
           <button
             className="settings-close"
             onClick={() => setOpen(false)}
@@ -78,7 +151,22 @@ export function SettingsModal() {
             ×
           </button>
         </div>
-        <div className="settings-body">
+        {view === "json" ? (
+          <SettingsJsonEditor onClose={() => setOpen(false)} />
+        ) : (
+        <div className="settings-layout">
+          <aside className="settings-toc" aria-label="Settings sections">
+            {toc.map((t) => (
+              <button
+                key={t.slug}
+                className={`settings-toc-item ${activeSlug === t.slug ? "active" : ""}`}
+                onClick={() => jumpTo(t.slug)}
+              >
+                {t.title}
+              </button>
+            ))}
+          </aside>
+          <div className="settings-body" ref={bodyRef}>
           <Section title="Appearance">
             <Row label="Theme">
               <div className="settings-segmented">
@@ -262,7 +350,9 @@ export function SettingsModal() {
               />
             </Row>
           </Section>
+          </div>
         </div>
+        )}
         <div className="settings-foot">
           <span>
             Settings persist in <code>localStorage</code> · all changes
@@ -276,15 +366,185 @@ export function SettingsModal() {
   );
 }
 
+// Every localStorage key that the JSON editor surfaces. Listed
+// explicitly so the editor doesn't dump UNRELATED keys (workspace
+// state, chat history, AI session caches) — those are for app
+// internals, not configuration the user should hand-edit.
+const SETTINGS_KEYS = [
+  "lcp.theme",
+  "lcp.editor.settings",
+  "lcp.toolPolicy",
+  "lcp.claudeCode.alwaysAllow",
+  "lcp.claudeCode.budgetUsd",
+  "lcp.sftp.profiles",
+  "lcp.ai.privacy.exclusions",
+  "lcp.ai.usage.hardCapUsd",
+  "lcp.ollama.lastModel",
+  "lcp.providers.openai.apiKey",
+  "lcp.providers.anthropic.apiKey",
+] as const;
+
+/** Serialise every known settings key out of localStorage as a
+ *  pretty JSON object. Values are JSON-parsed when possible; raw
+ *  strings otherwise so the editor doesn't choke on legacy values. */
+function snapshotSettingsJson(): string {
+  const out: Record<string, unknown> = {};
+  for (const k of SETTINGS_KEYS) {
+    const raw = localStorage.getItem(k);
+    if (raw == null) continue;
+    try {
+      out[k] = JSON.parse(raw);
+    } catch {
+      out[k] = raw;
+    }
+  }
+  return JSON.stringify(out, null, 2);
+}
+
+function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
+  const [text, setText] = useState<string>(() => snapshotSettingsJson());
+  const [status, setStatus] = useState<
+    | { kind: "idle" }
+    | { kind: "ok"; count: number }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  const reload = () => {
+    setText(snapshotSettingsJson());
+    setStatus({ kind: "idle" });
+  };
+
+  const apply = () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      setStatus({
+        kind: "error",
+        message: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
+      });
+      return;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      setStatus({
+        kind: "error",
+        message: "Top-level value must be a JSON object.",
+      });
+      return;
+    }
+    const next = parsed as Record<string, unknown>;
+    // Confirm before applying — JSON edits can wipe credentials.
+    const removed = SETTINGS_KEYS.filter(
+      (k) => localStorage.getItem(k) != null && !(k in next),
+    );
+    if (removed.length > 0) {
+      const ok = confirm(
+        `These settings will be DELETED:\n\n  ${removed.join("\n  ")}\n\nApply anyway?`,
+      );
+      if (!ok) return;
+    }
+    let count = 0;
+    for (const k of SETTINGS_KEYS) {
+      if (k in next) {
+        const v = next[k];
+        try {
+          localStorage.setItem(
+            k,
+            typeof v === "string" ? v : JSON.stringify(v),
+          );
+          count++;
+        } catch {
+          /* full — best-effort */
+        }
+      } else if (localStorage.getItem(k) != null) {
+        localStorage.removeItem(k);
+      }
+    }
+    setStatus({ kind: "ok", count });
+    // Reload UI bits that read on mount: brute-force via a prompt
+    // to refresh. Simpler than wiring pub-sub for every settings key.
+    setTimeout(() => {
+      if (
+        confirm(
+          "Settings applied. Reload the editor to make sure every component picks up the new values?",
+        )
+      ) {
+        window.location.reload();
+      }
+    }, 100);
+  };
+
+  return (
+    <div className="settings-json-pane">
+      <div className="settings-json-toolbar">
+        <button className="sftp-btn" onClick={reload}>
+          Reload from disk
+        </button>
+        <button
+          className="sftp-btn"
+          onClick={() => {
+            void navigator.clipboard.writeText(text);
+            setStatus({
+              kind: "ok",
+              count: 0,
+            });
+          }}
+        >
+          Copy
+        </button>
+        <span className="settings-json-spacer"></span>
+        <button
+          className="sftp-btn sftp-btn-primary"
+          onClick={apply}
+        >
+          Apply changes
+        </button>
+        <button className="sftp-btn" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+      <textarea
+        className="settings-json-textarea"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        spellCheck={false}
+        wrap="off"
+      />
+      {status.kind === "error" && (
+        <div className="sftp-profile-test sftp-profile-test-fail">
+          ✗ {status.message}
+        </div>
+      )}
+      {status.kind === "ok" && status.count > 0 && (
+        <div className="sftp-profile-test sftp-profile-test-ok">
+          ✓ Applied {status.count} setting{status.count === 1 ? "" : "s"}
+        </div>
+      )}
+      <div className="settings-row settings-row-note">
+        Edit any value, then <strong>Apply changes</strong>. Removing
+        a key from the JSON deletes it from <code>localStorage</code>.
+        Only configuration keys are shown — chat history, workspace
+        state, and other internal data are not touched.
+      </div>
+    </div>
+  );
+}
+
 function Section({
   title,
   children,
+  id,
 }: {
   title: string;
   children: React.ReactNode;
+  /** Stable slug auto-derived from the title when omitted; the
+   *  Settings TOC uses this to scroll-target the section. */
+  id?: string;
 }) {
+  const slug =
+    id ?? title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return (
-    <div className="settings-section">
+    <div className="settings-section" id={`settings-section-${slug}`} data-section={slug} data-title={title}>
       <div className="settings-section-title">{title}</div>
       <div className="settings-section-body">{children}</div>
     </div>
