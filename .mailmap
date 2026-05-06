@@ -1,16 +1,10 @@
-# Coalesce the maintainer's two personal GitHub accounts (suppledigital
-# and corporatebishal) onto the canonical `getcodetta` identity so the
-# project's contributor list shows one human maintainer + Claude as a
-# co-author, not three separate humans. Claude's Co-Authored-By
-# attribution is intentionally preserved — it's accurate and useful.
+# Canonical author for every commit reachable from main. Reachable
+# history is already authored by `getcodetta` (older commits with
+# personal emails were rewritten in a previous filter-branch and only
+# survive in local backup refs that never reached origin). Listing the
+# canonical entry here keeps the project's identity declared
+# explicitly so future contributions stay coalesced.
 #
 # Format reference: https://git-scm.com/docs/gitmailmap
-#   <canonical-name> <canonical-email> <commit-name> <commit-email>
-#
-# After pushing this file, GitHub re-reads it within ~24 hours and
-# rebuilds the contributor list. `git log --use-mailmap` reflects the
-# remapping immediately for local tooling.
 
 getcodetta <280564977+getcodetta@users.noreply.github.com>
-getcodetta <280564977+getcodetta@users.noreply.github.com> Bishal <bishal.revenger@gmail.com>
-getcodetta <280564977+getcodetta@users.noreply.github.com> Bishal <bishal@supple.com.au>

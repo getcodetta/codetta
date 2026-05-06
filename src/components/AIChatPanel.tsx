@@ -3410,7 +3410,7 @@ function RunningToolRow({
 }) {
   // Compact display detail. For paths: keep the last two segments
   // ("…/projects/index.html"). For URLs: hostname + truncated path
-  // ("supple.com.au/author/bishal"). Plain strings: untouched.
+  // ("example.com/blog/post"). Plain strings: untouched.
   const niceDetail = (() => {
     if (!entry.detail) return "";
     if (/^https?:\/\//i.test(entry.detail)) {
