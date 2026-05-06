@@ -2,11 +2,10 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   commandsForCategory,
+  confirmDiscardUnsaved,
   type CommandSpec,
 } from "../actions";
 import { useTheme, type ThemeMode } from "../theme";
-import { useStore } from "../store";
-import { confirm as dialogConfirm } from "../dialog";
 
 interface DropdownProps {
   label: string;
@@ -142,34 +141,7 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
     // away in-flight edits — the OS-level "save your work?" prompt that
     // every native editor offers wasn't happening because we go straight
     // to Tauri's window.close().
-    let dirtyCount = 0;
-    const dirtyNames: string[] = [];
-    for (const ws of Object.values(useStore.getState().loaded)) {
-      for (const [path, f] of Object.entries(ws.files)) {
-        if (f.contents !== f.original) {
-          dirtyCount++;
-          const name = path.replace(/\\/g, "/").split("/").pop();
-          if (dirtyNames.length < 5 && name) dirtyNames.push(name);
-        }
-      }
-    }
-    if (dirtyCount > 0) {
-      const sample = dirtyNames.join(", ");
-      const more =
-        dirtyCount > dirtyNames.length
-          ? `, +${dirtyCount - dirtyNames.length} more`
-          : "";
-      const ok = await dialogConfirm(
-        `Closing will discard unsaved changes in ${dirtyCount} file${dirtyCount === 1 ? "" : "s"}: ${sample}${more}\n\nClose anyway?`,
-        {
-          title: "Unsaved changes",
-          okLabel: "Close",
-          cancelLabel: "Cancel",
-          danger: true,
-        },
-      );
-      if (!ok) return;
-    }
+    if (!(await confirmDiscardUnsaved("Close"))) return;
     try {
       await getCurrentWindow().close();
     } catch {

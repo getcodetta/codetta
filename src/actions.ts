@@ -30,6 +30,45 @@ function runEditorAction(actionId: string) {
 
 const s = () => useStore.getState();
 
+/**
+ * Scan every loaded workspace for files with unsaved buffer edits and,
+ * if any exist, surface a danger-style confirm naming a sample of them.
+ * Returns true if it's safe to proceed (no dirty files OR user confirmed),
+ * false if the user backed out. Used by Reload Window, the title-bar
+ * close button, and any future action that would silently discard work.
+ *
+ * `verb` is the present-tense action shown to the user — "Reload",
+ * "Close", etc.
+ */
+export async function confirmDiscardUnsaved(verb: string): Promise<boolean> {
+  let dirtyCount = 0;
+  const dirtyNames: string[] = [];
+  for (const ws of Object.values(s().loaded)) {
+    for (const [path, f] of Object.entries(ws.files)) {
+      if (f.contents !== f.original) {
+        dirtyCount++;
+        const name = path.replace(/\\/g, "/").split("/").pop();
+        if (dirtyNames.length < 5 && name) dirtyNames.push(name);
+      }
+    }
+  }
+  if (dirtyCount === 0) return true;
+  const sample = dirtyNames.join(", ");
+  const more =
+    dirtyCount > dirtyNames.length
+      ? `, +${dirtyCount - dirtyNames.length} more`
+      : "";
+  return await dialogConfirm(
+    `${verb} will discard unsaved changes in ${dirtyCount} file${dirtyCount === 1 ? "" : "s"}: ${sample}${more}\n\n${verb} anyway?`,
+    {
+      title: "Unsaved changes",
+      okLabel: verb,
+      cancelLabel: "Cancel",
+      danger: true,
+    },
+  );
+}
+
 function activeFilePath(wsId: string | null): string | null {
   if (!wsId) return null;
   const ws = s().loaded[wsId];
@@ -384,37 +423,10 @@ export const commands: CommandSpec[] = [
     category: "View",
     accel: "Ctrl+R",
     run: async () => {
-      // Confirm if any open file has unsaved changes — Ctrl+R is the
-      // browser-refresh muscle memory and a stray hit shouldn't be able
-      // to silently throw away an editor full of work. Chat history is
-      // already refresh-safe (sessions are persisted + resumeable).
-      let dirtyCount = 0;
-      const dirtyNames: string[] = [];
-      for (const ws of Object.values(s().loaded)) {
-        for (const [path, f] of Object.entries(ws.files)) {
-          if (f.contents !== f.original) {
-            dirtyCount++;
-            const name = path.replace(/\\/g, "/").split("/").pop();
-            if (dirtyNames.length < 5 && name) dirtyNames.push(name);
-          }
-        }
-      }
-      if (dirtyCount > 0) {
-        const sample = dirtyNames.join(", ");
-        const more = dirtyCount > dirtyNames.length
-          ? `, +${dirtyCount - dirtyNames.length} more`
-          : "";
-        const ok = await dialogConfirm(
-          `Reload will discard unsaved changes in ${dirtyCount} file${dirtyCount === 1 ? "" : "s"}: ${sample}${more}\n\nReload anyway?`,
-          {
-            title: "Unsaved changes",
-            okLabel: "Reload",
-            cancelLabel: "Cancel",
-            danger: true,
-          },
-        );
-        if (!ok) return;
-      }
+      // Ctrl+R is the browser-refresh muscle memory; a stray hit shouldn't
+      // silently throw away unsaved work. Chat history is already
+      // refresh-safe (sessions are persisted + resumeable).
+      if (!(await confirmDiscardUnsaved("Reload"))) return;
       window.location.reload();
     },
   },
