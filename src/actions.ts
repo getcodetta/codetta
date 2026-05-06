@@ -138,6 +138,9 @@ export const commands: CommandSpec[] = [
     label: "Quit",
     category: "File",
     run: async () => {
+      // Same dirty-file guard as Ctrl+R / × — Quit shouldn't silently
+      // dump unsaved buffer state.
+      if (!(await confirmDiscardUnsaved("Quit"))) return;
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         await getCurrentWindow().close();
