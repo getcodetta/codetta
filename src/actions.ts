@@ -383,7 +383,40 @@ export const commands: CommandSpec[] = [
     label: "Reload Window",
     category: "View",
     accel: "Ctrl+R",
-    run: () => window.location.reload(),
+    run: async () => {
+      // Confirm if any open file has unsaved changes — Ctrl+R is the
+      // browser-refresh muscle memory and a stray hit shouldn't be able
+      // to silently throw away an editor full of work. Chat history is
+      // already refresh-safe (sessions are persisted + resumeable).
+      let dirtyCount = 0;
+      const dirtyNames: string[] = [];
+      for (const ws of Object.values(s().loaded)) {
+        for (const [path, f] of Object.entries(ws.files)) {
+          if (f.contents !== f.original) {
+            dirtyCount++;
+            const name = path.replace(/\\/g, "/").split("/").pop();
+            if (dirtyNames.length < 5 && name) dirtyNames.push(name);
+          }
+        }
+      }
+      if (dirtyCount > 0) {
+        const sample = dirtyNames.join(", ");
+        const more = dirtyCount > dirtyNames.length
+          ? `, +${dirtyCount - dirtyNames.length} more`
+          : "";
+        const ok = await dialogConfirm(
+          `Reload will discard unsaved changes in ${dirtyCount} file${dirtyCount === 1 ? "" : "s"}: ${sample}${more}\n\nReload anyway?`,
+          {
+            title: "Unsaved changes",
+            okLabel: "Reload",
+            cancelLabel: "Cancel",
+            danger: true,
+          },
+        );
+        if (!ok) return;
+      }
+      window.location.reload();
+    },
   },
   {
     id: "terminal.new_bottom",
