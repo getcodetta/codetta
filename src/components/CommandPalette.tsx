@@ -46,6 +46,7 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const recent = useStore((s) => s.recent);
   const openIds = useStore((s) => s.openIds);
   const activeId = useStore((s) => s.activeId);
@@ -215,6 +216,18 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
     if (index >= filtered.length) setIndex(0);
   }, [filtered, index]);
 
+  // Keep the highlighted row visible as the user arrows through long
+  // result lists (text-search hits, recent files, full command set).
+  // Without this, ArrowDown past the visible window leaves the active
+  // marker invisible and breaks the navigation feel.
+  useEffect(() => {
+    if (!open) return;
+    const list = listRef.current;
+    if (!list) return;
+    const node = list.children[index] as HTMLElement | undefined;
+    if (node) node.scrollIntoView({ block: "nearest" });
+  }, [open, index]);
+
   if (!open) return null;
 
   const activate = (idx: number) => {
@@ -275,7 +288,7 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
                 : "Type to search file contents"}
           </div>
         )}
-        <div className="palette-list">
+        <div className="palette-list" ref={listRef}>
           {filtered.length === 0 && (
             <div className="palette-empty">
               {mode === "search" && subQuery && !searching
