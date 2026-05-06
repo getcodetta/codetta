@@ -1238,15 +1238,17 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   ) => {
     if (!text || !selected || streaming !== null || runningTools) return;
 
-    // Cross-chat hard-cap check. If the user has set a monthly cap
-    // and this month's recorded spend already meets/exceeds it,
-    // refuse to send rather than silently rack up another turn's
-    // worth of API cost. Different from the per-chat warning
-    // budget (which only toasts).
-    const cap = wouldExceedHardCap();
+    // Cross-chat hard-cap check. Per-workspace budget takes precedence
+    // (if one is set on this workspace), then the global cap. The
+    // permission overlay's privacy gate runs separately.
+    const cap = wouldExceedHardCap(0, wsId);
     if (cap.exceeds) {
+      const scope =
+        cap.scope === "workspace"
+          ? "Workspace AI cap"
+          : "Monthly AI hard cap";
       toastError(
-        `🛑 Monthly AI hard cap reached: $${cap.current.toFixed(2)} / $${cap.cap.toFixed(2)}. Raise the cap in Settings → AI Usage to send.`,
+        `🛑 ${scope} reached: $${cap.current.toFixed(2)} / $${cap.cap.toFixed(2)}. Raise it in Settings → AI Usage Dashboard to send.`,
       );
       return;
     }
@@ -1535,6 +1537,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             // Append to the cross-chat usage log so the dashboard +
             // monthly hard cap have data to work with. Skipped if
             // the turn was free (Ollama, subscription Claude Code).
+            // The prompt itself is only persisted when the user has
+            // opted in via Settings → AI Usage → "Log prompt text".
             recordUsage({
               provider: selectedProvider,
               model: ev.model ?? selected,
@@ -1544,6 +1548,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               tokensOut: ev.tokens?.output ?? 0,
               wsId,
               chatId: aiChatId,
+              prompt: text,
             });
             // Roll into the per-chat running total. Triggers a
             // budget-warning toast the first time we cross the

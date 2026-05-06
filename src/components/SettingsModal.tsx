@@ -26,11 +26,16 @@ import {
 import {
   clearUsage,
   loadHardCap,
+  loadLogPrompts,
   loadUsage,
+  loadWsBudgets,
   saveHardCap,
+  saveLogPrompts,
+  setWsBudget,
   subscribeUsage,
   summarizeByMonth,
   thisMonthTotal,
+  thisMonthWorkspaceTotal,
   type UsageRecord,
 } from "../aiUsageLog";
 
@@ -1371,17 +1376,58 @@ function AIUsageDashboard() {
     const v = loadHardCap();
     return v > 0 ? v.toString() : "";
   });
+  const [logPrompts, setLogPrompts] = useState<boolean>(() => loadLogPrompts());
+  const [wsBudgets, setWsBudgets] = useState<Record<string, number>>(() =>
+    loadWsBudgets(),
+  );
+  const [openPromptIdx, setOpenPromptIdx] = useState<number | null>(null);
+  const loadedWorkspaces = useStore((s) => s.loaded);
 
-  useEffect(() => subscribeUsage(() => setRecords(loadUsage())), []);
+  useEffect(
+    () =>
+      subscribeUsage(() => {
+        setRecords(loadUsage());
+        setWsBudgets(loadWsBudgets());
+      }),
+    [],
+  );
 
   const months = useMemo(() => summarizeByMonth(records), [records]);
   const thisMonth = useMemo(() => thisMonthTotal(records), [records]);
   const recent = useMemo(() => records.slice(-12).reverse(), [records]);
 
+  // Workspace summary table — list any workspace currently loaded OR
+  // any workspace that has either a budget OR recorded usage this
+  // month, so caps and history don't disappear when a workspace is
+  // closed.
+  const wsSummary = useMemo(() => {
+    const ids = new Set<string>();
+    for (const k of Object.keys(loadedWorkspaces)) ids.add(k);
+    for (const k of Object.keys(wsBudgets)) ids.add(k);
+    for (const r of records) if (r.wsId) ids.add(r.wsId);
+    return Array.from(ids).map((wsId) => ({
+      wsId,
+      name: loadedWorkspaces[wsId]?.meta?.name ?? "(closed workspace)",
+      budget: wsBudgets[wsId] ?? 0,
+      thisMonth: thisMonthWorkspaceTotal(wsId, records),
+    }));
+  }, [loadedWorkspaces, wsBudgets, records]);
+
   const persistCap = (next: string) => {
     setCap(next);
     const n = parseFloat(next);
     saveHardCap(Number.isFinite(n) && n > 0 ? n : 0);
+  };
+
+  const toggleLogPrompts = (v: boolean) => {
+    setLogPrompts(v);
+    saveLogPrompts(v);
+  };
+
+  const persistWsBudget = (wsId: string, next: string) => {
+    const n = parseFloat(next);
+    setWsBudget(wsId, Number.isFinite(n) && n > 0 ? n : 0);
+    setWsBudgets(loadWsBudgets());
   };
 
   const capNum = parseFloat(cap);
@@ -1480,24 +1526,100 @@ function AIUsageDashboard() {
         </>
       )}
 
+      <div className="cc-allow-subhead">Per-workspace budgets</div>
+      <div className="settings-row settings-row-note">
+        Per-workspace caps take precedence over the global cap above.
+        Useful for "this client gets $50/month" billing per project.
+        Workspaces show even when closed if they have a budget set or
+        recorded usage this month.
+      </div>
+      {wsSummary.length === 0 ? (
+        <div className="settings-row settings-row-note">
+          No workspaces with usage or budget yet.
+        </div>
+      ) : (
+        <div className="ai-usage-ws">
+          {wsSummary.map((w) => (
+            <div key={w.wsId} className="ai-usage-ws-row">
+              <div className="ai-usage-ws-meta">
+                <strong>{w.name}</strong>
+                <span>{w.wsId}</span>
+              </div>
+              <div className="ai-usage-ws-spend">
+                ${w.thisMonth.toFixed(2)}
+                <span> spent this month</span>
+              </div>
+              <div className="cc-budget-input">
+                <span className="cc-budget-prefix">$</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.50"
+                  placeholder="no cap"
+                  value={w.budget > 0 ? String(w.budget) : ""}
+                  onChange={(e) => persistWsBudget(w.wsId, e.target.value)}
+                  className="cc-budget-field"
+                />
+                <span className="cc-budget-suffix">/mo</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="cc-allow-subhead">Prompt audit log</div>
+      <Toggle
+        label="Log full prompt text in audit trail"
+        value={logPrompts}
+        onChange={toggleLogPrompts}
+      />
+      <div className="settings-row settings-row-note">
+        OFF (default) — only ts / provider / model / cost / tokens are
+        logged.<br />
+        ON — the user prompt for each turn is also stored
+        (truncated to 1500 chars) so the recent-turns list shows
+        previews and a "View" button. Older entries written before
+        this toggle aren't backfilled.
+      </div>
+
       {recent.length > 0 && (
         <>
           <div className="cc-allow-subhead">Recent turns</div>
           <div className="ai-usage-recent">
             {recent.map((r, i) => (
-              <div key={r.ts + ":" + i} className="ai-usage-recent-row">
-                <span className="ai-usage-recent-ts">
-                  {new Date(r.ts).toLocaleString()}
-                </span>
-                <span className="ai-usage-recent-model">
-                  <code>{r.provider}:{r.model}</code>
-                </span>
-                <span className="ai-usage-recent-tokens">
-                  {(r.tokensIn + r.tokensOut).toLocaleString()} tok
-                </span>
-                <span className="ai-usage-recent-cost">
-                  {r.costUsd > 0 ? `$${r.costUsd.toFixed(4)}` : "free"}
-                </span>
+              <div key={r.ts + ":" + i}>
+                <div className="ai-usage-recent-row">
+                  <span className="ai-usage-recent-ts">
+                    {new Date(r.ts).toLocaleString()}
+                  </span>
+                  <span className="ai-usage-recent-model">
+                    <code>{r.provider}:{r.model}</code>
+                  </span>
+                  <span className="ai-usage-recent-tokens">
+                    {(r.tokensIn + r.tokensOut).toLocaleString()} tok
+                  </span>
+                  <span className="ai-usage-recent-cost">
+                    {r.costUsd > 0 ? `$${r.costUsd.toFixed(4)}` : "free"}
+                  </span>
+                </div>
+                {r.prompt && (
+                  <div className="ai-usage-recent-prompt">
+                    <button
+                      className="ai-usage-recent-prompt-toggle"
+                      onClick={() =>
+                        setOpenPromptIdx(openPromptIdx === i ? null : i)
+                      }
+                    >
+                      {openPromptIdx === i ? "▾" : "▸"} {r.prompt.slice(0, 90)}
+                      {r.prompt.length > 90 ? "…" : ""}
+                    </button>
+                    {openPromptIdx === i && (
+                      <pre className="ai-usage-recent-prompt-full">
+                        {r.prompt}
+                      </pre>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

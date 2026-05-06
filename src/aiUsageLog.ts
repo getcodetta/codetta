@@ -40,6 +40,11 @@ export interface UsageRecord {
   tokensOut: number;
   wsId?: string;
   chatId?: string;
+  /** Optional verbatim user prompt for the turn. Only present when
+   *  the user has opted in via Settings → AI Usage → "Log prompt
+   *  text". Truncated server-side to MAX_PROMPT_CHARS to bound the
+   *  log size. Undefined for every record written before opt-in. */
+  prompt?: string;
 }
 
 interface WriteableUsageRecord {
@@ -50,6 +55,32 @@ interface WriteableUsageRecord {
   tokensOut?: number;
   wsId?: string;
   chatId?: string;
+  prompt?: string;
+}
+
+/** Cap any single recorded prompt to this many characters. Long
+ *  prompts (paste-the-whole-readme style) shouldn't dominate the
+ *  log size. */
+const MAX_PROMPT_CHARS = 1500;
+
+const LOG_PROMPTS_KEY = "lcp.ai.usage.logPrompts";
+
+export function loadLogPrompts(): boolean {
+  try {
+    return localStorage.getItem(LOG_PROMPTS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveLogPrompts(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(LOG_PROMPTS_KEY, "1");
+    else localStorage.removeItem(LOG_PROMPTS_KEY);
+  } catch {
+    /* ignore */
+  }
+  notify();
 }
 
 type Listener = () => void;
@@ -97,12 +128,23 @@ function saveUsage(records: UsageRecord[]) {
 }
 
 /** Append one usage record. Skips zero-cost zero-token records to
- *  avoid filling the log with noise from no-op providers. */
+ *  avoid filling the log with noise from no-op providers. The
+ *  prompt (when supplied) is only persisted if the user has opted
+ *  into prompt logging via Settings — defence-in-depth against
+ *  accidental capture of sensitive turns. */
 export function recordUsage(r: WriteableUsageRecord) {
   if ((r.costUsd ?? 0) === 0 && (r.tokensIn ?? 0) === 0 && (r.tokensOut ?? 0) === 0) {
     return;
   }
   const all = loadUsage();
+  const wantsPrompts = loadLogPrompts();
+  let prompt: string | undefined;
+  if (wantsPrompts && r.prompt) {
+    prompt =
+      r.prompt.length > MAX_PROMPT_CHARS
+        ? r.prompt.slice(0, MAX_PROMPT_CHARS) + "…"
+        : r.prompt;
+  }
   all.push({
     ts: Date.now(),
     provider: r.provider,
@@ -112,6 +154,7 @@ export function recordUsage(r: WriteableUsageRecord) {
     tokensOut: r.tokensOut ?? 0,
     wsId: r.wsId,
     chatId: r.chatId,
+    prompt,
   });
   saveUsage(all);
   notify();
@@ -212,16 +255,99 @@ export function saveHardCap(usd: number) {
   notify();
 }
 
-/** Returns the cap if it would be exceeded (or already is) by an
- *  incoming turn of estimated cost `pending`. Caller decides what
- *  to do (block + toast, prompt for confirmation, etc.). */
-export function wouldExceedHardCap(pending = 0): {
+// ---------- Per-workspace budgets ----------
+//
+// Per-workspace cap is checked BEFORE the global cap. If a workspace
+// has its own budget AND this month's spend in that workspace meets
+// or exceeds it, sends are blocked even if the global cap allows
+// more. Useful for "this client gets $50/month" billing per project.
+
+const WS_BUDGETS_KEY = "lcp.ai.usage.wsBudgetsUsd";
+
+export function loadWsBudgets(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(WS_BUDGETS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveWsBudgets(budgets: Record<string, number>) {
+  try {
+    const cleaned: Record<string, number> = {};
+    for (const [k, v] of Object.entries(budgets)) {
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) cleaned[k] = v;
+    }
+    if (Object.keys(cleaned).length > 0) {
+      localStorage.setItem(WS_BUDGETS_KEY, JSON.stringify(cleaned));
+    } else {
+      localStorage.removeItem(WS_BUDGETS_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
+  notify();
+}
+
+export function setWsBudget(wsId: string, usd: number) {
+  const cur = loadWsBudgets();
+  if (usd > 0 && Number.isFinite(usd)) cur[wsId] = usd;
+  else delete cur[wsId];
+  saveWsBudgets(cur);
+}
+
+/** Sum spend in a single workspace this calendar month. */
+export function thisMonthWorkspaceTotal(wsId: string, records?: UsageRecord[]): number {
+  const list = records ?? loadUsage();
+  const ymKey = (d: Date) =>
+    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  const key = ymKey(new Date());
+  let sum = 0;
+  for (const r of list) {
+    if (r.wsId === wsId && ymKey(new Date(r.ts)) === key) sum += r.costUsd;
+  }
+  return sum;
+}
+
+/** Returns the cap that would be hit by the next turn — workspace
+ *  cap takes precedence (if set + active for this wsId), then the
+ *  global cap. Caller blocks the send if `exceeds`. */
+export function wouldExceedHardCap(pending = 0, wsId?: string): {
   exceeds: boolean;
   cap: number;
   current: number;
+  scope: "workspace" | "global" | "none";
 } {
+  if (wsId) {
+    const wsBudgets = loadWsBudgets();
+    const wsCap = wsBudgets[wsId] ?? 0;
+    if (wsCap > 0) {
+      const wsCurrent = thisMonthWorkspaceTotal(wsId);
+      if (wsCurrent + pending >= wsCap) {
+        return {
+          exceeds: true,
+          cap: wsCap,
+          current: wsCurrent,
+          scope: "workspace",
+        };
+      }
+    }
+  }
   const cap = loadHardCap();
-  if (cap <= 0) return { exceeds: false, cap: 0, current: 0 };
+  if (cap <= 0) return { exceeds: false, cap: 0, current: 0, scope: "none" };
   const current = thisMonthTotal();
-  return { exceeds: current + pending >= cap, cap, current };
+  return {
+    exceeds: current + pending >= cap,
+    cap,
+    current,
+    scope: "global",
+  };
 }
