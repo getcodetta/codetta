@@ -4419,16 +4419,19 @@ input {
    PreToolUse hook fires for a destructive tool. Floats above the
    editor; user must Allow or Deny to unblock the agent. */
 /* Inline variant — sits inside the chat panel above the input, no full
-   window dim. Far less intrusive than the old centered modal. */
+   window dim. Far less intrusive than the old centered modal. The
+   narrower context (chat width vs. modal-on-window) means we tighten
+   padding + max-heights so the card doesn't push the input off-screen
+   on a small chat panel. */
 .cc-perm-inline {
   margin: 8px 0;
   display: flex;
   flex-direction: column;
   pointer-events: auto;
 }
-.cc-perm-card {
+.cc-perm-inline .cc-perm-card {
   width: 100%;
-  max-height: 60vh;
+  max-height: 50vh;
   background: var(--bg-elev);
   border: 1px solid var(--accent, #7a4fff);
   border-radius: 6px;
@@ -4437,6 +4440,38 @@ input {
   flex-direction: column;
   overflow: hidden;
   font-size: 12px;
+}
+.cc-perm-inline .cc-perm-head {
+  padding: 8px 12px;
+}
+.cc-perm-inline .cc-perm-body {
+  padding: 10px 12px;
+}
+.cc-perm-inline .cc-perm-actions {
+  padding: 8px 12px;
+  gap: 6px;
+}
+.cc-perm-inline .cc-perm-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.cc-perm-inline .cc-perm-cmd,
+.cc-perm-inline .cc-perm-content {
+  max-height: 200px;
+}
+.cc-perm-inline .cc-perm-diff {
+  max-height: 200px;
+}
+/* Default card styling kept for any future non-inline use. */
+.cc-perm-card {
+  width: min(720px, 100%);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 13px;
 }
 .cc-perm-head {
   display: flex;
