@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { matchExclusion } from "../aiPrivacy";
+import { error as toastError } from "../notify";
 
 /**
  * Per-user always-allow rules persisted in localStorage. Three kinds:
@@ -179,6 +181,25 @@ export function ClaudePermissionOverlay() {
 
     void listen<PermissionRequest>("claude:permission-request", (e) => {
       const req = e.payload;
+      // PRIVACY GATE — comes BEFORE always-allow rules. If the
+      // requested path matches a privacy exclusion glob, deny
+      // immediately and never surface the card. The agent gets a
+      // denial that names the matched pattern so it can route around
+      // (e.g. ask the user instead of trying again with the same path).
+      if (PATH_TOOLS.has(req.tool_name)) {
+        const p = pathFromInput(req.tool_input);
+        const matched = p ? matchExclusion(p) : null;
+        if (matched) {
+          toastError(
+            `🛡 AI privacy: blocked ${req.tool_name} on ${p?.split(/[\\/]/).pop()} (matches "${matched}")`,
+          );
+          void invoke("claude_perm_decide", {
+            requestId: req.request_id,
+            decision: "deny",
+          }).catch((err) => console.warn("privacy-deny failed", err));
+          return;
+        }
+      }
       // Check both the persisted rules AND the in-memory session rules.
       // Read latest via refs so we never miss a recent click.
       if (

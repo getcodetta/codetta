@@ -23,6 +23,7 @@ import {
 import { openSettings } from "../settingsBus";
 import { useStore, parseKey, findPaneById } from "../store";
 import { useEditorState, getActiveEditor } from "../editorState";
+import { matchExclusion, subscribePrivacy } from "../aiPrivacy";
 import {
   error as toastError,
   info as toastInfo,
@@ -1301,8 +1302,14 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // shoving file contents through the prompt.
     const skipAllInlining = selectedProvider === "claude-code";
     if (skipAllInlining) {
-      // Hint to the user's request which file they're focused on.
-      if (editorState.filePath) {
+      // Hint to the user's request which file they're focused on —
+      // unless the active file is on the AI privacy exclusion list,
+      // in which case we omit the hint entirely so the model never
+      // even learns the path exists in this conversation.
+      if (
+        editorState.filePath &&
+        !matchExclusion(editorState.filePath)
+      ) {
         sysParts.push(
           `The user is currently looking at the file: ${editorState.filePath}. Use your Read tool to fetch it if relevant.`,
         );
@@ -1314,12 +1321,23 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       }
     }
     // /file <path> attaches the contents of the named file.
+    // Skip files that match the AI privacy exclusion list — never
+    // inline excluded contents into the prompt, even when the user
+    // explicitly typed /file (defence-in-depth: a typo or muscle-
+    // memory shouldn't leak secrets).
     for (const filePath of skipAllInlining ? [] : attachedFiles) {
       try {
         const abs =
           filePath.includes(":") || filePath.startsWith("/")
             ? filePath
             : `${root}/${filePath}`.replace(/\\/g, "/");
+        const matched = matchExclusion(abs);
+        if (matched) {
+          toastError(
+            `🛡 Skipped ${filePath} — matches privacy exclusion "${matched}"`,
+          );
+          continue;
+        }
         const content = await fs.readFile(abs);
         const trimmed =
           content.length > 12000
@@ -2269,6 +2287,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     <div className="ai-panel">
       {renderHeader()}
       {renderHistoryDropdown()}
+      <PrivacyBanner activeFilePath={editorState.filePath} />
       {todos && todos.length > 0 && <TodosCard items={todos} />}
       {messages.length >= 4 && streaming === null && !runningTools && (
         <TimelineScrubber
@@ -3737,6 +3756,42 @@ function PermissionCard({
           ✕ Deny
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Renders an inline warning when the active editor file matches an
+ *  AI privacy exclusion. The privacy gate in ClaudePermissionOverlay
+ *  also blocks the actual tool call, but the banner gives the user
+ *  context BEFORE they type a prompt that would have been declined. */
+function PrivacyBanner({
+  activeFilePath,
+}: {
+  activeFilePath: string | null;
+}) {
+  // Recompute when privacy settings change (Settings → save).
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    return subscribePrivacy(() => setTick((n) => n + 1));
+  }, []);
+  if (!activeFilePath) return null;
+  const matched = matchExclusion(activeFilePath);
+  if (!matched) return null;
+  const fileName = activeFilePath.split(/[\\/]/).pop() ?? activeFilePath;
+  return (
+    <div className="ai-privacy-banner" role="status">
+      <span className="ai-privacy-icon">🛡</span>
+      <div className="ai-privacy-text">
+        <strong>{fileName}</strong> is on your AI privacy exclusion list.
+        AI tools can't read or edit it (matches <code>{matched}</code>).
+      </div>
+      <button
+        className="ai-privacy-settings"
+        onClick={() => openSettings()}
+        title="Open privacy settings"
+      >
+        Manage
+      </button>
     </div>
   );
 }

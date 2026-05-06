@@ -3521,6 +3521,57 @@ input {
   background: var(--border);
   margin: 4px 0;
 }
+/* Inline banner shown above the chat when the active editor file
+   matches an AI privacy exclusion glob. The permission overlay also
+   blocks the actual tool call — this just gives the user heads-up
+   context BEFORE they type. */
+.ai-privacy-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin: 6px 8px;
+  background: rgba(255, 158, 61, 0.10);
+  border: 1px solid rgba(255, 158, 61, 0.35);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg);
+  flex-shrink: 0;
+}
+.ai-privacy-icon {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.ai-privacy-text {
+  flex: 1 1 auto;
+  line-height: 1.45;
+  min-width: 0;
+}
+.ai-privacy-text code {
+  background: rgba(255, 158, 61, 0.14);
+  border: 1px solid rgba(255, 158, 61, 0.35);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+}
+.ai-privacy-settings {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid rgba(255, 158, 61, 0.45);
+  color: #ffb061;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ai-privacy-settings:hover {
+  background: rgba(255, 158, 61, 0.12);
+  color: #ffd1a0;
+}
+
 .ai-empty {
   padding: 16px;
   color: var(--fg-dim);

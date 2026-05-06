@@ -16,6 +16,13 @@ import {
   type ToolPolicy,
 } from "../toolPermissions";
 import { McpServerBrowser } from "./McpServerBrowser";
+import {
+  DEFAULT_EXCLUSIONS,
+  effectivePatterns,
+  loadPrivacySettings,
+  matchExclusion,
+  savePrivacySettings,
+} from "../aiPrivacy";
 import { invoke } from "@tauri-apps/api/core";
 
 export function SettingsModal() {
@@ -154,6 +161,10 @@ export function SettingsModal() {
               value={settings.insertFinalNewline}
               onChange={(v) => setEditorSettings({ insertFinalNewline: v })}
             />
+          </Section>
+
+          <Section title="AI Privacy — Exclude paths">
+            <AIPrivacyEditor />
           </Section>
 
           <Section title="AI Tool Permissions">
@@ -920,6 +931,149 @@ function SftpProfilesEditor() {
             + Add connection
           </button>
         </div>
+      )}
+    </>
+  );
+}
+
+// ---------- AI privacy exclusions ----------
+
+function AIPrivacyEditor() {
+  const [settings, setSettings] = useState(() => loadPrivacySettings());
+  const [draft, setDraft] = useState("");
+  const [test, setTest] = useState("");
+
+  const persist = (next: typeof settings) => {
+    setSettings(next);
+    savePrivacySettings(next);
+  };
+
+  const addPattern = () => {
+    const p = draft.trim();
+    if (!p) return;
+    if (settings.patterns.includes(p)) {
+      setDraft("");
+      return;
+    }
+    persist({ ...settings, patterns: [...settings.patterns, p] });
+    setDraft("");
+  };
+
+  const removePattern = (p: string) => {
+    persist({ ...settings, patterns: settings.patterns.filter((x) => x !== p) });
+  };
+
+  // Live test: enter a path, see whether the current effective list
+  // would exclude it (and which pattern matched).
+  const testMatch = test ? matchExclusion(test, effectivePatterns(settings)) : null;
+  const effective = effectivePatterns(settings);
+
+  return (
+    <>
+      <div className="settings-row settings-row-note">
+        Files matching any of these globs are <strong>never</strong> sent
+        to any AI provider — Claude Code's Read/Edit/Write/MultiEdit/
+        NotebookEdit tool calls are denied with an explanation, the
+        chat panel skips them when expanding <code>/file</code>, and a
+        warning banner appears when an excluded file is the active
+        editor buffer.
+      </div>
+
+      <Toggle
+        label="Enable AI privacy exclusions"
+        value={settings.enabled}
+        onChange={(v) => persist({ ...settings, enabled: v })}
+      />
+
+      {settings.enabled && (
+        <>
+          <Toggle
+            label="Include built-in defaults (.env, .ssh keys, secrets/, .aws/, etc.)"
+            value={settings.useDefaults}
+            onChange={(v) => persist({ ...settings, useDefaults: v })}
+          />
+
+          {settings.useDefaults && (
+            <div className="settings-row settings-row-note">
+              Built-in patterns ({DEFAULT_EXCLUSIONS.length}):{" "}
+              {DEFAULT_EXCLUSIONS.map((p, i) => (
+                <span key={p}>
+                  <code>{p}</code>
+                  {i < DEFAULT_EXCLUSIONS.length - 1 ? ", " : ""}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="cc-allow-subhead">Your patterns</div>
+          <div className="cc-allow-list">
+            {settings.patterns.length === 0 ? (
+              <div className="settings-row settings-row-note">
+                No custom patterns. Use the input below to add one
+                (git-style globs: <code>**/*.token</code>,{" "}
+                <code>secrets/**</code>, <code>internal/**/*.ts</code>).
+              </div>
+            ) : (
+              settings.patterns.map((p) => (
+                <div key={p} className="cc-allow-row">
+                  <code className="cc-allow-name">{p}</code>
+                  <button
+                    className="cc-allow-remove"
+                    onClick={() => removePattern(p)}
+                    title={`Stop excluding ${p}`}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          <Row label="Add pattern">
+            <div style={{ display: "flex", gap: 6, width: "100%" }}>
+              <input
+                className="sftp-field"
+                value={draft}
+                placeholder="**/*.token"
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addPattern();
+                }}
+              />
+              <button
+                className="sftp-btn sftp-btn-primary"
+                onClick={addPattern}
+                disabled={!draft.trim()}
+              >
+                Add
+              </button>
+            </div>
+          </Row>
+
+          <Row label="Test a path">
+            <input
+              className="sftp-field"
+              value={test}
+              placeholder="C:/Users/me/project/.env  →  see if it's excluded"
+              onChange={(e) => setTest(e.target.value)}
+            />
+          </Row>
+          {test && (
+            <div
+              className={`sftp-profile-test ${
+                testMatch ? "sftp-profile-test-fail" : "sftp-profile-test-ok"
+              }`}
+            >
+              {testMatch
+                ? `✗ Blocked — matches pattern: ${testMatch}`
+                : `✓ Not excluded — would be sent to AI`}
+            </div>
+          )}
+
+          <div className="settings-row settings-row-note">
+            {effective.length} effective pattern{effective.length === 1 ? "" : "s"} active.
+          </div>
+        </>
       )}
     </>
   );
