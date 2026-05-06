@@ -2067,6 +2067,20 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       setActiveToolLabels([]);
       setTokensPerSec(null);
       setLastStreamEventAt(null);
+      // If a permission card was awaiting a decision when the turn
+      // aborted, resolve it as deny so the parent promise unblocks
+      // and clear the card so the user doesn't see a stale prompt
+      // for a tool call that's no longer in flight.
+      setPendingPermission((cur) => {
+        if (cur) {
+          try {
+            cur.resolve("deny");
+          } catch {
+            /* ignore */
+          }
+        }
+        return null;
+      });
       abortRef.current = null;
       // One-shot attach flags reset after the message goes out.
       setAttachTree(false);
