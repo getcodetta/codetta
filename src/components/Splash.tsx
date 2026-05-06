@@ -1,6 +1,8 @@
 import { useStore } from "../store";
 
-const VERSION = "v0.2.0";
+// Injected by vite from package.json — see vite.config.ts `define`.
+declare const __APP_VERSION__: string;
+const VERSION = `v${__APP_VERSION__}`;
 
 export function Splash() {
   const progress = useStore((s) => s.hydrateProgress);
