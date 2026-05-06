@@ -13,6 +13,41 @@ let _toasts: Toast[] = [];
 let _nextId = 1;
 const listeners = new Set<(t: Toast[]) => void>();
 
+// Per-toast auto-dismiss timer + remaining time, so hover can pause
+// the countdown and unhover can resume from where it left off.
+// Without this, longer error toasts vanish mid-read because the user
+// hovered to read them and the 8s timer ran out anyway.
+interface TimerState {
+  handle: number;
+  startedAt: number;
+  remaining: number;
+}
+const timers = new Map<number, TimerState>();
+
+function scheduleDismiss(id: number, ms: number): void {
+  const handle = window.setTimeout(() => {
+    timers.delete(id);
+    dismissToast(id);
+  }, ms);
+  timers.set(id, { handle, startedAt: Date.now(), remaining: ms });
+}
+
+export function pauseToast(id: number): void {
+  const t = timers.get(id);
+  if (!t) return;
+  window.clearTimeout(t.handle);
+  const elapsed = Date.now() - t.startedAt;
+  const left = Math.max(500, t.remaining - elapsed);
+  // Sentinel handle 0 = paused; resume needs a fresh schedule.
+  timers.set(id, { handle: 0, startedAt: Date.now(), remaining: left });
+}
+
+export function resumeToast(id: number): void {
+  const t = timers.get(id);
+  if (!t || t.handle !== 0) return;
+  scheduleDismiss(id, t.remaining);
+}
+
 function notifyListeners() {
   for (const l of listeners) l(_toasts);
 }
@@ -41,7 +76,7 @@ export function notify(
   _toasts = [..._toasts, toast];
   notifyListeners();
   if (finalTimeout > 0) {
-    setTimeout(() => dismissToast(id), finalTimeout);
+    scheduleDismiss(id, finalTimeout);
   }
 }
 
@@ -65,6 +100,11 @@ export function dismissToast(id: number): void {
   const next = _toasts.filter((t) => t.id !== id);
   if (next.length === _toasts.length) return;
   _toasts = next;
+  // Clear any pending auto-dismiss timer so manual close + auto-close
+  // don't double-fire on the next id reuse.
+  const t = timers.get(id);
+  if (t && t.handle !== 0) window.clearTimeout(t.handle);
+  timers.delete(id);
   notifyListeners();
 }
 

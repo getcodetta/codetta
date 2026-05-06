@@ -1,5 +1,11 @@
 import { createPortal } from "react-dom";
-import { useToasts, dismissToast, type Toast } from "../notify";
+import {
+  dismissToast,
+  pauseToast,
+  resumeToast,
+  useToasts,
+  type Toast,
+} from "../notify";
 
 export function Toasts() {
   const toasts = useToasts();
@@ -7,7 +13,12 @@ export function Toasts() {
   return createPortal(
     <div className="toast-stack">
       {toasts.map((t: Toast) => (
-        <div key={t.id} className={`toast toast-${t.kind}`}>
+        <div
+          key={t.id}
+          className={`toast toast-${t.kind}`}
+          onMouseEnter={() => pauseToast(t.id)}
+          onMouseLeave={() => resumeToast(t.id)}
+        >
           <span className="toast-message">{t.message}</span>
           <button
             className="toast-close"
