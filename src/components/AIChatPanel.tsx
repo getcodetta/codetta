@@ -934,17 +934,33 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     void refresh(true);
   }, []);
 
-  // Auto-poll when Ollama isn't reachable or has no models, so the user
-  // doesn't have to keep clicking Refresh after installing. Pause the
-  // poll while a pull is in flight — refresh() would otherwise hide the
-  // pull-progress UI behind a "checking" flicker.
+  // Auto-poll when Ollama isn't reachable or has no models so the
+  // user doesn't have to keep clicking Refresh after installing.
+  // Backs off aggressively — most Codetta users don't run Ollama
+  // (they're on Claude Code or a cloud key), and a 4-second poll
+  // floods their console with localhost:11434 ECONNREFUSED forever.
+  // Strategy:
+  //   - First 6 attempts: 4s interval (catches a fresh install)
+  //   - Next 6 attempts: 30s interval
+  //   - After that: stop entirely until the user clicks Refresh
   useEffect(() => {
     if (status === "ready" || status === "checking") return;
     if (isAnyPulling) return;
-    const t = window.setInterval(() => {
+    let attempt = 0;
+    let timer: number | undefined;
+    const tick = () => {
+      attempt++;
       void refresh(false);
-    }, 4000);
-    return () => window.clearInterval(t);
+      let next: number | null;
+      if (attempt < 6) next = 4000;
+      else if (attempt < 12) next = 30000;
+      else next = null; // give up; user can click Refresh
+      if (next != null) timer = window.setTimeout(tick, next);
+    };
+    timer = window.setTimeout(tick, 4000);
+    return () => {
+      if (timer != null) window.clearTimeout(timer);
+    };
   }, [status, isAnyPulling]);
 
   // Expose workspace root globally so the Claude Code provider can spawn
@@ -965,10 +981,11 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     if (!sessionId) return;
     let unlisten: (() => void) | null = null;
     let cancelled = false;
-    // Track message ids whose text we've already accumulated via
-    // content_block_delta events — used to skip the duplicate text
-    // blocks in the wrapping `assistant` event.
-    const streamedReplayIds = new Set<string>();
+    // Per-message flag: whether the in-flight assistant message has
+    // had any text streamed via content_block_delta. Reset on
+    // message_start; checked when the wrapping `assistant` event
+    // arrives so we don't double-render the same text.
+    let replayMsgGotDeltas = false;
 
     const replayLine = (line: { kind?: string; line?: string; code?: number }) => {
       if (line.kind === "end") {
@@ -1006,25 +1023,24 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         // Token-level deltas via --include-partial-messages. Append
         // each text_delta straight to streaming. The wrapping
         // `assistant` event still fires later with the complete
-        // text — track which message ids we've already streamed
-        // so we can skip the duplicate.
+        // text; per-message flag (reset on message_start) lets us
+        // skip the duplicate.
         if (obj.type === "stream_event" && obj.event) {
           const ev = obj.event;
-          if (
+          if (ev.type === "message_start") {
+            replayMsgGotDeltas = false;
+          } else if (
             ev.type === "content_block_delta" &&
             ev.delta?.type === "text_delta" &&
             typeof ev.delta.text === "string"
           ) {
             setStreaming((acc) => (acc ?? "") + ev.delta.text);
-            const msgId =
-              typeof obj.message_id === "string" ? obj.message_id : "current";
-            streamedReplayIds.add(msgId);
+            replayMsgGotDeltas = true;
           }
         }
         if (obj.type === "assistant" && obj.message?.content) {
-          const msgId =
-            typeof obj.message?.id === "string" ? obj.message.id : "current";
-          const alreadyStreamed = streamedReplayIds.has(msgId);
+          const alreadyStreamed = replayMsgGotDeltas;
+          replayMsgGotDeltas = false;
           for (const block of obj.message.content) {
             if (block.type === "text" && typeof block.text === "string") {
               if (alreadyStreamed) continue;

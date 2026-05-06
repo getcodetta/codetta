@@ -147,15 +147,14 @@ export const claudeCodeProvider: ChatProvider = {
         fn();
       }
     };
-    // Track per-message-block whether we've consumed text via
-    // content_block_delta events (--include-partial-messages). When
-    // we have, the final `assistant` event would double-emit the
-    // same text — skip text blocks for any message id we've already
-    // streamed via deltas. Tool_use blocks are still emitted via
-    // the assistant event (their input streams as input_json_delta
-    // chunks which we don't bother assembling — easier to use the
-    // final whole tool_use).
-    const streamedMessageIds = new Set<string>();
+    // Track whether the CURRENT in-flight message has had any text
+    // streamed via content_block_delta events. Reset on message_start;
+    // checked when the wrapping `assistant` event arrives. Avoids
+    // double-rendering: if we got deltas, skip the text blocks in
+    // the assistant event (tool_use blocks always pass through).
+    // Per-flag rather than per-message-id because Claude Code's
+    // stream_event records don't reliably propagate message_id.
+    let currentMsgGotDeltas = false;
 
     const handle = (data: { kind: string; line?: string; code?: number }) => {
       if (data.kind === "end") {
@@ -202,19 +201,20 @@ export const claudeCodeProvider: ChatProvider = {
         // Token-level streaming via --include-partial-messages.
         // Each `stream_event` line wraps a raw Anthropic API
         // streaming event. We only need text deltas — tool_use
-        // input deltas and message_start/stop are noise here
-        // because the wrapping `assistant` event (still emitted)
-        // gives us the complete tool_use block at end of message.
+        // input deltas and message_stop are noise here because the
+        // wrapping `assistant` event (still emitted) gives us the
+        // complete tool_use block at end of message. message_start
+        // resets the per-message "got deltas" flag.
         if (obj.type === "stream_event" && obj.event) {
           const ev = obj.event;
-          if (
+          if (ev.type === "message_start") {
+            currentMsgGotDeltas = false;
+          } else if (
             ev.type === "content_block_delta" &&
             ev.delta?.type === "text_delta" &&
             typeof ev.delta.text === "string"
           ) {
-            const msgId =
-              typeof obj.message_id === "string" ? obj.message_id : "current";
-            streamedMessageIds.add(msgId);
+            currentMsgGotDeltas = true;
             queue.push({ kind: "content", text: ev.delta.text });
             wake();
           }
@@ -224,9 +224,10 @@ export const claudeCodeProvider: ChatProvider = {
           // content_block_delta events, suppress the duplicate text
           // blocks here. tool_use blocks always pass through (their
           // arg deltas weren't consumed above).
-          const msgId =
-            typeof obj.message?.id === "string" ? obj.message.id : "current";
-          const alreadyStreamed = streamedMessageIds.has(msgId);
+          const alreadyStreamed = currentMsgGotDeltas;
+          // Reset for the next message — assistant events fire after
+          // all deltas for that message have flushed.
+          currentMsgGotDeltas = false;
           for (const block of obj.message.content) {
             if (alreadyStreamed && block.type === "text") continue;
             if (block.type === "text" && typeof block.text === "string") {
