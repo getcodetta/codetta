@@ -23,6 +23,8 @@ import {
   matchExclusion,
   savePrivacySettings,
 } from "../aiPrivacy";
+import { confirmDiscardUnsaved } from "../actions";
+import { confirm as dialogConfirm } from "../dialog";
 import {
   clearUsage,
   loadHardCap,
@@ -414,7 +416,7 @@ function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
     setStatus({ kind: "idle" });
   };
 
-  const apply = () => {
+  const apply = async () => {
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
@@ -433,13 +435,21 @@ function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
       return;
     }
     const next = parsed as Record<string, unknown>;
-    // Confirm before applying — JSON edits can wipe credentials.
+    // Confirm before applying — JSON edits can wipe credentials. Was
+    // using the native browser confirm() which has a different look,
+    // can't be styled, and is increasingly throttled in webviews.
     const removed = SETTINGS_KEYS.filter(
       (k) => localStorage.getItem(k) != null && !(k in next),
     );
     if (removed.length > 0) {
-      const ok = confirm(
+      const ok = await dialogConfirm(
         `These settings will be DELETED:\n\n  ${removed.join("\n  ")}\n\nApply anyway?`,
+        {
+          title: "Delete settings",
+          okLabel: "Apply",
+          cancelLabel: "Cancel",
+          danger: true,
+        },
       );
       if (!ok) return;
     }
@@ -461,17 +471,20 @@ function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
       }
     }
     setStatus({ kind: "ok", count });
-    // Reload UI bits that read on mount: brute-force via a prompt
-    // to refresh. Simpler than wiring pub-sub for every settings key.
-    setTimeout(() => {
-      if (
-        confirm(
-          "Settings applied. Reload the editor to make sure every component picks up the new values?",
-        )
-      ) {
-        window.location.reload();
-      }
-    }, 100);
+    // Offer to reload so every component picks up the new values.
+    // Routes through confirmDiscardUnsaved so any open buffer edits
+    // get the same "are you sure?" prompt as Ctrl+R.
+    const wantsReload = await dialogConfirm(
+      "Settings applied. Reload the editor to make sure every component picks up the new values?",
+      {
+        title: "Reload?",
+        okLabel: "Reload",
+        cancelLabel: "Not now",
+      },
+    );
+    if (wantsReload && (await confirmDiscardUnsaved("Reload"))) {
+      window.location.reload();
+    }
   };
 
   return (
@@ -495,7 +508,7 @@ function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
         <span className="settings-json-spacer"></span>
         <button
           className="sftp-btn sftp-btn-primary"
-          onClick={apply}
+          onClick={() => void apply()}
         >
           Apply changes
         </button>
