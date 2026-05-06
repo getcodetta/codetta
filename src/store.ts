@@ -5,6 +5,7 @@ import {
   lookupRemoteLink,
   rememberRemoteLink,
 } from "./sftpLinks";
+import { clearEditorState } from "./editorState";
 import {
   error as toastError,
   success as toastSuccess,
@@ -1093,6 +1094,15 @@ export const useStore = create<AppState>((set, get) => {
 
     setActiveWorkspace: async (id) => {
       if (!get().loaded[id]) return;
+      // Reset the editor-state singleton so the AI panel doesn't carry
+      // the previous workspace's "active file" into the next chat turn
+      // (and so other consumers don't accidentally read or write across
+      // workspace boundaries). The new editor will repopulate it as
+      // soon as a tab is focused in the just-activated workspace.
+      const prevId = get().activeId;
+      if (prevId !== id) {
+        clearEditorState();
+      }
       set({ activeId: id });
       await persistIdx();
     },

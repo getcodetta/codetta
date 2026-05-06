@@ -74,9 +74,19 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS code-signing + notarization. tauri-action picks
-          # these up automatically on macos runners; on Windows /
-          # Linux they're empty and ignored.
+          # macOS code-signing + notarization is intentionally OFF for
+          # now. The cert in the APPLE_CERTIFICATE secret has been
+          # failing PKCS12 import (.p12 password mismatch / OpenSSL 3
+          # legacy-mode export issue) on every release since v0.2.0,
+          # which made macOS bundling fail and the whole release run
+          # show "failure" even though Windows + Linux artifacts
+          # uploaded fine. With these env vars unset, tauri-action
+          # builds an unsigned .dmg / .app — Gatekeeper will warn on
+          # first launch ("right-click → Open" workaround), same UX as
+          # v0.2.0 / v0.3.0 already had since they shipped without a
+          # macOS asset at all. Re-enable by uncommenting + re-setting
+          # the secrets once the cert is regenerated.
+          #
           #   APPLE_CERTIFICATE             = base64-encoded .p12 of
           #     the Developer ID Application cert
           #   APPLE_CERTIFICATE_PASSWORD    = the .p12 export password
@@ -85,15 +95,12 @@ jobs:
           #   APPLE_PASSWORD                = app-specific password from
           #     account.apple.com (NOT your real password)
           #   APPLE_TEAM_ID                 = 10-char alphanumeric team id
-          # Notarization runs on the .dmg after build; if any of these
-          # are missing or wrong, the build still succeeds but the
-          # binary will trigger Gatekeeper warnings on first launch.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Codetta ${{ github.ref_name }}"
@@ -106,7 +113,7 @@ jobs:
             |---|---|---|
             | **Windows** | `Codetta_<ver>_x64-setup.exe` | NSIS — recommended |
             | **Windows** | `Codetta_<ver>_x64_en-US.msi` | Enterprise MSI |
-            | **macOS** | `Codetta_<ver>_universal.dmg` | Apple Silicon + Intel, notarized |
+            | **macOS** | `Codetta_<ver>_universal.dmg` | Apple Silicon + Intel, **unsigned** — first launch needs `System Settings → Privacy & Security → Open Anyway` |
             | **Linux** | `codetta_<ver>_amd64.AppImage` | Portable, single file |
             | **Linux** | `codetta_<ver>_amd64.deb` | Debian / Ubuntu |
 
