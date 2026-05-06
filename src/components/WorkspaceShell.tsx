@@ -119,6 +119,11 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
     );
   };
 
+  // Remembered narrow width for the AI panel expand/collapse toggle.
+  // Lets a one-click expand snap to wide, then snap back to whatever
+  // the user had drag-set (not the 380 default).
+  const lastNarrowAiWRef = useRef<number | null>(null);
+
   const autoCreatedRef = useRef(false);
   useEffect(() => {
     if (!ws || autoCreatedRef.current) return;
@@ -167,6 +172,37 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
               <span className="ai-side-panel-title">
                 <AIIcon size={14} /> AI Chat
               </span>
+              {(() => {
+                // Quick width toggle. The drag-resize handle is precise but
+                // slow; a one-click "give me reading room" snap covers the
+                // common request ("the chat is too narrow to read code in").
+                // Toggles between a wide preset (720) and the user's last
+                // remembered narrow width (preserved in a ref so collapsing
+                // restores their feel, not the 380 default).
+                const wideThreshold = 600;
+                const isWide = layout.aiPanelW >= wideThreshold;
+                return (
+                  <button
+                    className="ai-side-panel-expand"
+                    onClick={() => {
+                      if (isWide) {
+                        const restore = lastNarrowAiWRef.current ?? 380;
+                        setAIPanelW(wsId, restore);
+                      } else {
+                        lastNarrowAiWRef.current = layout.aiPanelW;
+                        setAIPanelW(wsId, 720);
+                      }
+                    }}
+                    title={
+                      isWide
+                        ? "Collapse AI panel back to narrow"
+                        : "Expand AI panel for more reading room"
+                    }
+                  >
+                    {isWide ? "⇥" : "⇤"}
+                  </button>
+                );
+              })()}
               <button
                 className="ai-side-panel-close"
                 onClick={() => setAIPanelVisible(wsId, false)}
