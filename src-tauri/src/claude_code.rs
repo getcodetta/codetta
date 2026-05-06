@@ -188,6 +188,13 @@ fn build_claude_command(
         cmd.arg("-p");
         cmd.arg("--output-format").arg("stream-json");
         cmd.arg("--verbose");
+        // Stream token-level text deltas in stream_event records so
+        // long final answers don't appear all at once after tool
+        // calls. Without this flag the CLI emits one assistant event
+        // per content block, so a 2KB summary lands in a single
+        // chunk after all the tool work and the user sees nothing
+        // for 30+ seconds.
+        cmd.arg("--include-partial-messages");
         // Permission strategy:
         //   - use_hooks=true: PreToolUse hook in .claude/settings.local.json
         //     calls our localhost server, which surfaces a permission
@@ -221,7 +228,7 @@ fn build_claude_command(
         "--dangerously-skip-permissions"
     };
     let mut shell_cmd = format!(
-        "claude -p --output-format stream-json --verbose {}",
+        "claude -p --output-format stream-json --verbose --include-partial-messages {}",
         perm_flag
     );
     if let Some(m) = model_to_pass {

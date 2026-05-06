@@ -965,6 +965,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     if (!sessionId) return;
     let unlisten: (() => void) | null = null;
     let cancelled = false;
+    // Track message ids whose text we've already accumulated via
+    // content_block_delta events — used to skip the duplicate text
+    // blocks in the wrapping `assistant` event.
+    const streamedReplayIds = new Set<string>();
 
     const replayLine = (line: { kind?: string; line?: string; code?: number }) => {
       if (line.kind === "end") {
@@ -999,9 +1003,31 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         ) {
           setClaudeSessionId(obj.session_id);
         }
+        // Token-level deltas via --include-partial-messages. Append
+        // each text_delta straight to streaming. The wrapping
+        // `assistant` event still fires later with the complete
+        // text — track which message ids we've already streamed
+        // so we can skip the duplicate.
+        if (obj.type === "stream_event" && obj.event) {
+          const ev = obj.event;
+          if (
+            ev.type === "content_block_delta" &&
+            ev.delta?.type === "text_delta" &&
+            typeof ev.delta.text === "string"
+          ) {
+            setStreaming((acc) => (acc ?? "") + ev.delta.text);
+            const msgId =
+              typeof obj.message_id === "string" ? obj.message_id : "current";
+            streamedReplayIds.add(msgId);
+          }
+        }
         if (obj.type === "assistant" && obj.message?.content) {
+          const msgId =
+            typeof obj.message?.id === "string" ? obj.message.id : "current";
+          const alreadyStreamed = streamedReplayIds.has(msgId);
           for (const block of obj.message.content) {
             if (block.type === "text" && typeof block.text === "string") {
+              if (alreadyStreamed) continue;
               setStreaming((acc) => (acc ?? "") + block.text);
             } else if (block.type === "tool_use") {
               const args =

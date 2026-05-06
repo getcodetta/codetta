@@ -147,6 +147,15 @@ export const claudeCodeProvider: ChatProvider = {
         fn();
       }
     };
+    // Track per-message-block whether we've consumed text via
+    // content_block_delta events (--include-partial-messages). When
+    // we have, the final `assistant` event would double-emit the
+    // same text — skip text blocks for any message id we've already
+    // streamed via deltas. Tool_use blocks are still emitted via
+    // the assistant event (their input streams as input_json_delta
+    // chunks which we don't bother assembling — easier to use the
+    // final whole tool_use).
+    const streamedMessageIds = new Set<string>();
 
     const handle = (data: { kind: string; line?: string; code?: number }) => {
       if (data.kind === "end") {
@@ -190,8 +199,36 @@ export const claudeCodeProvider: ChatProvider = {
           queue.push({ kind: "session", id: obj.session_id });
           wake();
         }
+        // Token-level streaming via --include-partial-messages.
+        // Each `stream_event` line wraps a raw Anthropic API
+        // streaming event. We only need text deltas — tool_use
+        // input deltas and message_start/stop are noise here
+        // because the wrapping `assistant` event (still emitted)
+        // gives us the complete tool_use block at end of message.
+        if (obj.type === "stream_event" && obj.event) {
+          const ev = obj.event;
+          if (
+            ev.type === "content_block_delta" &&
+            ev.delta?.type === "text_delta" &&
+            typeof ev.delta.text === "string"
+          ) {
+            const msgId =
+              typeof obj.message_id === "string" ? obj.message_id : "current";
+            streamedMessageIds.add(msgId);
+            queue.push({ kind: "content", text: ev.delta.text });
+            wake();
+          }
+        }
         if (obj.type === "assistant" && obj.message?.content) {
+          // If we've already streamed this message's text via
+          // content_block_delta events, suppress the duplicate text
+          // blocks here. tool_use blocks always pass through (their
+          // arg deltas weren't consumed above).
+          const msgId =
+            typeof obj.message?.id === "string" ? obj.message.id : "current";
+          const alreadyStreamed = streamedMessageIds.has(msgId);
           for (const block of obj.message.content) {
+            if (alreadyStreamed && block.type === "text") continue;
             if (block.type === "text" && typeof block.text === "string") {
               // Claude Code sometimes returns model-rejection errors as
               // assistant text (not stderr). Detect that and append a
