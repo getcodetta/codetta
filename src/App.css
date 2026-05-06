@@ -2777,8 +2777,20 @@ input {
 .settings-section {
   padding: 10px 18px;
 }
+/* When a section is hidden (not the active TOC pick), collapse it
+   entirely — no padding, no border — so the body shows ONLY the
+   active section's content. The marker div stays in the DOM so the
+   TOC discovery effect can find every section. */
+.settings-section.is-hidden {
+  display: none;
+}
+.settings-section.is-active {
+  display: block;
+  padding: 18px 22px;
+}
+/* Drop the inter-section border since only one section ever shows. */
 .settings-section + .settings-section {
-  border-top: 1px solid var(--border);
+  border-top: none;
 }
 .settings-section-title {
   font-size: 10px;

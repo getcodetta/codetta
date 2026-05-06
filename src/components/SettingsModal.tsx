@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   setEditorSettings,
@@ -33,6 +33,10 @@ import {
   thisMonthTotal,
   type UsageRecord,
 } from "../aiUsageLog";
+
+// Context so the Section component can read the currently-selected
+// TOC slug without prop-drilling through every section call site.
+const ActiveSectionContext = createContext<string>("");
 import { invoke } from "@tauri-apps/api/core";
 
 export function SettingsModal() {
@@ -67,49 +71,38 @@ export function SettingsModal() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  // Discover sections + observe scroll position to highlight the
-  // active TOC entry. Re-runs when the form view (re)mounts.
+  // Discover sections from the rendered DOM so the TOC stays in
+  // sync with whatever Sections the form contains. Hidden sections
+  // still mount (they just don't render content via the context),
+  // so the discovery can find them all on first paint.
   useEffect(() => {
     if (!open || view !== "form") return;
     const body = bodyRef.current;
     if (!body) return;
-    // Tiny delay so child sections finish mounting.
     const t = window.setTimeout(() => {
       const sections = Array.from(
         body.querySelectorAll<HTMLElement>("[data-section]"),
       );
-      setToc(
-        sections.map((s) => ({
-          slug: s.dataset.section ?? "",
-          title: s.dataset.title ?? "",
-        })),
-      );
-      if (sections[0]) setActiveSlug(sections[0].dataset.section ?? "");
-      // IntersectionObserver to track which section is most visible.
-      const io = new IntersectionObserver(
-        (entries) => {
-          // Pick the first entry that's intersecting and most onscreen.
-          const visible = entries
-            .filter((e) => e.isIntersecting)
-            .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-          if (visible[0]) {
-            const s = (visible[0].target as HTMLElement).dataset.section;
-            if (s) setActiveSlug(s);
-          }
-        },
-        { root: body, threshold: [0.2, 0.5, 0.8] },
-      );
-      sections.forEach((s) => io.observe(s));
-      return () => io.disconnect();
+      const list = sections.map((s) => ({
+        slug: s.dataset.section ?? "",
+        title: s.dataset.title ?? "",
+      }));
+      setToc(list);
+      // Land on the first section if no selection yet (or if the
+      // previous selection no longer exists).
+      setActiveSlug((cur) => {
+        if (cur && list.some((t) => t.slug === cur)) return cur;
+        return list[0]?.slug ?? "";
+      });
     }, 0);
     return () => window.clearTimeout(t);
   }, [open, view]);
 
   const jumpTo = (slug: string) => {
-    const el = bodyRef.current?.querySelector(
-      `#settings-section-${slug}`,
-    ) as HTMLElement | null;
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    setActiveSlug(slug);
+    // Scroll to top of body — the section is now the only thing
+    // visible, so any prior scroll position is irrelevant.
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
   };
 
   if (!open) return null;
@@ -167,6 +160,7 @@ export function SettingsModal() {
             ))}
           </aside>
           <div className="settings-body" ref={bodyRef}>
+          <ActiveSectionContext.Provider value={activeSlug}>
           <Section title="Appearance">
             <Row label="Theme">
               <div className="settings-segmented">
@@ -350,6 +344,7 @@ export function SettingsModal() {
               />
             </Row>
           </Section>
+          </ActiveSectionContext.Provider>
           </div>
         </div>
         )}
@@ -537,16 +532,31 @@ function Section({
 }: {
   title: string;
   children: React.ReactNode;
-  /** Stable slug auto-derived from the title when omitted; the
-   *  Settings TOC uses this to scroll-target the section. */
+  /** Stable slug auto-derived from the title when omitted; the TOC
+   *  uses this for selection. */
   id?: string;
 }) {
   const slug =
     id ?? title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  // Read the currently-selected section from context. When it
+  // doesn't match this section, render a marker div (so the TOC
+  // discovery still finds us) but suppress the heavy children. The
+  // marker keeps the data-section attribute the TOC needs.
+  const activeSlug = useContext(ActiveSectionContext);
+  const isActive = !activeSlug || activeSlug === slug;
   return (
-    <div className="settings-section" id={`settings-section-${slug}`} data-section={slug} data-title={title}>
-      <div className="settings-section-title">{title}</div>
-      <div className="settings-section-body">{children}</div>
+    <div
+      className={`settings-section ${isActive ? "is-active" : "is-hidden"}`}
+      id={`settings-section-${slug}`}
+      data-section={slug}
+      data-title={title}
+    >
+      {isActive && (
+        <>
+          <div className="settings-section-title">{title}</div>
+          <div className="settings-section-body">{children}</div>
+        </>
+      )}
     </div>
   );
 }
