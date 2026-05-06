@@ -822,12 +822,17 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const [lastStreamEventAt, setLastStreamEventAt] = useState<number | null>(
     null,
   );
+  // Keying the 1-Hz tick interval by `streaming === null ? 'idle' : 'live'`
+  // so we set it up exactly once per turn (start) and tear it down once
+  // (end), instead of churning the interval on every incoming event when
+  // we used `lastStreamEventAt` as the dep.
   const [, setNowTick] = useState(0);
+  const isStreamingForTick = streaming !== null;
   useEffect(() => {
-    if (lastStreamEventAt === null) return;
+    if (!isStreamingForTick) return;
     const t = window.setInterval(() => setNowTick((n) => n + 1), 1000);
     return () => window.clearInterval(t);
-  }, [lastStreamEventAt]);
+  }, [isStreamingForTick]);
   // Initialize sessionId DIRECTLY from the chat-tab descriptor on
   // first render. Was using a fresh newSessionId() which created a
   // race: the setAIChatSession effect would briefly overwrite the
