@@ -4680,6 +4680,26 @@ input {
   padding: 4px 0 8px;
   border-top: 1px solid var(--border);
 }
+.cc-perm-shortcut-hint {
+  text-align: center;
+  font-size: 10px;
+  color: var(--fg-muted);
+  padding: 4px 8px 6px;
+  border-top: 1px solid var(--border);
+}
+.cc-perm-shortcut-hint kbd {
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin: 0 2px;
+  color: var(--fg);
+}
+.cc-perm-queue-inline {
+  color: var(--accent, #7a4fff);
+}
 
 /* Claude Code session resume picker — header button + dropdown */
 .ai-cc-sessions-wrap {

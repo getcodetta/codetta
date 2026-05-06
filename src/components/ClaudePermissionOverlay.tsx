@@ -260,6 +260,34 @@ export function ClaudePermissionOverlay() {
     setQueue((q) => q.slice(1));
   };
 
+  // Keyboard shortcuts on the active request: Esc denies, Enter allows
+  // once. Lets a user blast through a series of safe prompts without
+  // mousing to the button row each time. Skipped if the user is typing
+  // in an input (so Enter inside the chat input still sends a message).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const isTyping =
+        !!t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable);
+      if (isTyping) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        void respond("deny");
+      } else if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        void respond("allow");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // respond closes over req.request_id which changes between cards;
+    // re-binding per card is correct.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [req.request_id]);
+
   const allowAlwaysTool = async () => {
     const next: AllowRules = {
       tools: new Set(allow.tools).add(req.tool_name),
@@ -379,11 +407,14 @@ export function ClaudePermissionOverlay() {
             ✓ Allow once
           </button>
         </div>
-        {queue.length > 1 && (
-          <div className="cc-perm-queue">
-            +{queue.length - 1} more pending
-          </div>
-        )}
+        <div className="cc-perm-shortcut-hint">
+          <kbd>Enter</kbd> Allow once · <kbd>Esc</kbd> Deny
+          {queue.length > 1 && (
+            <span className="cc-perm-queue-inline">
+              {" · "}+{queue.length - 1} more pending
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
