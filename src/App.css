@@ -4705,6 +4705,119 @@ input {
   color: var(--fg-muted);
 }
 
+/* Compose card — shown above per-call rows when an agentic turn
+   modified 2+ files. Aggregates them into a single header (file
+   count + line stats) with collapsible per-file diffs. */
+.ai-compose-card {
+  border: 1px solid var(--accent, #7c9eff);
+  border-radius: 6px;
+  background: linear-gradient(
+    180deg,
+    rgba(124, 158, 255, 0.06),
+    rgba(124, 158, 255, 0.02) 30%,
+    transparent
+  );
+  margin: 6px 0;
+  overflow: hidden;
+}
+.ai-compose-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(124, 158, 255, 0.05);
+}
+.ai-compose-toggle {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+  font-family: inherit;
+}
+.ai-compose-toggle:hover { color: var(--fg); }
+.ai-compose-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--fg);
+}
+.ai-compose-title strong { font-weight: 600; letter-spacing: 0.2px; }
+.ai-compose-meta {
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+}
+.ai-compose-add { color: #7ddc99; font-weight: 500; }
+.ai-compose-rem { color: #ff8989; font-weight: 500; margin-left: 4px; }
+.ai-compose-open-all {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ai-compose-open-all:hover {
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+.ai-compose-files {
+  display: flex;
+  flex-direction: column;
+}
+.ai-compose-file {
+  border-top: 1px solid var(--border);
+}
+.ai-compose-file:first-child { border-top: none; }
+.ai-compose-file-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-alt);
+  font-size: 11.5px;
+}
+.ai-compose-path {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-family: var(--mono, monospace);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  font-family: inherit;
+}
+.ai-compose-path:hover {
+  color: var(--accent, #7c9eff);
+  text-decoration: underline;
+}
+.ai-compose-file-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono, monospace);
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.ai-compose-file-kind {
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 10px;
+  color: var(--fg-muted);
+}
+.ai-compose-file-body {
+  padding: 6px 10px 10px;
+}
+
 /* Edit / Write / MultiEdit tool calls — collapsible card showing the
    actual diff inline so the user can see what the agent changed. */
 .ai-tcall-edit {

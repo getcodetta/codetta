@@ -2519,17 +2519,34 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   </>
                 )}
               </span>
-              {m.tool_calls && m.tool_calls.length > 0 && (
-                <div className="ai-tcalls">
-                  {m.tool_calls.map((c, j) => (
-                    <ToolCallRow
-                      key={c.id ?? j}
-                      call={c}
-                      result={c.id ? toolResultsById.get(c.id) : undefined}
-                    />
-                  ))}
-                </div>
-              )}
+              {m.tool_calls && m.tool_calls.length > 0 && (() => {
+                // If this turn made 2+ file-modifying tool calls,
+                // collapse them into a single ComposeCard with per-
+                // file diffs and aggregate stats. The per-call rows
+                // still render below for full fidelity (Read/Glob/
+                // Bash/etc. don't enter the composer).
+                const fileCalls = m.tool_calls.filter(
+                  (c) => extractEditDiffs(c) !== null,
+                );
+                const otherCalls = m.tool_calls.filter(
+                  (c) => extractEditDiffs(c) === null,
+                );
+                const useCompose = fileCalls.length >= 2;
+                return (
+                  <div className="ai-tcalls">
+                    {useCompose && (
+                      <ComposeCard wsId={wsId} calls={fileCalls} />
+                    )}
+                    {(useCompose ? otherCalls : m.tool_calls).map((c, j) => (
+                      <ToolCallRow
+                        key={c.id ?? j}
+                        call={c}
+                        result={c.id ? toolResultsById.get(c.id) : undefined}
+                      />
+                    ))}
+                  </div>
+                );
+              })()}
               {isAssistant && split.thinking.length > 0 && (
                 <details className="ai-think-block">
                   <summary>
@@ -3563,6 +3580,170 @@ function ToolCallRow({
 interface EditDiff {
   oldText: string;
   newText: string;
+}
+
+/** Pull the file path out of an editing tool call. */
+function pathOf(call: ToolCall): string {
+  const args = call.function.arguments as Record<string, unknown>;
+  return (
+    (typeof args.file_path === "string" && args.file_path) ||
+    (typeof args.path === "string" && args.path) ||
+    (typeof args.notebook_path === "string" && args.notebook_path) ||
+    "(unknown)"
+  );
+}
+
+/** Sum +/- line counts across one tool call's diffs. */
+function diffStats(diffs: EditDiff[]): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const d of diffs) {
+    if (d.newText) added += d.newText.split("\n").filter((l) => l.length > 0).length;
+    if (d.oldText) removed += d.oldText.split("\n").filter((l) => l.length > 0).length;
+  }
+  return { added, removed };
+}
+
+/**
+ * Composer view — shown when an agentic turn made 2+ file-modifying
+ * tool calls. Aggregates them into a single header (file count +
+ * line stats) with collapsible per-file diffs and quick "open file"
+ * shortcuts. Replaces the per-call inline rows for those calls so
+ * the chat doesn't sprawl into 5 separate diff cards.
+ */
+function ComposeCard({
+  wsId,
+  calls,
+}: {
+  wsId: string;
+  calls: ToolCall[];
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  // Group calls by target file, since one turn can hit the same
+  // file multiple times (Edit + Edit).
+  const byPath = useMemo(() => {
+    const m = new Map<string, ToolCall[]>();
+    for (const c of calls) {
+      const p = pathOf(c);
+      const arr = m.get(p);
+      if (arr) arr.push(c);
+      else m.set(p, [c]);
+    }
+    return Array.from(m.entries()); // [path, calls[]]
+  }, [calls]);
+
+  // Aggregate stats across every call in the turn.
+  const totals = useMemo(() => {
+    let added = 0;
+    let removed = 0;
+    for (const c of calls) {
+      const d = extractEditDiffs(c);
+      if (d) {
+        const s = diffStats(d);
+        added += s.added;
+        removed += s.removed;
+      }
+    }
+    return { added, removed };
+  }, [calls]);
+
+  const openFile = async (path: string) => {
+    try {
+      await useStore.getState().openFile(wsId, path);
+    } catch {
+      /* file may not exist (Write to a new path that didn't take) */
+    }
+  };
+
+  const openAll = async () => {
+    for (const [path] of byPath) await openFile(path);
+  };
+
+  return (
+    <div className="ai-compose-card">
+      <div className="ai-compose-head">
+        <button
+          className="ai-compose-toggle"
+          onClick={() => setCollapsed((c) => !c)}
+          title={collapsed ? "Expand all diffs" : "Collapse"}
+        >
+          {collapsed ? "▸" : "▾"}
+        </button>
+        <div className="ai-compose-title">
+          <strong>Compose</strong>
+          <span className="ai-compose-meta">
+            {byPath.length} file{byPath.length === 1 ? "" : "s"} ·
+            <span className="ai-compose-add"> +{totals.added}</span>
+            <span className="ai-compose-rem"> −{totals.removed}</span>
+          </span>
+        </div>
+        <button
+          className="ai-compose-open-all"
+          onClick={() => void openAll()}
+          title="Open every modified file in editor tabs"
+        >
+          Open all
+        </button>
+      </div>
+      {!collapsed && (
+        <div className="ai-compose-files">
+          {byPath.map(([path, fileCalls]) => {
+            const stats = fileCalls.reduce(
+              (acc, c) => {
+                const d = extractEditDiffs(c);
+                if (!d) return acc;
+                const s = diffStats(d);
+                return { added: acc.added + s.added, removed: acc.removed + s.removed };
+              },
+              { added: 0, removed: 0 },
+            );
+            const shortPath = (() => {
+              const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+              if (parts.length <= 2) return path.replace(/\\/g, "/");
+              return "…/" + parts.slice(-2).join("/");
+            })();
+            return (
+              <div key={path} className="ai-compose-file">
+                <div className="ai-compose-file-head">
+                  <button
+                    className="ai-compose-path"
+                    onClick={() => void openFile(path)}
+                    title={path}
+                  >
+                    {shortPath}
+                  </button>
+                  <span className="ai-compose-file-stats">
+                    <span className="ai-compose-add">+{stats.added}</span>
+                    <span className="ai-compose-rem">−{stats.removed}</span>
+                    <span className="ai-compose-file-kind">
+                      {fileCalls.length > 1
+                        ? `${fileCalls.length} edits`
+                        : fileCalls[0].function.name}
+                    </span>
+                  </span>
+                </div>
+                {fileCalls.map((c, i) => {
+                  const diffs = extractEditDiffs(c);
+                  if (!diffs) return null;
+                  return (
+                    <div key={c.id ?? i} className="ai-compose-file-body">
+                      {diffs.map((d, k) => (
+                        <UnifiedDiff
+                          key={k}
+                          oldText={d.oldText}
+                          newText={d.newText}
+                        />
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
