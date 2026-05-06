@@ -5729,6 +5729,14 @@ input {
   color: var(--accent);
   margin-left: auto;
 }
+/* "still working (Xs)" badge that appears once the stream has been
+   silent for >10s. Subtler color so it doesn't compete with the main
+   spinner — its job is just to confirm the app hasn't lost track. */
+.ai-inline-stale {
+  font-style: italic;
+  color: var(--fg-muted);
+  font-size: 10px;
+}
 /* Running-tools live list — one row per in-flight tool with a small
    code preview of the change about to land. Replaces the old
    "Running: a, b, c +7" overflow string. */

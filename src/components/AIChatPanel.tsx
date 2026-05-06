@@ -813,6 +813,21 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const [warmingUp, setWarmingUp] = useState(false);
   // EMA of recent assistant generations for the slow-model banner.
   const [recentTps, setRecentTps] = useState<number | null>(null);
+  // Wall-clock of the last stream event we received from the provider.
+  // Used by the inline-status to switch from "Generating response…" to
+  // "Still working — Xs since last update" when the stream goes quiet
+  // for a noticeable while. User reported waiting "so long for messages
+  // to come back" with the indicator hidden — this gives them visible
+  // proof that the app hasn't lost track.
+  const [lastStreamEventAt, setLastStreamEventAt] = useState<number | null>(
+    null,
+  );
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    if (lastStreamEventAt === null) return;
+    const t = window.setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [lastStreamEventAt]);
   // Initialize sessionId DIRECTLY from the chat-tab descriptor on
   // first render. Was using a fresh newSessionId() which created a
   // race: the setAIChatSession effect would briefly overwrite the
@@ -1702,6 +1717,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         }> = [];
         let firstTokenAt: number | null = null;
         const startedAt = performance.now();
+        // Reset on each new round so the "still working" timer doesn't
+        // anchor to a previous turn.
+        setLastStreamEventAt(Date.now());
         for await (const ev of chatStream(
           selected,
           conversation,
@@ -1715,6 +1733,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           // so a frontend refresh can re-attach via attachToChat().
           selectedProvider === "claude-code" ? sessionId : undefined,
         )) {
+          // Any event from the provider is a sign of life — reset the
+          // staleness timer so the "still working" badge only fires
+          // when the stream really has gone quiet for a while.
+          setLastStreamEventAt(Date.now());
           if (ev.kind === "session") {
             // Captured the Claude Code session id — store it so the next
             // turn passes --resume <id> and avoids re-flattening history.
@@ -2032,6 +2054,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       setRunningTools(false);
       setActiveToolLabels([]);
       setTokensPerSec(null);
+      setLastStreamEventAt(null);
       abortRef.current = null;
       // One-shot attach flags reset after the message goes out.
       setAttachTree(false);
@@ -3054,17 +3077,26 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   ).length;
                   const total = activeToolLabels.length;
                   const allDone = done === total;
+                  // When all tools are done but the stream is still
+                  // active, the agent is generating its follow-up text.
+                  // The old "✓ Finished N tools" header looked terminal
+                  // and made users think the conversation had ended,
+                  // even though more was coming. Keep the spinner +
+                  // active wording until streaming actually closes.
+                  const streamStillActive = streaming !== null;
                   return (
                     <>
                       <span className="ai-thinking ai-running-header">
-                        {allDone ? (
+                        {allDone && !streamStillActive ? (
                           <span className="ai-running-check">✓</span>
                         ) : (
                           <span className="ai-spinner" />
                         )}
-                        {allDone
-                          ? `Finished ${total} tool${total === 1 ? "" : "s"}`
-                          : `${done} of ${total} done · ${total - done} running`}
+                        {allDone && streamStillActive
+                          ? `Got ${total} tool result${total === 1 ? "" : "s"} — generating response…`
+                          : allDone
+                            ? `Finished ${total} tool${total === 1 ? "" : "s"}`
+                            : `${done} of ${total} done · ${total - done} running`}
                       </span>
                       {activeToolLabels.map((t, i) => (
                         <RunningToolRow key={i} entry={t} />
@@ -3101,6 +3133,27 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 {tokensPerSec.toFixed(1)} t/s
               </span>
             )}
+            {/* Stream-staleness badge. Fires when no provider event has
+                arrived in the last 10s while a turn is in flight. Lets
+                the user see "the app didn't forget about me" instead
+                of suspecting a freeze when a model is slow / a long
+                tool is running. Hidden when nothing is streaming. */}
+            {streaming !== null &&
+              lastStreamEventAt !== null &&
+              (() => {
+                const idleSec = Math.floor(
+                  (Date.now() - lastStreamEventAt) / 1000,
+                );
+                if (idleSec < 10) return null;
+                return (
+                  <span
+                    className="ai-thinking ai-inline-stale"
+                    title="No data from the model in this window. Click ⏹ Stop to cancel if it's stuck."
+                  >
+                    · still working ({idleSec}s)
+                  </span>
+                );
+              })()}
           </div>
         )}
         {pendingPermission && (
