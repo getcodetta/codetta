@@ -257,28 +257,37 @@ export const claudeCodeProvider: ChatProvider = {
           ) {
             // Close out the tool_use block — emit tool_call NOW so
             // the chronological log gets text → tool → text instead
-            // of text+text → tool+tool. Falls back gracefully on
-            // empty / malformed JSON.
+            // of text+text → tool+tool. If args fail to parse (rare —
+            // partial JSON, encoding issue), DON'T mark the id as
+            // emitted, so the wrapping `assistant` event can repair
+            // it with the complete block.input below.
             const buf = toolUseBlocks.get(ev.index)!;
             toolUseBlocks.delete(ev.index);
+            let parsedOk = false;
             let args: Record<string, unknown> = {};
-            if (buf.jsonBuf.trim().length > 0) {
+            if (buf.jsonBuf.trim().length === 0) {
+              // No-arg tool — that's valid; emit immediately.
+              parsedOk = true;
+            } else {
               try {
                 const parsed = JSON.parse(buf.jsonBuf);
                 if (parsed && typeof parsed === "object") {
                   args = parsed as Record<string, unknown>;
+                  parsedOk = true;
                 }
               } catch {
-                /* leave args = {} — assistant event will repair if it fires */
+                /* fall through — assistant event will emit instead */
               }
             }
-            const call: ToolCall = {
-              id: buf.id,
-              function: { name: buf.name ?? "tool", arguments: args },
-            };
-            if (buf.id) emittedToolUseIds.add(buf.id);
-            queue.push({ kind: "tool_call", call });
-            wake();
+            if (parsedOk) {
+              const call: ToolCall = {
+                id: buf.id,
+                function: { name: buf.name ?? "tool", arguments: args },
+              };
+              if (buf.id) emittedToolUseIds.add(buf.id);
+              queue.push({ kind: "tool_call", call });
+              wake();
+            }
           } else if (
             ev.type === "content_block_delta" &&
             ev.delta?.type === "text_delta" &&
