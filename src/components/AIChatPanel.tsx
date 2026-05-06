@@ -1790,6 +1790,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             continue;
           }
           if (ev.kind === "content") {
+            // Empty content events are keep-alive pings (e.g. extended-
+            // thinking deltas in the Claude Code provider). They keep
+            // the staleness watchdog at the top of the loop fed but
+            // don't represent visible tokens — skip the rest of the
+            // accounting so they don't anchor firstTokenAt to the
+            // wrong moment and tank the t/s display.
+            if (ev.text.length === 0) continue;
             if (firstTokenAt === null) {
               firstTokenAt = performance.now();
             }
