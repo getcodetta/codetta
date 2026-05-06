@@ -169,6 +169,17 @@ export const claudeCodeProvider: ChatProvider = {
     // Set of tool_use ids we've already emitted via stream_event so
     // the wrapping `assistant` event handler can skip duplicates.
     const emittedToolUseIds = new Set<string>();
+    // Buffer extended-thinking content per content-block index. The model
+    // can spend many seconds (sometimes minutes) in extended thinking
+    // before emitting its first text token; without surfacing those
+    // deltas the chat looks frozen and the staleness watchdog fires.
+    // We accumulate the per-block thinking text and flush it on
+    // content_block_stop wrapped in <think>...</think> so the existing
+    // splitThinking() in AIChatPanel renders it as a collapsible
+    // "💭 Reasoning" block. We also emit a keep-alive content event
+    // (empty text) on each thinking delta so the staleness timer
+    // resets — the user sees "still working" instead of dead silence.
+    const thinkingBlocks = new Map<number, string>();
 
     const handle = (data: { kind: string; line?: string; code?: number }) => {
       if (data.kind === "end") {
@@ -224,6 +235,37 @@ export const claudeCodeProvider: ChatProvider = {
           if (ev.type === "message_start") {
             currentMsgGotDeltas = false;
             toolUseBlocks.clear();
+            thinkingBlocks.clear();
+          } else if (
+            ev.type === "content_block_start" &&
+            ev.content_block?.type === "thinking" &&
+            typeof ev.index === "number"
+          ) {
+            // Open buffer for this thinking block. Initial thinking text
+            // (rare — usually streams via deltas) is captured here.
+            const initial =
+              typeof ev.content_block.thinking === "string"
+                ? ev.content_block.thinking
+                : "";
+            thinkingBlocks.set(ev.index, initial);
+          } else if (
+            ev.type === "content_block_delta" &&
+            typeof ev.index === "number" &&
+            ev.delta?.type === "thinking_delta" &&
+            typeof ev.delta.thinking === "string" &&
+            thinkingBlocks.has(ev.index)
+          ) {
+            thinkingBlocks.set(
+              ev.index,
+              thinkingBlocks.get(ev.index)! + ev.delta.thinking,
+            );
+            // Keep-alive ping so the inline-status's "still working"
+            // staleness timer resets — empty text doesn't accumulate
+            // in the visible bubble (appendTextBlock guards against
+            // empty strings) but the for-await loop's
+            // setLastStreamEventAt at the top still fires.
+            queue.push({ kind: "content", text: "" });
+            wake();
           } else if (
             ev.type === "content_block_start" &&
             ev.content_block?.type === "tool_use" &&
@@ -250,6 +292,24 @@ export const claudeCodeProvider: ChatProvider = {
           ) {
             const buf = toolUseBlocks.get(ev.index);
             if (buf) buf.jsonBuf += ev.delta.partial_json;
+          } else if (
+            ev.type === "content_block_stop" &&
+            typeof ev.index === "number" &&
+            thinkingBlocks.has(ev.index)
+          ) {
+            // Flush the accumulated extended-thinking content as a
+            // single content event wrapped in <think>…</think> so the
+            // chat panel's splitThinking() pulls it into a collapsible
+            // 💭 Reasoning block instead of rendering raw.
+            const text = thinkingBlocks.get(ev.index)!.trim();
+            thinkingBlocks.delete(ev.index);
+            if (text.length > 0) {
+              queue.push({
+                kind: "content",
+                text: `<think>${text}</think>\n`,
+              });
+              wake();
+            }
           } else if (
             ev.type === "content_block_stop" &&
             typeof ev.index === "number" &&

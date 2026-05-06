@@ -3137,7 +3137,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 arrived in the last 10s while a turn is in flight. Lets
                 the user see "the app didn't forget about me" instead
                 of suspecting a freeze when a model is slow / a long
-                tool is running. Hidden when nothing is streaming. */}
+                tool is running. After 30s the wording sharpens and we
+                surface an inline Stop button so the user has an
+                obvious escape hatch from the chat area itself, not
+                just buried in the toolbar. */}
             {streaming !== null &&
               lastStreamEventAt !== null &&
               (() => {
@@ -3145,13 +3148,32 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   (Date.now() - lastStreamEventAt) / 1000,
                 );
                 if (idleSec < 10) return null;
+                const looksStuck = idleSec >= 30;
                 return (
-                  <span
-                    className="ai-thinking ai-inline-stale"
-                    title="No data from the model in this window. Click ⏹ Stop to cancel if it's stuck."
-                  >
-                    · still working ({idleSec}s)
-                  </span>
+                  <>
+                    <span
+                      className={`ai-thinking ai-inline-stale${looksStuck ? " ai-inline-stale-stuck" : ""}`}
+                      title={
+                        looksStuck
+                          ? "Stream hasn't produced anything in 30+ seconds. Could be a slow tool, a slow API response, or genuinely stuck — Stop and try again if you don't want to wait."
+                          : "No data from the model in this window. Click Stop to cancel if it's stuck."
+                      }
+                    >
+                      ·{" "}
+                      {looksStuck
+                        ? `unusually slow (${idleSec}s)`
+                        : `still working (${idleSec}s)`}
+                    </span>
+                    {looksStuck && (
+                      <button
+                        className="ai-inline-stop"
+                        onClick={() => stop()}
+                        title="Cancel this turn"
+                      >
+                        ⏹ Stop
+                      </button>
+                    )}
+                  </>
                 );
               })()}
           </div>

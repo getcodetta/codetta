@@ -5737,6 +5737,27 @@ input {
   color: var(--fg-muted);
   font-size: 10px;
 }
+/* After 30s the badge sharpens — the wording changes to "unusually slow"
+   and the color shifts toward warning so it's clear something might be
+   wrong. Paired with an inline Stop button (.ai-inline-stop). */
+.ai-inline-stale-stuck {
+  color: #e2c08d;
+  font-style: italic;
+  font-weight: 500;
+}
+.ai-inline-stop {
+  background: transparent;
+  border: 1px solid #e2c08d;
+  color: #e2c08d;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ai-inline-stop:hover {
+  background: rgba(226, 192, 141, 0.15);
+}
 /* Running-tools live list — one row per in-flight tool with a small
    code preview of the change about to land. Replaces the old
    "Running: a, b, c +7" overflow string. */
