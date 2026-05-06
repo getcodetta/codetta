@@ -5797,6 +5797,12 @@ input {
   gap: 4px;
   margin: 4px 0;
 }
+/* Inline variant rendered between text fragments by InterleavedBlocks.
+   Slightly tighter vertical spacing so the call row reads as part of
+   the surrounding sentence ("let me check X" → row → "found Y"). */
+.ai-tcalls.ai-tcalls-inline {
+  margin: 6px 0;
+}
 .ai-tcall {
   display: flex;
   flex-direction: column;

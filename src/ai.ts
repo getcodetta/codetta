@@ -32,6 +32,20 @@ export interface ChatMessage {
     content: string;
     is_error?: boolean;
   }>;
+  /**
+   * Display-only: an ordered sequence of text fragments and tool
+   * calls EXACTLY as they arrived from the provider. Lets the
+   * renderer show "text → tool → text → tool" in real chronology
+   * instead of the merged "all text first, then all tools" view
+   * the legacy `content` + `tool_calls` fields force. Optional —
+   * old saved sessions don't have it and fall back to the
+   * combined render. Tool result lookup still goes through
+   * tool_results above; the block only carries the call id.
+   */
+  blocks?: Array<
+    | { kind: "text"; text: string }
+    | { kind: "tool_call"; callId: string }
+  >;
 }
 
 export interface ToolDef {

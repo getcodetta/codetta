@@ -718,6 +718,14 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState<string | null>(null);
+  // Live chronological block log for the in-progress assistant bubble.
+  // Mirrors `blocksThisRound` inside sendUserText so the streaming
+  // bubble can render text → tool → text → tool in real time instead
+  // of dumping all tool calls above the text on round-end. Cleared
+  // when streaming ends and the message is committed to `messages`.
+  const [streamingBlocks, setStreamingBlocks] = useState<
+    NonNullable<ChatMessage["blocks"]>
+  >([]);
   // Per-model pull progress so multiple installs can run in parallel.
   // Map(modelName → "human-readable progress line"). Empty = nothing pulling.
   const [pullProgressMap, setPullProgressMap] = useState<
@@ -745,6 +753,14 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       preview?: string;
       status: "running" | "done" | "error";
     }>
+  >([]);
+  // Live tool calls + results for the in-progress bubble. Mirror state
+  // updated alongside streamingBlocks so InterleavedBlocks can resolve
+  // each `tool_call` block to a real ToolCall + its result while the
+  // round is still streaming. Cleared on round end.
+  const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([]);
+  const [streamingToolResults, setStreamingToolResults] = useState<
+    Array<{ tool_use_id: string; content: string; is_error?: boolean }>
   >([]);
   // Inline permission request — when a tool needs "ask" approval, instead
   // of popping a modal we render a card in the chat with multiple options.
@@ -1656,6 +1672,24 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       for (let round = 0; round < MAX_ROUNDS; round++) {
         let acc = "";
         const toolCallsThisRound: ToolCall[] = [];
+        // Ordered chronological log of "what arrived when," used by
+        // the renderer to show text → tool → text → tool in real
+        // sequence instead of the legacy "all text first, all tools
+        // second." Text deltas merge with the previous text block
+        // when adjacent so 200 deltas don't become 200 markdown
+        // bubbles.
+        const blocksThisRound: NonNullable<ChatMessage["blocks"]> = [];
+        const appendTextBlock = (text: string) => {
+          if (!text) return;
+          const last = blocksThisRound[blocksThisRound.length - 1];
+          if (last && last.kind === "text") {
+            last.text += text;
+          } else {
+            blocksThisRound.push({ kind: "text", text });
+          }
+          // Mirror to React state so the live bubble re-renders.
+          setStreamingBlocks([...blocksThisRound]);
+        };
         // Tool results emitted by an agentic provider (Claude Code) for
         // calls it executed itself. Paired with toolCallsThisRound by
         // tool_use_id at the end of the round and attached to the
@@ -1737,6 +1771,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               firstTokenAt = performance.now();
             }
             acc += ev.text;
+            appendTextBlock(ev.text);
             setStreaming(acc);
             // Approximate tokens/sec: ~4 chars per token on average.
             const elapsedSec = (performance.now() - firstTokenAt) / 1000;
@@ -1745,6 +1780,11 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             }
           } else if (ev.kind === "tool_call") {
             toolCallsThisRound.push(ev.call);
+            setStreamingToolCalls([...toolCallsThisRound]);
+            if (ev.call.id) {
+              blocksThisRound.push({ kind: "tool_call", callId: ev.call.id });
+              setStreamingBlocks([...blocksThisRound]);
+            }
             // Snapshot TodoWrite into the sticky checklist state so the
             // user gets a live planning view as the agent progresses.
             if (
@@ -1824,6 +1864,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               content: ev.content,
               is_error: ev.is_error,
             });
+            setStreamingToolResults([...toolResultsThisRound]);
           }
         }
         // Record final speed for the slow-model banner heuristic.
@@ -1857,10 +1898,18 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             toolResultsThisRound.length > 0
               ? toolResultsThisRound
               : undefined,
+          // Persist the chronological log if we collected one this
+          // round. Renderer prefers this over content+tool_calls when
+          // present (for new messages); old saved sessions without
+          // blocks fall back to the legacy combined render.
+          blocks: blocksThisRound.length > 0 ? blocksThisRound : undefined,
         };
         conversation.push(assistantMsg);
         setMessages((m) => [...m, assistantMsg]);
         setStreaming(null);
+        setStreamingBlocks([]);
+        setStreamingToolCalls([]);
+        setStreamingToolResults([]);
         setRunningTools(false);
         setActiveToolLabels([]);
 
@@ -1976,6 +2025,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       }
     } finally {
       setStreaming(null);
+      setStreamingBlocks([]);
+      setStreamingToolCalls([]);
+      setStreamingToolResults([]);
       setRunningTools(false);
       setActiveToolLabels([]);
       setTokensPerSec(null);
@@ -2394,11 +2446,28 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // thinking, or running tools), skip the bubble — the inline status
     // strip below already conveys "working on it" without a giant
     // empty whitespace block in the conversation.
-    if (streaming !== null && streaming.trim().length > 0) {
-      arr.push({ role: "assistant", content: streaming });
+    const hasStreamingText =
+      streaming !== null && streaming.trim().length > 0;
+    const hasStreamingBlocks = streamingBlocks.length > 0;
+    if (streaming !== null && (hasStreamingText || hasStreamingBlocks)) {
+      arr.push({
+        role: "assistant",
+        content: streaming ?? "",
+        tool_calls:
+          streamingToolCalls.length > 0 ? streamingToolCalls : undefined,
+        tool_results:
+          streamingToolResults.length > 0 ? streamingToolResults : undefined,
+        blocks: hasStreamingBlocks ? streamingBlocks : undefined,
+      });
     }
     return arr;
-  }, [messages, streaming]);
+  }, [
+    messages,
+    streaming,
+    streamingBlocks,
+    streamingToolCalls,
+    streamingToolResults,
+  ]);
 
   const contextLabel = useMemo(() => {
     if (!attachContext) return "No context attached";
@@ -2766,6 +2835,14 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 // file diffs and aggregate stats. The per-call rows
                 // still render below for full fidelity (Read/Glob/
                 // Bash/etc. don't enter the composer).
+                //
+                // When the message has a `blocks` log, the per-call
+                // rows are rendered inline by <InterleavedBlocks>
+                // (preserves chronological order with the text). We
+                // still show the ComposeCard summary at top in that
+                // case — it's a higher-level affordance (revert
+                // all / accept all) that doesn't belong inline.
+                const hasBlocks = !!(m.blocks && m.blocks.length > 0);
                 const fileCalls = m.tool_calls.filter(
                   (c) => extractEditDiffs(c) !== null,
                 );
@@ -2773,6 +2850,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   (c) => extractEditDiffs(c) === null,
                 );
                 const useCompose = fileCalls.length >= 2;
+                if (hasBlocks && !useCompose) return null;
+                const rows = hasBlocks
+                  ? []
+                  : (useCompose ? otherCalls : m.tool_calls);
                 return (
                   <div className="ai-tcalls">
                     {useCompose && (
@@ -2783,7 +2864,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                         calls={fileCalls}
                       />
                     )}
-                    {(useCompose ? otherCalls : m.tool_calls).map((c, j) => (
+                    {rows.map((c, j) => (
                       <ToolCallRow
                         key={c.id ?? j}
                         call={c}
@@ -2810,6 +2891,35 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   <span className="ai-thinking">
                     <span className="ai-spinner" /> Preparing tool call…
                   </span>
+                ) : isAssistant && m.blocks && m.blocks.length > 0 ? (
+                  // Chronological render: walk the recorded blocks
+                  // log so text and tool calls appear in the order
+                  // the model emitted them, not "all text first then
+                  // all tools." Works during streaming too — the
+                  // live bubble's blocks come from streamingBlocks
+                  // state, which is updated in real time. Falls
+                  // back to MarkdownPreview below for messages
+                  // without a blocks log (older sessions, non-
+                  // agentic providers).
+                  <InterleavedBlocks
+                    blocks={m.blocks}
+                    callsById={
+                      new Map(
+                        (m.tool_calls ?? [])
+                          .filter((c): c is ToolCall & { id: string } =>
+                            typeof c.id === "string",
+                          )
+                          .map((c) => [c.id, c]),
+                      )
+                    }
+                    resultsById={(() => {
+                      const out = new Map<string, string>();
+                      for (const tr of m.tool_results ?? []) {
+                        if (tr.tool_use_id) out.set(tr.tool_use_id, tr.content);
+                      }
+                      return out;
+                    })()}
+                  />
                 ) : isAssistant ? (
                   <>
                     <MarkdownPreview content={balanceFences(visibleContent)} />
@@ -3815,6 +3925,51 @@ function RunningToolRow({
         </pre>
       )}
     </div>
+  );
+}
+
+/**
+ * Render an assistant message in the EXACT order the provider emitted it:
+ * text fragment → tool call → text fragment → tool call → … This replaces
+ * the old "all text first, then all tool rows" layout that made the
+ * conversation feel scrambled (the model would say "let me check X" but
+ * the X tool row appeared above the sentence). Falls back silently for
+ * messages with no recorded blocks log (older sessions, non-agentic
+ * providers) — the parent picks the legacy renderer in that case.
+ */
+function InterleavedBlocks({
+  blocks,
+  callsById,
+  resultsById,
+}: {
+  blocks: NonNullable<ChatMessage["blocks"]>;
+  callsById: Map<string, ToolCall>;
+  resultsById: Map<string, string>;
+}) {
+  return (
+    <>
+      {blocks.map((b, i) => {
+        if (b.kind === "text") {
+          if (!b.text) return null;
+          return (
+            <MarkdownPreview
+              key={`t${i}`}
+              content={balanceFences(b.text)}
+            />
+          );
+        }
+        const call = callsById.get(b.callId);
+        if (!call) return null;
+        return (
+          <div key={`c${i}`} className="ai-tcalls ai-tcalls-inline">
+            <ToolCallRow
+              call={call}
+              result={resultsById.get(b.callId)}
+            />
+          </div>
+        );
+      })}
+    </>
   );
 }
 
