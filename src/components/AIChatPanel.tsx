@@ -3031,7 +3031,12 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         })()}
         {(runningTools ||
           (streaming !== null && warmingUp && streaming.length === 0) ||
-          (streaming !== null && tokensPerSec !== null)) && (
+          (streaming !== null && tokensPerSec !== null) ||
+          (streaming !== null &&
+            streaming.length === 0 &&
+            streamingBlocks.length === 0 &&
+            !runningTools &&
+            !warmingUp)) && (
           <div className="ai-inline-status">
             {runningTools && (
               <div className="ai-running-tools">
@@ -3075,6 +3080,20 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               !runningTools && (
                 <span className="ai-thinking">
                   <span className="ai-spinner" /> Loading model
+                </span>
+              )}
+            {/* Gap between hitting Enter and the first token / tool call.
+                For Claude Code that's CLI spawn + auth + initial API call
+                — can be 1-3s on a fresh session, longer with --resume.
+                Without this, the user sees their own message then nothing
+                and assumes the app froze. */}
+            {streaming !== null &&
+              streaming.length === 0 &&
+              streamingBlocks.length === 0 &&
+              !runningTools &&
+              !warmingUp && (
+                <span className="ai-thinking">
+                  <span className="ai-spinner" /> Waiting for response…
                 </span>
               )}
             {streaming !== null && tokensPerSec !== null && (
@@ -3373,30 +3392,40 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             )}
           </div>
         )}
-      {recentTps !== null && recentTps < 8 && streaming === null && !runningTools && (
-        <div className="ai-slow-banner">
-          Slow generation ({recentTps.toFixed(1)} t/s). Likely VRAM bound.{" "}
-          <button
-            className="ai-slow-banner-btn"
-            onClick={() => {
-              setBrowserOpen(true);
-              setRecentTps(null);
-            }}
-          >
-            Smaller model
-          </button>{" "}
-          ·{" "}
-          <button
-            className="ai-slow-banner-btn"
-            onClick={() => {
-              openSettings();
-              setRecentTps(null);
-            }}
-          >
-            Cloud key
-          </button>
-        </div>
-      )}
+      {recentTps !== null && recentTps < 8 && streaming === null && !runningTools && (() => {
+        // The slow-generation banner is meaningful only for LOCAL models
+        // (Ollama). Cloud / agentic providers (Claude Code, OpenAI,
+        // Anthropic) are not VRAM-bound, and the "smaller model" /
+        // "cloud key" remediations don't apply — Claude Code IS the
+        // cloud key, OpenAI/Anthropic are already cloud. Hide the
+        // banner entirely for those providers.
+        const p = parseQualifiedModel(selected ?? "")?.providerId ?? "ollama";
+        if (p !== "ollama") return null;
+        return (
+          <div className="ai-slow-banner">
+            Slow generation ({recentTps.toFixed(1)} t/s). Likely VRAM bound.{" "}
+            <button
+              className="ai-slow-banner-btn"
+              onClick={() => {
+                setBrowserOpen(true);
+                setRecentTps(null);
+              }}
+            >
+              Smaller model
+            </button>{" "}
+            ·{" "}
+            <button
+              className="ai-slow-banner-btn"
+              onClick={() => {
+                openSettings();
+                setRecentTps(null);
+              }}
+            >
+              Cloud key
+            </button>
+          </div>
+        );
+      })()}
       <ModelBrowser
         open={browserOpen}
         installedNames={

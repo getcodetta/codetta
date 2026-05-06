@@ -287,6 +287,25 @@ export function FileTree({ wsId, root }: Props) {
           }
         },
       });
+      out.push({
+        label: "Copy Relative Path",
+        onClick: async () => {
+          // Workspace-relative path with forward slashes — what most
+          // tools (grep, git pathspec, AI prompts pasted into chat)
+          // expect when you say "the foo/bar.ts file." Mirrors VS
+          // Code's same-named entry. Falls back to absolute if the
+          // file somehow sits outside root.
+          const norm = target.path.replace(/\\/g, "/");
+          const r = root.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
+          const rel = norm.startsWith(r) ? norm.slice(r.length) : norm;
+          try {
+            await navigator.clipboard.writeText(rel);
+            toastSuccess(`Copied: ${rel}`);
+          } catch {
+            /* ignore */
+          }
+        },
+      });
 
       // SFTP actions. Files get push/upload/auto-push toggle; folders
       // get a recursive upload entry. Both kinds light up only when a
