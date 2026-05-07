@@ -3086,6 +3086,55 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               : "Ask the model, or type / for commands… (Enter to send, Shift+Enter newline, ↑ to recall)"
           }
           value={input}
+          onPaste={(e) => {
+            // Auto-fence multi-line code paste so the model sees a
+            // properly-delimited code block instead of free-form text
+            // that breaks markdown rendering. Heuristic: 4+ lines AND
+            // either visible indentation, common code punctuation, or
+            // a recognisable language keyword. Skipped when the cursor
+            // is already inside an unclosed fence — the user is
+            // continuing an existing block.
+            const pasted = e.clipboardData.getData("text/plain");
+            const lines = pasted.split(/\r?\n/);
+            if (lines.length < 4) return;
+            const hasIndent = lines.filter((l) => /^[ \t]/.test(l)).length >= 2;
+            const hasCodePunct = /[{};]|=>|::/.test(pasted);
+            const hasKeyword =
+              /\b(?:function|class|interface|import|export|const|let|var|def|fn|impl|struct|enum|public|private|return|if|else|for|while|async|await)\b/.test(
+                pasted,
+              );
+            if (!(hasIndent || hasCodePunct || hasKeyword)) return;
+            // Don't double-fence inside an already-open fence. Count
+            // ``` markers in the input up to the cursor — odd means
+            // we're inside one.
+            const target = e.currentTarget;
+            const cursor = target.selectionStart ?? input.length;
+            const before = input.slice(0, cursor);
+            const fenceCount = (before.match(/```/g) ?? []).length;
+            if (fenceCount % 2 === 1) return;
+            e.preventDefault();
+            const after = input.slice(target.selectionEnd ?? cursor);
+            // Newlines around the fence so it stays in its own
+            // paragraph regardless of where the cursor was.
+            const prefix = before.length === 0 || before.endsWith("\n") ? "" : "\n";
+            const suffix = after.length === 0 || after.startsWith("\n") ? "" : "\n";
+            const block = `${prefix}\`\`\`\n${pasted}\n\`\`\`${suffix}`;
+            const next = before + block + after;
+            setInput(next);
+            // Drop cursor after the closing fence so the user can
+            // continue typing without manually moving past the block.
+            requestAnimationFrame(() => {
+              const el = inputRef.current;
+              if (!el) return;
+              const pos = before.length + block.length;
+              el.focus();
+              try {
+                el.setSelectionRange(pos, pos);
+              } catch {
+                /* ignore */
+              }
+            });
+          }}
           onChange={(e) => {
             const v = e.target.value;
             const cursor = e.target.selectionStart ?? v.length;
