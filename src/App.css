@@ -7233,6 +7233,41 @@ input {
 .git-branch-menu .menu-item.active {
   color: var(--accent);
 }
+.git-branch-menu-row {
+  display: flex;
+  align-items: stretch;
+}
+.git-branch-menu-row > .menu-item {
+  flex: 1;
+  min-width: 0;
+}
+.git-branch-menu-delete {
+  flex-shrink: 0;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+  display: grid;
+  place-items: center;
+}
+.git-branch-menu-row:hover .git-branch-menu-delete,
+.git-branch-menu-delete:focus-visible {
+  opacity: 1;
+}
+.git-branch-menu-delete:hover {
+  color: var(--danger);
+}
+.git-branch-new {
+  color: var(--accent);
+}
+.git-branch-new .menu-item-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .git-ahead {
   color: #73c990;
 }

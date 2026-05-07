@@ -240,6 +240,20 @@ export const git = {
   branches: (path: string) => invoke<string[]>("git_branches", { path }),
   checkoutBranch: (path: string, branch: string) =>
     invoke<string>("git_checkout_branch", { path, branch }),
+  createBranch: (
+    path: string,
+    name: string,
+    base?: string,
+    checkout = true,
+  ) =>
+    invoke<string>("git_create_branch", {
+      path,
+      name,
+      base: base ?? null,
+      checkout,
+    }),
+  deleteBranch: (path: string, name: string, force = false) =>
+    invoke<string>("git_delete_branch", { path, name, force }),
   log: (path: string, limit = 50) =>
     invoke<GitCommit[]>("git_log", { path, limit }),
   showCommit: (path: string, refspec: string) =>

@@ -331,6 +331,73 @@ pub fn git_log(path: String, limit: Option<u32>) -> Result<Vec<GitCommit>, Strin
 }
 
 #[tauri::command]
+pub fn git_create_branch(
+    path: String,
+    name: String,
+    base: Option<String>,
+    checkout: Option<bool>,
+) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Branch name is empty.".to_string());
+    }
+    // git's own ref-name rules disallow these. Catch the common
+    // typos before the shell-out so the error message is friendlier
+    // than git's generic "is not a valid branch name".
+    if trimmed.contains("..")
+        || trimmed.contains(' ')
+        || trimmed.contains('~')
+        || trimmed.contains('^')
+        || trimmed.contains(':')
+        || trimmed.contains('?')
+        || trimmed.contains('*')
+        || trimmed.contains('[')
+        || trimmed.contains('\\')
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('-')
+        || trimmed.ends_with('/')
+        || trimmed.ends_with('.')
+    {
+        return Err(format!(
+            "Invalid branch name '{}': git doesn't allow spaces, '..', '~^:?*[\\\\]', leading '-' or '/', or trailing '/' / '.'.",
+            trimmed
+        ));
+    }
+    let want_checkout = checkout.unwrap_or(true);
+    if want_checkout {
+        let mut args: Vec<&str> = vec!["checkout", "-b", trimmed];
+        if let Some(b) = base.as_deref() {
+            if !b.trim().is_empty() {
+                args.push(b);
+            }
+        }
+        run_git(&path, &args)
+    } else {
+        let mut args: Vec<&str> = vec!["branch", trimmed];
+        if let Some(b) = base.as_deref() {
+            if !b.trim().is_empty() {
+                args.push(b);
+            }
+        }
+        run_git(&path, &args)
+    }
+}
+
+#[tauri::command]
+pub fn git_delete_branch(
+    path: String,
+    name: String,
+    force: Option<bool>,
+) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Branch name is empty.".to_string());
+    }
+    let flag = if force.unwrap_or(false) { "-D" } else { "-d" };
+    run_git(&path, &["branch", flag, trimmed])
+}
+
+#[tauri::command]
 pub fn git_show_commit(path: String, refspec: String) -> Result<String, String> {
     // git show with full diff. We use --stat for a header summary line
     // followed by --patch to get the full unified diff. Limits diff

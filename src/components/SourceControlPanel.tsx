@@ -10,7 +10,10 @@ import {
 } from "../ipc";
 import { requestDiff } from "../editorState";
 import { error as toastError, errMsg, success as toastSuccess } from "../notify";
-import { confirm as dialogConfirm } from "../dialog";
+import {
+  confirm as dialogConfirm,
+  prompt as dialogPrompt,
+} from "../dialog";
 import { langOf } from "../langDetect";
 import { joinPath } from "../pathUtils";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
@@ -261,6 +264,71 @@ export function SourceControlPanel({ wsId, root }: Props) {
     [root, refresh],
   );
 
+  const createBranch = useCallback(async () => {
+    setBranchOpen(false);
+    const name = await dialogPrompt(
+      "Create branch from " + (status?.branch ?? "HEAD"),
+      "",
+      { title: "New branch", okLabel: "Create" },
+    );
+    if (!name || !name.trim()) return;
+    try {
+      await gitApi.createBranch(root, name.trim(), undefined, true);
+      toastSuccess(`Created branch ${name.trim()} and switched to it`);
+      await refresh();
+      await loadBranches();
+    } catch (e) {
+      toastError(`Create branch failed: ${errMsg(e)}`);
+    }
+  }, [root, status?.branch, refresh, loadBranches]);
+
+  const deleteBranch = useCallback(
+    async (b: string) => {
+      const ok = await dialogConfirm(
+        `Delete branch ${b}?\n\nIf the branch has commits not merged into HEAD, you'll be asked to confirm a force-delete next.`,
+        {
+          title: "Delete branch",
+          okLabel: "Delete",
+          cancelLabel: "Cancel",
+          danger: true,
+        },
+      );
+      if (!ok) return;
+      try {
+        await gitApi.deleteBranch(root, b, false);
+        toastSuccess(`Deleted ${b}`);
+      } catch (e) {
+        const msg = errMsg(e);
+        // git -d refuses if the branch has unmerged commits. Offer a
+        // force delete instead of just surfacing the error.
+        if (/not fully merged|not merged/i.test(msg)) {
+          const force = await dialogConfirm(
+            `${b} has unmerged commits. Force-delete it anyway?\n\nThe commits will be unreachable until the next gc.`,
+            {
+              title: "Force-delete branch",
+              okLabel: "Force delete",
+              cancelLabel: "Cancel",
+              danger: true,
+            },
+          );
+          if (!force) return;
+          try {
+            await gitApi.deleteBranch(root, b, true);
+            toastSuccess(`Force-deleted ${b}`);
+          } catch (e2) {
+            toastError(`Force-delete failed: ${errMsg(e2)}`);
+            return;
+          }
+        } else {
+          toastError(`Delete failed: ${msg}`);
+          return;
+        }
+      }
+      await loadBranches();
+    },
+    [root, loadBranches],
+  );
+
   const discard = useCallback(
     async (f: GitFile) => {
       const ok = await dialogConfirm(
@@ -341,7 +409,7 @@ export function SourceControlPanel({ wsId, root }: Props) {
                 className="menu-overlay"
                 onMouseDown={() => setBranchOpen(false)}
               />
-              <div className="git-branch-menu">
+              <div className="git-branch-menu" role="menu">
                 {branches.length === 0 && (
                   <div
                     className="menu-section-title"
@@ -351,19 +419,43 @@ export function SourceControlPanel({ wsId, root }: Props) {
                   </div>
                 )}
                 {branches.map((b) => (
-                  <button
-                    key={b}
-                    className={`menu-item ${
-                      b === status.branch ? "active" : ""
-                    }`}
-                    onClick={() => void switchBranch(b)}
-                  >
-                    <span className="menu-item-label">{b}</span>
-                    {b === status.branch && (
-                      <span className="menu-item-accel">current</span>
+                  <div key={b} className="git-branch-menu-row">
+                    <button
+                      className={`menu-item ${
+                        b === status.branch ? "active" : ""
+                      }`}
+                      onClick={() => void switchBranch(b)}
+                    >
+                      <span className="menu-item-label">{b}</span>
+                      {b === status.branch && (
+                        <span className="menu-item-accel">current</span>
+                      )}
+                    </button>
+                    {b !== status.branch && (
+                      <button
+                        className="git-branch-menu-delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void deleteBranch(b);
+                        }}
+                        title={`Delete branch ${b}`}
+                        aria-label={`Delete branch ${b}`}
+                      >
+                        <Icon name="x" size={11} />
+                      </button>
                     )}
-                  </button>
+                  </div>
                 ))}
+                <div className="menu-separator" role="separator" />
+                <button
+                  className="menu-item git-branch-new"
+                  onClick={() => void createBranch()}
+                  role="menuitem"
+                >
+                  <span className="menu-item-label">
+                    <Icon name="plus" size={11} /> New branch…
+                  </span>
+                </button>
               </div>
             </>
           )}
