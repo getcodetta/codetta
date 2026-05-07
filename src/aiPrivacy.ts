@@ -13,6 +13,8 @@
 // SSH/GPG keys, AWS creds) so the very first user with no
 // configuration is still protected from the most common leaks.
 
+import { getJson, setJson } from "./localStore";
+
 const KEY = "lcp.ai.privacy.exclusions";
 
 /** Patterns shipped on by default. The user can remove them via
@@ -46,12 +48,6 @@ interface PrivacySettings {
   useDefaults: boolean;
 }
 
-const DEFAULT_SETTINGS: PrivacySettings = {
-  enabled: true,
-  patterns: [],
-  useDefaults: true,
-};
-
 // In-memory listener registry so React components observing the
 // settings can refresh when Settings edits the list.
 type Listener = () => void;
@@ -61,29 +57,22 @@ function notify() {
 }
 
 export function loadPrivacySettings(): PrivacySettings {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return { ...DEFAULT_SETTINGS };
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SETTINGS };
-    return {
-      enabled: parsed.enabled !== false,
-      patterns: Array.isArray(parsed.patterns)
-        ? parsed.patterns.filter((p: unknown) => typeof p === "string")
-        : [],
-      useDefaults: parsed.useDefaults !== false,
-    };
-  } catch {
-    return { ...DEFAULT_SETTINGS };
-  }
+  const parsed = getJson<Record<string, unknown>>(
+    KEY,
+    {},
+    (p): p is Record<string, unknown> => !!p && typeof p === "object",
+  );
+  return {
+    enabled: parsed.enabled !== false,
+    patterns: Array.isArray(parsed.patterns)
+      ? parsed.patterns.filter((p: unknown): p is string => typeof p === "string")
+      : [],
+    useDefaults: parsed.useDefaults !== false,
+  };
 }
 
 export function savePrivacySettings(next: PrivacySettings) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(next));
-  } catch {
-    /* localStorage full — best-effort */
-  }
+  setJson(KEY, next);
   notify();
 }
 

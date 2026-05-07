@@ -4,6 +4,8 @@
 // show a "Push to remote" action only for files that have a known
 // upstream — preventing accidental uploads of unrelated local files.
 
+import { getJson, setJson } from "./localStore";
+
 const KEY = (wsId: string) => `lcp.sftp.links.${wsId}`;
 
 export interface RemoteLink {
@@ -31,23 +33,16 @@ export function normalizeLocalPath(p: string): string {
 }
 
 function load(wsId: string): Record<string, RemoteLink> {
-  try {
-    const raw = localStorage.getItem(KEY(wsId));
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed as Record<string, RemoteLink>;
-  } catch {
-    return {};
-  }
+  return getJson<Record<string, RemoteLink>>(
+    KEY(wsId),
+    {},
+    (p): p is Record<string, RemoteLink> =>
+      !!p && typeof p === "object" && !Array.isArray(p),
+  );
 }
 
 function save(wsId: string, links: Record<string, RemoteLink>) {
-  try {
-    localStorage.setItem(KEY(wsId), JSON.stringify(links));
-  } catch {
-    /* ignore */
-  }
+  setJson(KEY(wsId), links);
 }
 
 export function rememberRemoteLink(

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getString, setString } from "./localStore";
 
 export type ThemeMode = "system" | "light" | "dark";
 
@@ -19,7 +20,7 @@ function applyTheme(mode: ThemeMode) {
 }
 
 export function readStoredTheme(): ThemeMode {
-  const v = localStorage.getItem(STORAGE_KEY);
+  const v = getString(STORAGE_KEY);
   if (v === "light" || v === "dark" || v === "system") return v;
   return "system";
 }
@@ -29,7 +30,7 @@ export function useTheme(): [ThemeMode, (m: ThemeMode) => void] {
 
   useEffect(() => {
     applyTheme(mode);
-    localStorage.setItem(STORAGE_KEY, mode);
+    setString(STORAGE_KEY, mode);
     if (mode !== "system") return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = () => applyTheme("system");

@@ -1,25 +1,16 @@
 import type { ProviderId } from "./types";
+import { getString, remove, setString } from "../localStore";
 
 const STORAGE_PREFIX = "lcp.providers.";
+const keyFor = (id: ProviderId) => `${STORAGE_PREFIX}${id}.apiKey`;
 
 export function getApiKey(providerId: ProviderId): string {
-  try {
-    return localStorage.getItem(STORAGE_PREFIX + providerId + ".apiKey") ?? "";
-  } catch {
-    return "";
-  }
+  return getString(keyFor(providerId)) ?? "";
 }
 
 export function setApiKey(providerId: ProviderId, key: string): void {
-  try {
-    if (key) {
-      localStorage.setItem(STORAGE_PREFIX + providerId + ".apiKey", key);
-    } else {
-      localStorage.removeItem(STORAGE_PREFIX + providerId + ".apiKey");
-    }
-  } catch {
-    /* ignore */
-  }
+  if (key) setString(keyFor(providerId), key);
+  else remove(keyFor(providerId));
 }
 
 export function hasApiKey(providerId: ProviderId): boolean {

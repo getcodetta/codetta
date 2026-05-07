@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { info as toastInfo } from "./notify";
+import { getJson, setJson } from "./localStore";
 
 export interface EditorSettings {
   fontSize: number;
@@ -25,56 +26,51 @@ const DEFAULT: EditorSettings = {
 };
 
 function read(): EditorSettings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULT };
-    const parsed = JSON.parse(raw);
-    return {
-      fontSize:
-        typeof parsed.fontSize === "number" &&
-        parsed.fontSize >= 8 &&
-        parsed.fontSize <= 32
-          ? parsed.fontSize
-          : DEFAULT.fontSize,
-      wordWrap: parsed.wordWrap === "on" ? "on" : "off",
-      tabSize:
-        typeof parsed.tabSize === "number" &&
-        parsed.tabSize >= 1 &&
-        parsed.tabSize <= 8
-          ? parsed.tabSize
-          : DEFAULT.tabSize,
-      autoSave: typeof parsed.autoSave === "boolean" ? parsed.autoSave : DEFAULT.autoSave,
-      autoSaveDelayMs:
-        typeof parsed.autoSaveDelayMs === "number" &&
-        parsed.autoSaveDelayMs >= 100 &&
-        parsed.autoSaveDelayMs <= 10000
-          ? parsed.autoSaveDelayMs
-          : DEFAULT.autoSaveDelayMs,
-      minimap:
-        typeof parsed.minimap === "boolean" ? parsed.minimap : DEFAULT.minimap,
-      trimTrailingWhitespace:
-        typeof parsed.trimTrailingWhitespace === "boolean"
-          ? parsed.trimTrailingWhitespace
-          : DEFAULT.trimTrailingWhitespace,
-      insertFinalNewline:
-        typeof parsed.insertFinalNewline === "boolean"
-          ? parsed.insertFinalNewline
-          : DEFAULT.insertFinalNewline,
-    };
-  } catch {
-    return { ...DEFAULT };
-  }
+  const raw = getJson<Record<string, unknown>>(
+    STORAGE_KEY,
+    {},
+    (p): p is Record<string, unknown> => !!p && typeof p === "object",
+  );
+  return {
+    fontSize:
+      typeof raw.fontSize === "number" &&
+      raw.fontSize >= 8 &&
+      raw.fontSize <= 32
+        ? raw.fontSize
+        : DEFAULT.fontSize,
+    wordWrap: raw.wordWrap === "on" ? "on" : "off",
+    tabSize:
+      typeof raw.tabSize === "number" &&
+      raw.tabSize >= 1 &&
+      raw.tabSize <= 8
+        ? raw.tabSize
+        : DEFAULT.tabSize,
+    autoSave:
+      typeof raw.autoSave === "boolean" ? raw.autoSave : DEFAULT.autoSave,
+    autoSaveDelayMs:
+      typeof raw.autoSaveDelayMs === "number" &&
+      raw.autoSaveDelayMs >= 100 &&
+      raw.autoSaveDelayMs <= 10000
+        ? raw.autoSaveDelayMs
+        : DEFAULT.autoSaveDelayMs,
+    minimap:
+      typeof raw.minimap === "boolean" ? raw.minimap : DEFAULT.minimap,
+    trimTrailingWhitespace:
+      typeof raw.trimTrailingWhitespace === "boolean"
+        ? raw.trimTrailingWhitespace
+        : DEFAULT.trimTrailingWhitespace,
+    insertFinalNewline:
+      typeof raw.insertFinalNewline === "boolean"
+        ? raw.insertFinalNewline
+        : DEFAULT.insertFinalNewline,
+  };
 }
 
 let _settings: EditorSettings = read();
 const listeners = new Set<(s: EditorSettings) => void>();
 
 function persist() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(_settings));
-  } catch {
-    /* ignore */
-  }
+  setJson(STORAGE_KEY, _settings);
 }
 
 export function getEditorSettings(): EditorSettings {

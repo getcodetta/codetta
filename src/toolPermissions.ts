@@ -3,6 +3,8 @@
 // time, or maintain a persistent allowlist (per-tool or per-path) populated
 // from the inline "Allow always" / "Allow this path" actions in chat.
 
+import { getJson, setJson } from "./localStore";
+
 export type ToolPermission = "allow" | "ask" | "deny";
 
 export interface ToolPolicy {
@@ -26,32 +28,32 @@ const DEFAULTS: ToolPolicy = {
 };
 
 export function getToolPolicy(): ToolPolicy {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return DEFAULTS;
-    const obj = JSON.parse(raw) as Partial<ToolPolicy>;
-    return {
-      read: norm(obj.read, DEFAULTS.read),
-      webSearch: norm(obj.webSearch, DEFAULTS.webSearch),
-      write: norm(obj.write, DEFAULTS.write),
-      alwaysAllowedTools: Array.isArray(obj.alwaysAllowedTools)
-        ? obj.alwaysAllowedTools.filter((s): s is string => typeof s === "string")
-        : [],
-      alwaysAllowedPaths:
-        obj.alwaysAllowedPaths && typeof obj.alwaysAllowedPaths === "object"
-          ? Object.fromEntries(
-              Object.entries(obj.alwaysAllowedPaths).map(([k, v]) => [
-                k,
-                Array.isArray(v)
-                  ? v.filter((s): s is string => typeof s === "string")
-                  : [],
-              ]),
-            )
-          : {},
-    };
-  } catch {
-    return DEFAULTS;
-  }
+  const obj = getJson<Partial<ToolPolicy>>(
+    KEY,
+    {},
+    (p): p is Partial<ToolPolicy> => !!p && typeof p === "object",
+  );
+  return {
+    read: norm(obj.read, DEFAULTS.read),
+    webSearch: norm(obj.webSearch, DEFAULTS.webSearch),
+    write: norm(obj.write, DEFAULTS.write),
+    alwaysAllowedTools: Array.isArray(obj.alwaysAllowedTools)
+      ? obj.alwaysAllowedTools.filter(
+          (s): s is string => typeof s === "string",
+        )
+      : [],
+    alwaysAllowedPaths:
+      obj.alwaysAllowedPaths && typeof obj.alwaysAllowedPaths === "object"
+        ? Object.fromEntries(
+            Object.entries(obj.alwaysAllowedPaths).map(([k, v]) => [
+              k,
+              Array.isArray(v)
+                ? v.filter((s): s is string => typeof s === "string")
+                : [],
+            ]),
+          )
+        : {},
+  };
 }
 
 function norm(v: unknown, fallback: ToolPermission): ToolPermission {
@@ -59,11 +61,7 @@ function norm(v: unknown, fallback: ToolPermission): ToolPermission {
 }
 
 export function setToolPolicy(policy: ToolPolicy): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(policy));
-  } catch {
-    /* ignore */
-  }
+  setJson(KEY, policy);
 }
 
 export function rememberToolAlways(toolName: string): void {

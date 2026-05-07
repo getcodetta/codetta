@@ -24,6 +24,14 @@
 // Cost data alone is enough to budget; logging more would create a
 // privacy regression that defeats the AI privacy work.
 
+import {
+  getJson,
+  getString,
+  remove as lsRemove,
+  setJson,
+  setString,
+} from "./localStore";
+
 const KEY = "lcp.ai.usage.log";
 
 /** Cap to keep localStorage sane. Records older than this get
@@ -66,20 +74,12 @@ const MAX_PROMPT_CHARS = 1500;
 const LOG_PROMPTS_KEY = "lcp.ai.usage.logPrompts";
 
 export function loadLogPrompts(): boolean {
-  try {
-    return localStorage.getItem(LOG_PROMPTS_KEY) === "1";
-  } catch {
-    return false;
-  }
+  return getString(LOG_PROMPTS_KEY) === "1";
 }
 
 export function saveLogPrompts(on: boolean): void {
-  try {
-    if (on) localStorage.setItem(LOG_PROMPTS_KEY, "1");
-    else localStorage.removeItem(LOG_PROMPTS_KEY);
-  } catch {
-    /* ignore */
-  }
+  if (on) setString(LOG_PROMPTS_KEY, "1");
+  else lsRemove(LOG_PROMPTS_KEY);
   notify();
 }
 
@@ -95,36 +95,25 @@ export function subscribeUsage(fn: Listener): () => void {
 }
 
 export function loadUsage(): UsageRecord[] {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (r: unknown): r is UsageRecord =>
-        !!r &&
-        typeof r === "object" &&
-        typeof (r as UsageRecord).ts === "number" &&
-        typeof (r as UsageRecord).provider === "string" &&
-        typeof (r as UsageRecord).model === "string" &&
-        typeof (r as UsageRecord).costUsd === "number",
-    );
-  } catch {
-    return [];
-  }
+  const arr = getJson<unknown[]>(KEY, [], Array.isArray);
+  return arr.filter(
+    (r: unknown): r is UsageRecord =>
+      !!r &&
+      typeof r === "object" &&
+      typeof (r as UsageRecord).ts === "number" &&
+      typeof (r as UsageRecord).provider === "string" &&
+      typeof (r as UsageRecord).model === "string" &&
+      typeof (r as UsageRecord).costUsd === "number",
+  );
 }
 
 function saveUsage(records: UsageRecord[]) {
-  try {
-    // Keep the most recent N — append at end, trim from front.
-    const trimmed =
-      records.length > MAX_RECORDS
-        ? records.slice(records.length - MAX_RECORDS)
-        : records;
-    localStorage.setItem(KEY, JSON.stringify(trimmed));
-  } catch {
-    /* localStorage full — best-effort */
-  }
+  // Keep the most recent N — append at end, trim from front.
+  const trimmed =
+    records.length > MAX_RECORDS
+      ? records.slice(records.length - MAX_RECORDS)
+      : records;
+  setJson(KEY, trimmed);
 }
 
 /** Append one usage record. Skips zero-cost zero-token records to
@@ -161,11 +150,7 @@ export function recordUsage(r: WriteableUsageRecord) {
 }
 
 export function clearUsage() {
-  try {
-    localStorage.removeItem(KEY);
-  } catch {
-    /* ignore */
-  }
+  lsRemove(KEY);
   notify();
 }
 
@@ -233,25 +218,14 @@ export function thisMonthTotal(records?: UsageRecord[]): number {
 const HARD_CAP_KEY = "lcp.ai.usage.hardCapUsd";
 
 export function loadHardCap(): number {
-  try {
-    const raw = localStorage.getItem(HARD_CAP_KEY);
-    const n = raw ? parseFloat(raw) : 0;
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  } catch {
-    return 0;
-  }
+  const raw = getString(HARD_CAP_KEY);
+  const n = raw ? parseFloat(raw) : 0;
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 export function saveHardCap(usd: number) {
-  try {
-    if (usd > 0 && Number.isFinite(usd)) {
-      localStorage.setItem(HARD_CAP_KEY, String(usd));
-    } else {
-      localStorage.removeItem(HARD_CAP_KEY);
-    }
-  } catch {
-    /* ignore */
-  }
+  if (usd > 0 && Number.isFinite(usd)) setString(HARD_CAP_KEY, String(usd));
+  else lsRemove(HARD_CAP_KEY);
   notify();
 }
 
@@ -265,35 +239,26 @@ export function saveHardCap(usd: number) {
 const WS_BUDGETS_KEY = "lcp.ai.usage.wsBudgetsUsd";
 
 export function loadWsBudgets(): Record<string, number> {
-  try {
-    const raw = localStorage.getItem(WS_BUDGETS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    const out: Record<string, number> = {};
-    for (const [k, v] of Object.entries(parsed)) {
-      if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
-    }
-    return out;
-  } catch {
-    return {};
+  const parsed = getJson<Record<string, unknown>>(
+    WS_BUDGETS_KEY,
+    {},
+    (p): p is Record<string, unknown> =>
+      !!p && typeof p === "object" && !Array.isArray(p),
+  );
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(parsed)) {
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
   }
+  return out;
 }
 
 export function saveWsBudgets(budgets: Record<string, number>) {
-  try {
-    const cleaned: Record<string, number> = {};
-    for (const [k, v] of Object.entries(budgets)) {
-      if (typeof v === "number" && Number.isFinite(v) && v > 0) cleaned[k] = v;
-    }
-    if (Object.keys(cleaned).length > 0) {
-      localStorage.setItem(WS_BUDGETS_KEY, JSON.stringify(cleaned));
-    } else {
-      localStorage.removeItem(WS_BUDGETS_KEY);
-    }
-  } catch {
-    /* ignore */
+  const cleaned: Record<string, number> = {};
+  for (const [k, v] of Object.entries(budgets)) {
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) cleaned[k] = v;
   }
+  if (Object.keys(cleaned).length > 0) setJson(WS_BUDGETS_KEY, cleaned);
+  else lsRemove(WS_BUDGETS_KEY);
   notify();
 }
 

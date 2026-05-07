@@ -1,4 +1,5 @@
 import type { ChatMessage } from "./ai";
+import { getJson, setJson } from "./localStore";
 
 export interface ChatSession {
   id: string;
@@ -27,15 +28,10 @@ const KEY = (wsId: string) => `lcp.ollama.history.${wsId}`;
 const MAX_SESSIONS = 30;
 
 export function loadSessions(wsId: string): ChatSession[] {
-  try {
-    const raw = localStorage.getItem(KEY(wsId));
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-    return arr.filter(isValidSession).sort((a, b) => b.updatedAt - a.updatedAt);
-  } catch {
-    return [];
-  }
+  const arr = getJson<unknown[]>(KEY(wsId), [], Array.isArray);
+  return arr
+    .filter(isValidSession)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 function isValidSession(s: unknown): s is ChatSession {
@@ -52,21 +48,12 @@ function isValidSession(s: unknown): s is ChatSession {
 export function saveSession(wsId: string, session: ChatSession): void {
   const all = loadSessions(wsId).filter((s) => s.id !== session.id);
   all.unshift(session);
-  const trimmed = all.slice(0, MAX_SESSIONS);
-  try {
-    localStorage.setItem(KEY(wsId), JSON.stringify(trimmed));
-  } catch {
-    /* localStorage full — best effort */
-  }
+  setJson(KEY(wsId), all.slice(0, MAX_SESSIONS));
 }
 
 export function deleteSession(wsId: string, id: string): void {
   const all = loadSessions(wsId).filter((s) => s.id !== id);
-  try {
-    localStorage.setItem(KEY(wsId), JSON.stringify(all));
-  } catch {
-    /* ignore */
-  }
+  setJson(KEY(wsId), all);
 }
 
 export function newSessionId(): string {
