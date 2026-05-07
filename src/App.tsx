@@ -24,6 +24,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Dialog } from "./components/Dialog";
 import { SettingsModal } from "./components/SettingsModal";
 import { TerminalPopoutWindow } from "./components/TerminalPopoutWindow";
+import { useZenMode } from "./zenMode";
 import "./App.css";
 
 // When this document was opened as a terminal pop-out window, render only
@@ -42,6 +43,7 @@ function MainApp() {
   const openIds = useStore((s) => s.openIds);
   const activeId = useStore((s) => s.activeId);
   const loaded = useStore((s) => s.loaded);
+  const zen = useZenMode();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteInitial, setPaletteInitial] = useState("");
   // Mirror paletteOpen into a ref so the keyboard-shortcut effect below
@@ -191,6 +193,14 @@ function MainApp() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // F11 toggles zen mode globally — no modifiers required so it
+      // matches the platform convention and works even when no
+      // workspace is open.
+      if (e.key === "F11" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        runCommand("view.toggle_zen");
+        return;
+      }
       const ctrl = e.ctrlKey || e.metaKey;
       if (!ctrl) return;
       const k = e.key;
@@ -352,15 +362,15 @@ function MainApp() {
   }
 
   return (
-    <div className="app">
-      <TopBar onOpenPalette={() => setPaletteOpen(true)} />
+    <div className={`app ${zen ? "app-zen" : ""}`}>
+      {!zen && <TopBar onOpenPalette={() => setPaletteOpen(true)} />}
       <div
         className="shell-stack"
         data-sidebar-side={
           activeId ? (loaded[activeId]?.layout.sidebarSide ?? "left") : "left"
         }
       >
-        <ActivityBar />
+        {!zen && <ActivityBar />}
         <div className="workspace-area">
           {openIds.length === 0 ? (
             <WorkspacePicker />
@@ -375,7 +385,21 @@ function MainApp() {
           )}
         </div>
       </div>
-      <StatusBar onOpenPalette={() => setPaletteOpen(true)} />
+      {zen && (
+        // Tiny escape hatch for users who hit F11 by accident or
+        // forget the shortcut — clicking exits zen, hovering reveals
+        // the keystroke. Idle-fade keeps it from being a permanent
+        // distraction in the corner.
+        <button
+          className="zen-exit"
+          onClick={() => runCommand("view.toggle_zen")}
+          title="Exit Zen Mode (F11)"
+          aria-label="Exit Zen Mode"
+        >
+          F11
+        </button>
+      )}
+      {!zen && <StatusBar onOpenPalette={() => setPaletteOpen(true)} />}
       <CommandPalette
         open={paletteOpen}
         initialQuery={paletteInitial}

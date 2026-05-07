@@ -26,6 +26,7 @@ import {
   zoomReset,
 } from "./editorSettings";
 import { joinPath } from "./pathUtils";
+import { toggleZenMode } from "./zenMode";
 
 function runEditorAction(actionId: string) {
   const ed = getActiveEditor();
@@ -175,6 +176,15 @@ export const commands: CommandSpec[] = [
       const wsId = s().activeId;
       const ws = wsId ? s().loaded[wsId] : null;
       if (ws && wsId) s().setBottomVisible(wsId, !ws.layout.bottomVisible);
+    },
+  },
+  {
+    id: "view.toggle_zen",
+    label: "Toggle Zen Mode",
+    category: "View",
+    accel: "F11",
+    run: () => {
+      toggleZenMode();
     },
   },
   {

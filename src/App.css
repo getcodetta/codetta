@@ -6924,6 +6924,34 @@ input {
   display: block;
 }
 
+/* Zen mode escape hatch — appears only when the global zen flag is on
+   (App.tsx renders the button conditionally). 0.18 opacity at rest so
+   it doesn't draw the eye in a "distraction-free" view, but lifts to
+   full opacity on hover so it's findable when the user goes looking. */
+.zen-exit {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 1000;
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0.18;
+  transition: opacity 120ms ease;
+}
+.zen-exit:hover,
+.zen-exit:focus-visible {
+  opacity: 1;
+  color: var(--fg);
+  outline: none;
+}
+
 /* Editor */
 .editor-host {
   flex: 1;

@@ -18,6 +18,7 @@ import {
 import { pty, type ShellOption } from "../ipc";
 import { redockTerminal } from "../terminalPopout";
 import { Icon } from "./Icon";
+import { useZenMode } from "../zenMode";
 
 interface Props {
   wsId: string;
@@ -72,6 +73,7 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
   const addTerminal = useStore((s) => s.addTerminal);
   const setAIPanelW = useStore((s) => s.setAIPanelW);
   const setAIPanelVisible = useStore((s) => s.setAIPanelVisible);
+  const zen = useZenMode();
 
   const [paneContainers, setPaneContainers] = useState<
     Record<PaneId, HTMLElement>
@@ -144,9 +146,9 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
       data-ws-id={wsId}
       data-sidebar-side={layout.sidebarSide}
     >
-      {layout.sidebarVisible && <SidebarStack wsId={wsId} ws={ws} />}
-      <AIChatsRail wsId={wsId} ws={ws} />
-      {layout.aiPanelVisible && (
+      {layout.sidebarVisible && !zen && <SidebarStack wsId={wsId} ws={ws} />}
+      {!zen && <AIChatsRail wsId={wsId} ws={ws} />}
+      {layout.aiPanelVisible && !zen && (
         <>
           <div
             className="vsplit ai-vsplit"
@@ -247,7 +249,7 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
           across hide/show, so terminals just disappear/reappear without
           losing state. Pay-cost: a sliver of layout space; worth it.
         */}
-        {layout.bottomRoot && (
+        {layout.bottomRoot && !zen && (
           <>
             {layout.bottomVisible && (
               <div
