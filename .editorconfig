@@ -1,0 +1,25 @@
+; Codetta editor settings — pinned so the project looks the same in
+; VS Code, JetBrains, Sublime, and every IDE that respects EditorConfig
+; (which Monaco does too). Mirrors the line-ending policy in
+; .gitattributes so the working copy never disagrees with the repo.
+
+root = true
+
+[*]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.md]
+; Markdown wraps differently and uses trailing spaces for line breaks —
+; don't strip them, don't enforce wrap.
+trim_trailing_whitespace = false
+
+[*.{rs,toml}]
+indent_size = 4
+
+[*.{bat,cmd}]
+end_of_line = crlf

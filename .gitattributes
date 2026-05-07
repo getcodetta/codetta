@@ -1,0 +1,36 @@
+# Line-ending policy: text files normalize to LF in the repo and check
+# out as LF on every platform. The cross-platform CRLF round-trip on
+# Windows was triggering "LF will be replaced by CRLF" warnings on every
+# commit (and producing those warnings as noise in tooling output) even
+# though the working tree contents were already correct. Locking eol=lf
+# stops the dance.
+* text=auto eol=lf
+
+# Keep Windows-native files as CRLF — batch scripts and PowerShell
+# break under LF on some Windows shells.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Treat these as binary so git doesn't try to munge bytes.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.dmg binary
+*.exe binary
+*.lockb binary
+
+# Lockfiles are large and machine-generated. Git will still diff them
+# (linguist-detectable=false isn't applicable here) but mark them as
+# generated so GitHub's diff view collapses them by default and they
+# don't dominate the language stats / contributor graph.
+package-lock.json linguist-generated
+yarn.lock linguist-generated
+pnpm-lock.yaml linguist-generated
+src-tauri/Cargo.lock linguist-generated

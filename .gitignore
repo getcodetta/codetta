@@ -25,3 +25,20 @@ dist-ssr
 
 # Claude Code
 .claude/
+
+# Tauri build artifacts (the cargo target dir under src-tauri/ is huge)
+src-tauri/target/
+
+# OS scratch files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Vite cache
+.vite/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Windows tooling shims
+*.lnk
