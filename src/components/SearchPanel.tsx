@@ -6,13 +6,23 @@
 // Backed by the same Rust `search_text` command the palette uses, so
 // the case-sensitivity / binary-detection / heavy-dir-skip behaviour
 // matches across both surfaces.
+//
+// Replace mode: toggling the chevron reveals a replacement input. Each
+// hit gets a per-line replace dot and each file group gets "Replace all
+// in this file"; a header button runs the replacement across every
+// match in every file. We do the rewrite ourselves on the frontend
+// (read file → string-replace → write) instead of routing through Rust
+// because the existing fs.writeFile already goes through the atomic
+// writer, and keeping the replace logic next to the search UI lets us
+// preview pending changes inline.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../store";
-import { search } from "../ipc";
+import { fs, search } from "../ipc";
 import type { SearchHit } from "../ipc";
 import { setEditorGoto } from "../editorState";
-import { errMsg } from "../notify";
+import { confirm as dialogConfirm } from "../dialog";
+import { errMsg, error as toastError, success as toastSuccess } from "../notify";
 import { relPath } from "../pathUtils";
 
 interface Props {
@@ -46,6 +56,13 @@ export function SearchPanel({ wsId, root }: Props) {
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  // Replace mode: hidden by default to keep the search-only flow clean.
+  // The replacement string is intentionally NOT cached across panel
+  // mounts — a stale "replace foo with bar" carrying over from another
+  // workspace is a footgun.
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [replacement, setReplacement] = useState("");
+  const [replacing, setReplacing] = useState(false);
   // Guard against stale results from a slower scan landing after a
   // newer one. Same pattern as TodosPanel — id increments each call,
   // late returns get dropped.
@@ -147,39 +164,164 @@ export function SearchPanel({ wsId, root }: Props) {
     // Highlight the first match of `q` in the line so the eye can
     // jump to it. Case-insensitive when the toggle is off; falls
     // back to plain text if the line was returned with no match
-    // visible (column past the end, etc.).
+    // visible (column past the end, etc.). When replace mode is
+    // active, also render the replacement preview struck-through-
+    // on-the-original-+-inserted-after style so the user sees what
+    // each line will become.
     if (!q) return text;
     const haystack = caseSensitive ? text : text.toLowerCase();
     const needle = caseSensitive ? q : q.toLowerCase();
     const idx = haystack.indexOf(needle);
     if (idx < 0) return text;
+    const matchSlice = text.slice(idx, idx + q.length);
     return (
       <>
         {text.slice(0, idx)}
-        <mark className="search-hit-mark">
-          {text.slice(idx, idx + q.length)}
+        <mark
+          className={`search-hit-mark ${
+            replaceOpen && replacement ? "search-hit-mark-replaced" : ""
+          }`}
+        >
+          {matchSlice}
         </mark>
+        {replaceOpen && replacement && (
+          <mark className="search-hit-mark-replacement">{replacement}</mark>
+        )}
         {text.slice(idx + q.length)}
       </>
     );
   };
 
+  // Replace `query` with `replacement` in `content`, honouring the
+  // current case-sensitivity toggle. Returns the new content + the
+  // number of matches replaced. Pure — used both for the per-file
+  // executor below and for the preview count rendered in the header.
+  const applyReplaceToContent = useCallback(
+    (content: string, q: string, repl: string) => {
+      if (!q) return { next: content, count: 0 };
+      let count = 0;
+      let next = "";
+      let cursor = 0;
+      const haystack = caseSensitive ? content : content.toLowerCase();
+      const needle = caseSensitive ? q : q.toLowerCase();
+      while (cursor <= content.length) {
+        const idx = haystack.indexOf(needle, cursor);
+        if (idx < 0) {
+          next += content.slice(cursor);
+          break;
+        }
+        next += content.slice(cursor, idx) + repl;
+        cursor = idx + q.length;
+        count++;
+      }
+      return { next, count };
+    },
+    [caseSensitive],
+  );
+
+  const replaceInFiles = useCallback(
+    async (paths: string[]) => {
+      if (replacing) return;
+      const q = query.trim();
+      if (!q || replacement === q) return;
+      const ok = await dialogConfirm(
+        `Replace "${q}" with "${replacement}" in ${paths.length} file${paths.length === 1 ? "" : "s"}?\n\nThis writes to disk immediately. Use git or your editor's undo to roll back.`,
+        {
+          title: "Replace across files",
+          okLabel: `Replace in ${paths.length}`,
+          cancelLabel: "Cancel",
+          danger: true,
+        },
+      );
+      if (!ok) return;
+      setReplacing(true);
+      let totalReplaced = 0;
+      let filesChanged = 0;
+      const failures: string[] = [];
+      try {
+        for (const p of paths) {
+          try {
+            const content = await fs.readFile(p);
+            const { next, count } = applyReplaceToContent(content, q, replacement);
+            if (count === 0 || next === content) continue;
+            await fs.writeFile(p, next);
+            totalReplaced += count;
+            filesChanged++;
+          } catch (e) {
+            failures.push(`${relPath(p, root) || p}: ${errMsg(e)}`);
+          }
+        }
+        if (failures.length > 0) {
+          toastError(
+            `Replaced ${totalReplaced} in ${filesChanged}, ${failures.length} failed (see console)`,
+          );
+          for (const f of failures) console.warn("[replace]", f);
+        } else {
+          toastSuccess(
+            `Replaced ${totalReplaced} occurrence${totalReplaced === 1 ? "" : "s"} in ${filesChanged} file${filesChanged === 1 ? "" : "s"}`,
+          );
+        }
+        // Re-run the search so the (now-empty) hits clear from the UI
+        // and any remaining matches in still-unprocessed files appear.
+        void runSearch(q, caseSensitive);
+      } finally {
+        setReplacing(false);
+      }
+    },
+    [
+      applyReplaceToContent,
+      caseSensitive,
+      query,
+      replacement,
+      replacing,
+      root,
+      runSearch,
+    ],
+  );
+
   const totalHits = hits.length;
   const fileCount = groups.length;
   const trimmed = query.trim();
+  const canReplace =
+    replaceOpen &&
+    !replacing &&
+    trimmed.length > 0 &&
+    replacement !== trimmed &&
+    totalHits > 0;
 
   return (
     <div className="search-panel">
       <div className="search-panel-toolbar">
-        <input
-          ref={inputRef}
-          type="text"
-          className="search-panel-input"
-          placeholder="Search workspace…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Workspace text search"
-        />
+        <button
+          className={`search-panel-replace-toggle ${replaceOpen ? "open" : ""}`}
+          onClick={() => setReplaceOpen((v) => !v)}
+          title={replaceOpen ? "Hide replace" : "Show replace"}
+          aria-label={replaceOpen ? "Hide replace" : "Show replace"}
+          aria-expanded={replaceOpen}
+        >
+          {replaceOpen ? "▾" : "▸"}
+        </button>
+        <div className="search-panel-inputs">
+          <input
+            ref={inputRef}
+            type="text"
+            className="search-panel-input"
+            placeholder="Search workspace…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Workspace text search"
+          />
+          {replaceOpen && (
+            <input
+              type="text"
+              className="search-panel-input"
+              placeholder="Replace with…"
+              value={replacement}
+              onChange={(e) => setReplacement(e.target.value)}
+              aria-label="Replacement text"
+            />
+          )}
+        </div>
         <button
           className={`search-panel-toggle ${caseSensitive ? "active" : ""}`}
           onClick={() => setCaseSensitive((v) => !v)}
@@ -190,6 +332,22 @@ export function SearchPanel({ wsId, root }: Props) {
           Aa
         </button>
       </div>
+      {canReplace && (
+        <div className="search-panel-replace-actions">
+          <button
+            className="search-panel-replace-all"
+            onClick={() =>
+              void replaceInFiles(groups.map(([p]) => p))
+            }
+            disabled={replacing}
+            title={`Replace ${totalHits} occurrence${totalHits === 1 ? "" : "s"} in ${fileCount} file${fileCount === 1 ? "" : "s"}`}
+          >
+            {replacing
+              ? "Replacing…"
+              : `↻ Replace all (${totalHits} in ${fileCount})`}
+          </button>
+        </div>
+      )}
 
       <div className="search-panel-status">
         {searching && trimmed.length >= 2 && "Searching…"}
@@ -218,6 +376,17 @@ export function SearchPanel({ wsId, root }: Props) {
                 {relPath(path, root) || path}
               </span>
               <span className="search-panel-group-count">{items.length}</span>
+              {canReplace && (
+                <button
+                  className="search-panel-group-replace"
+                  onClick={() => void replaceInFiles([path])}
+                  disabled={replacing}
+                  title={`Replace ${items.length} occurrence${items.length === 1 ? "" : "s"} in this file`}
+                  aria-label={`Replace in ${relPath(path, root) || path}`}
+                >
+                  ↻
+                </button>
+              )}
             </div>
             {items.map((h, i) => (
               <button

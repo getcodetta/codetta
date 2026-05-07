@@ -1952,10 +1952,36 @@ input {
   display: flex;
   gap: 6px;
   padding: 6px 10px;
+  align-items: stretch;
   border-bottom: 1px solid var(--border);
 }
-.search-panel-input {
+.search-panel-replace-toggle {
+  flex-shrink: 0;
+  padding: 0 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+}
+.search-panel-replace-toggle:hover,
+.search-panel-replace-toggle:focus-visible {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.search-panel-replace-toggle.open {
+  color: var(--fg);
+}
+.search-panel-inputs {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.search-panel-input {
   padding: 4px 8px;
   background: var(--bg-alt);
   color: var(--fg);
@@ -1967,6 +1993,56 @@ input {
 }
 .search-panel-input:focus {
   border-color: var(--accent);
+}
+.search-panel-replace-actions {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.search-panel-replace-all {
+  width: 100%;
+  padding: 5px 10px;
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.search-panel-replace-all:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.search-panel-replace-all:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.search-panel-group-replace {
+  flex-shrink: 0;
+  padding: 0 6px;
+  margin-left: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+}
+.search-panel-group-replace:hover:not(:disabled),
+.search-panel-group-replace:focus-visible:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.search-hit-mark-replaced {
+  background: rgba(255, 0, 0, 0.18);
+  color: var(--fg-muted);
+  text-decoration: line-through;
+}
+.search-hit-mark-replacement {
+  background: rgba(0, 200, 0, 0.22);
+  color: var(--fg);
+  padding: 0 1px;
+  margin-left: 1px;
+  border-radius: 2px;
 }
 .search-panel-toggle {
   flex-shrink: 0;
