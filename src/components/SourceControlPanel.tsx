@@ -6,6 +6,7 @@ import {
   git as gitApi,
   type GitCommit,
   type GitFile,
+  type GitStash,
   type GitStatus,
 } from "../ipc";
 import { requestDiff } from "../editorState";
@@ -75,6 +76,8 @@ export function SourceControlPanel({ wsId, root }: Props) {
   const [openCommit, setOpenCommit] = useState<GitCommit | null>(null);
   const [commitDiff, setCommitDiff] = useState<string>("");
   const [commitDiffLoading, setCommitDiffLoading] = useState(false);
+  const [stashes, setStashes] = useState<GitStash[]>([]);
+  const [stashesOpen, setStashesOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -249,6 +252,93 @@ export function SourceControlPanel({ wsId, root }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [openCommit]);
+
+  // Stashes — same lazy-load pattern as History. Refreshes on
+  // status mutations so newly-pushed / popped / dropped stashes
+  // appear/disappear without a manual rescan.
+  const loadStashes = useCallback(async () => {
+    if (!status?.is_repo) return;
+    try {
+      const list = await gitApi.stashList(root);
+      setStashes(list);
+    } catch (e) {
+      setStashes([]);
+      console.warn("[git_stash_list]", errMsg(e));
+    }
+  }, [root, status?.is_repo]);
+
+  useEffect(() => {
+    if (!stashesOpen) return;
+    void loadStashes();
+  }, [stashesOpen, loadStashes, status?.files.length]);
+
+  const stashPush = useCallback(async () => {
+    const msg = await dialogPrompt(
+      "Stash message (optional)",
+      "",
+      { title: "Stash changes", okLabel: "Stash" },
+    );
+    if (msg === null) return;
+    try {
+      const out = await gitApi.stashPush(root, msg.trim() || undefined, true);
+      const trimmedOut = out.trim();
+      toastSuccess(trimmedOut || "Stashed");
+      await refresh();
+      await loadStashes();
+    } catch (e) {
+      toastError(`Stash failed: ${errMsg(e)}`);
+    }
+  }, [root, refresh, loadStashes]);
+
+  const stashPop = useCallback(
+    async (s: GitStash) => {
+      try {
+        await gitApi.stashPop(root, s.ref_spec);
+        toastSuccess(`Popped ${s.ref_spec}`);
+        await refresh();
+        await loadStashes();
+      } catch (e) {
+        toastError(`Pop failed: ${errMsg(e)}`);
+      }
+    },
+    [root, refresh, loadStashes],
+  );
+
+  const stashApply = useCallback(
+    async (s: GitStash) => {
+      try {
+        await gitApi.stashApply(root, s.ref_spec);
+        toastSuccess(`Applied ${s.ref_spec} (still in stash list)`);
+        await refresh();
+      } catch (e) {
+        toastError(`Apply failed: ${errMsg(e)}`);
+      }
+    },
+    [root, refresh],
+  );
+
+  const stashDrop = useCallback(
+    async (s: GitStash) => {
+      const ok = await dialogConfirm(
+        `Drop ${s.ref_spec}?\n\n"${s.message}"\n\nThe stashed changes are unrecoverable after this.`,
+        {
+          title: "Drop stash",
+          okLabel: "Drop",
+          cancelLabel: "Cancel",
+          danger: true,
+        },
+      );
+      if (!ok) return;
+      try {
+        await gitApi.stashDrop(root, s.ref_spec);
+        toastSuccess(`Dropped ${s.ref_spec}`);
+        await loadStashes();
+      } catch (e) {
+        toastError(`Drop failed: ${errMsg(e)}`);
+      }
+    },
+    [root, loadStashes],
+  );
 
   const switchBranch = useCallback(
     async (b: string) => {
@@ -681,6 +771,80 @@ export function SourceControlPanel({ wsId, root }: Props) {
                 </span>
               </span>
             </button>
+          ))}
+        </div>
+      )}
+      <button
+        className="git-history-toggle"
+        onClick={() => setStashesOpen((v) => !v)}
+        aria-expanded={stashesOpen}
+      >
+        <Icon name={stashesOpen ? "chevron-down" : "chevron-right"} size={11} />
+        <span>Stashes</span>
+        {stashesOpen && stashes.length > 0 && (
+          <span className="git-history-count">· {stashes.length}</span>
+        )}
+        <span className="git-stash-push-shortcut" onClick={(e) => {
+          e.stopPropagation();
+          void stashPush();
+        }}
+          title="Stash uncommitted changes"
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.stopPropagation();
+              e.preventDefault();
+              void stashPush();
+            }
+          }}
+        >
+          <Icon name="plus" size={11} /> Stash
+        </span>
+      </button>
+      {stashesOpen && (
+        <div className="git-history-list">
+          {stashes.length === 0 && (
+            <div className="git-history-empty">
+              {status?.is_repo
+                ? "No stashes."
+                : "Not a git repository."}
+            </div>
+          )}
+          {stashes.map((s) => (
+            <div key={s.ref_spec} className="git-stash-row">
+              <div className="git-stash-meta">
+                <span className="git-stash-message">{s.message}</span>
+                <span className="git-stash-sub">
+                  <span className="git-stash-ref">{s.ref_spec}</span>
+                  <span>on {s.branch}</span>
+                  <span>{formatRelative(s.timestamp)}</span>
+                </span>
+              </div>
+              <div className="git-stash-actions">
+                <button
+                  className="git-stash-btn"
+                  onClick={() => void stashApply(s)}
+                  title="Apply stash, keep in stash list"
+                >
+                  Apply
+                </button>
+                <button
+                  className="git-stash-btn"
+                  onClick={() => void stashPop(s)}
+                  title="Apply stash and remove from list"
+                >
+                  Pop
+                </button>
+                <button
+                  className="git-stash-btn git-stash-btn-danger"
+                  onClick={() => void stashDrop(s)}
+                  title="Discard this stash"
+                >
+                  Drop
+                </button>
+              </div>
+            </div>
           ))}
         </div>
       )}

@@ -227,6 +227,13 @@ export interface GitCommit {
   parents: string;
 }
 
+export interface GitStash {
+  ref_spec: string;
+  branch: string;
+  message: string;
+  timestamp: number;
+}
+
 export const git = {
   status: (path: string) => invoke<GitStatus>("git_status", { path }),
   diff: (path: string, file?: string) =>
@@ -258,6 +265,20 @@ export const git = {
     invoke<GitCommit[]>("git_log", { path, limit }),
   showCommit: (path: string, refspec: string) =>
     invoke<string>("git_show_commit", { path, refspec }),
+  stashList: (path: string) =>
+    invoke<GitStash[]>("git_stash_list", { path }),
+  stashPush: (path: string, message?: string, includeUntracked = false) =>
+    invoke<string>("git_stash_push", {
+      path,
+      message: message ?? null,
+      includeUntracked,
+    }),
+  stashPop: (path: string, refSpec: string) =>
+    invoke<string>("git_stash_pop", { path, refSpec }),
+  stashApply: (path: string, refSpec: string) =>
+    invoke<string>("git_stash_apply", { path, refSpec }),
+  stashDrop: (path: string, refSpec: string) =>
+    invoke<string>("git_stash_drop", { path, refSpec }),
 };
 
 export interface WorkspaceMeta {

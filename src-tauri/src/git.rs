@@ -397,6 +397,108 @@ pub fn git_delete_branch(
     run_git(&path, &["branch", flag, trimmed])
 }
 
+#[derive(Serialize)]
+pub struct GitStash {
+    /// stash@{N} — used as the refspec for pop/apply/drop/show.
+    pub ref_spec: String,
+    /// Branch the stash was created on, e.g. "main".
+    pub branch: String,
+    /// User-provided or auto-generated message.
+    pub message: String,
+    /// Commit time as Unix seconds.
+    pub timestamp: i64,
+}
+
+#[tauri::command]
+pub fn git_stash_list(path: String) -> Result<Vec<GitStash>, String> {
+    if !git_is_repo(path.clone()) {
+        return Ok(vec![]);
+    }
+    // %gd  → stash ref (stash@{0})
+    // %gs  → reflog message ("On main: WIP work")
+    // %ct  → committer date as Unix seconds
+    // Same control-char delimiters as git_log to avoid collision with
+    // stash messages that contain tabs.
+    let format = "%gd\x1f%gs\x1f%ct\x1e";
+    let out = run_git(
+        &path,
+        &["stash", "list", &format!("--format={}", format)],
+    )?;
+    let mut stashes = Vec::new();
+    for raw in out.split('\x1e') {
+        let trimmed = raw.trim_start_matches('\n').trim_end_matches('\n');
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split('\x1f').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        let ts = parts[2].parse::<i64>().unwrap_or(0);
+        // %gs reflog message looks like "WIP on <branch>: <subject>" or
+        // "On <branch>: <user message>". Split out the branch + the
+        // human-readable message for the UI.
+        let raw_msg = parts[1];
+        let (branch, message) = if let Some(rest) = raw_msg.strip_prefix("WIP on ") {
+            if let Some((b, m)) = rest.split_once(": ") {
+                (b.to_string(), m.to_string())
+            } else {
+                ("(unknown)".to_string(), rest.to_string())
+            }
+        } else if let Some(rest) = raw_msg.strip_prefix("On ") {
+            if let Some((b, m)) = rest.split_once(": ") {
+                (b.to_string(), m.to_string())
+            } else {
+                ("(unknown)".to_string(), rest.to_string())
+            }
+        } else {
+            ("(unknown)".to_string(), raw_msg.to_string())
+        };
+        stashes.push(GitStash {
+            ref_spec: parts[0].to_string(),
+            branch,
+            message,
+            timestamp: ts,
+        });
+    }
+    Ok(stashes)
+}
+
+#[tauri::command]
+pub fn git_stash_push(
+    path: String,
+    message: Option<String>,
+    include_untracked: Option<bool>,
+) -> Result<String, String> {
+    let mut args: Vec<String> = vec!["stash".into(), "push".into()];
+    if include_untracked.unwrap_or(false) {
+        args.push("--include-untracked".into());
+    }
+    if let Some(m) = message.as_deref() {
+        if !m.trim().is_empty() {
+            args.push("-m".into());
+            args.push(m.to_string());
+        }
+    }
+    let str_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git(&path, &str_args)
+}
+
+#[tauri::command]
+pub fn git_stash_pop(path: String, ref_spec: String) -> Result<String, String> {
+    run_git(&path, &["stash", "pop", &ref_spec])
+}
+
+#[tauri::command]
+pub fn git_stash_apply(path: String, ref_spec: String) -> Result<String, String> {
+    run_git(&path, &["stash", "apply", &ref_spec])
+}
+
+#[tauri::command]
+pub fn git_stash_drop(path: String, ref_spec: String) -> Result<String, String> {
+    run_git(&path, &["stash", "drop", &ref_spec])
+}
+
 #[tauri::command]
 pub fn git_show_commit(path: String, refspec: String) -> Result<String, String> {
     // git show with full diff. We use --stat for a header summary line

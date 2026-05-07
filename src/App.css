@@ -7474,6 +7474,78 @@ input {
   flex-shrink: 0;
 }
 
+/* ---------- Git stashes ---------- */
+.git-stash-push-shortcut {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg-muted);
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+.git-stash-push-shortcut:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.git-stash-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.git-stash-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.git-stash-message {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-stash-sub {
+  display: flex;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  font-family: "Cascadia Mono", Consolas, monospace;
+}
+.git-stash-ref {
+  color: var(--accent);
+}
+.git-stash-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+}
+.git-stash-btn {
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.git-stash-btn:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.git-stash-btn-danger:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 .git-commit-modal {
   position: fixed;
   inset: 0;
