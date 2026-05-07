@@ -159,6 +159,14 @@ function MainApp() {
     };
   }, [hydrated]);
 
+  // Start a fs watcher per open workspace. We deliberately depend only on
+  // the SHAPE of the open list (ids + their roots), not the full `loaded`
+  // map — otherwise every buffer edit / layout tweak re-invokes the watch
+  // command for every open ws. The Rust side deduplicates so it's
+  // idempotent, but cheap is better than free IPC roundtrips.
+  const watchKey = openIds
+    .map((id) => `${id}:${loaded[id]?.meta.root ?? ""}`)
+    .join("|");
   useEffect(() => {
     for (const id of openIds) {
       const meta = loaded[id]?.meta;
@@ -168,7 +176,8 @@ function MainApp() {
         root: meta.root,
       }).catch(() => {});
     }
-  }, [openIds, loaded]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchKey]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
