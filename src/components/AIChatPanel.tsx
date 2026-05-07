@@ -86,6 +86,36 @@ import { MarkdownPreview } from "./MarkdownPreview";
 import { ModelBrowser } from "./ModelBrowser";
 import { permissionFor } from "../toolPermissions";
 import { onAIPromptRequest } from "../aiBus";
+import { relPath } from "../pathUtils";
+
+// @-mention parser: given the composer text and current cursor index,
+// return the active @-segment when the cursor sits in one. A segment
+// starts at an @ and ends at whitespace; if either condition isn't
+// met, returns null. Hoisted out of the component because it's pure
+// and gets called on every keystroke — module scope keeps it from
+// being recreated each render.
+function parseMention(
+  input: string,
+  cursor: number,
+): { query: string; start: number; end: number } | null {
+  if (cursor <= 0 || cursor > input.length) return null;
+  let i = cursor - 1;
+  while (i >= 0) {
+    const ch = input[i];
+    if (ch === "@") {
+      // Only treat @ as a mention trigger when it sits at start-of-
+      // string or after whitespace — otherwise an email address or
+      // an ESM import like @scope/pkg fires the popover.
+      if (i === 0 || /\s/.test(input[i - 1])) {
+        return { query: input.slice(i + 1, cursor), start: i, end: cursor };
+      }
+      return null;
+    }
+    if (/\s/.test(ch)) return null;
+    i--;
+  }
+  return null;
+}
 
 interface Props {
   wsId: string;
@@ -309,6 +339,20 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
   const [attachTerminal, setAttachTerminal] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
+  // @-mention file autocomplete in the composer. mentionState carries
+  // the active query (text after @ up to cursor) and the byte range
+  // it occupies in the input string so accept-completion can replace
+  // the right slice. Null when the cursor is not inside an @-segment.
+  const [mentionState, setMentionState] = useState<{
+    query: string;
+    start: number; // index of '@' in input
+    end: number; // cursor position
+  } | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  // Workspace-file cache for the autocomplete. Populated lazily on
+  // the first @ keystroke so we don't pay the IPC cost in every
+  // chat session whether the user mentions files or not.
+  const [mentionFiles, setMentionFiles] = useState<string[] | null>(null);
   // Shell-style prompt history. historyIdx counts backwards through
   // the user-message stream (0 = most recent); null means we're not
   // in history mode. historyDraft snapshots whatever the user was
@@ -886,6 +930,55 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       return;
     }
     await sendUserText(text);
+  };
+
+  // Filter the cached workspace files by the current mention query.
+  // Match against the workspace-relative path (a file's basename
+  // surfaces highest because it appears earlier in the relpath when
+  // there are few directories above it), capped at 8 hits to keep
+  // the popover compact.
+  const mentionMatches = useMemo(() => {
+    if (!mentionState || !mentionFiles || !root) return [];
+    const q = mentionState.query.toLowerCase();
+    const out: Array<{ abs: string; rel: string }> = [];
+    for (const f of mentionFiles) {
+      const rel = relPath(f, root);
+      const lower = rel.toLowerCase();
+      if (q === "" || lower.includes(q)) {
+        out.push({ abs: f, rel });
+        if (out.length >= 8) break;
+      }
+    }
+    return out;
+  }, [mentionState, mentionFiles, root]);
+
+  const acceptMention = (pick: { abs: string; rel: string }) => {
+    if (!mentionState) return;
+    // Splice the relpath in place of the @query, leave a trailing
+    // space so the user can keep typing without manually closing
+    // the segment.
+    const before = input.slice(0, mentionState.start);
+    const after = input.slice(mentionState.end);
+    const next = `${before}@${pick.rel}${after.startsWith(" ") ? "" : " "}${after}`;
+    setInput(next);
+    setMentionState(null);
+    setMentionIndex(0);
+    setAttachedFiles((prev) =>
+      prev.includes(pick.abs) ? prev : [...prev, pick.abs],
+    );
+    // Restore focus + place cursor after the inserted path so the
+    // user can keep typing without clicking back into the textarea.
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      const cursor = mentionState.start + 1 + pick.rel.length + 1;
+      el.focus();
+      try {
+        el.setSelectionRange(cursor, cursor);
+      } catch {
+        /* ignore */
+      }
+    });
   };
 
   // Editor right-click "Ask AI to …" actions land here. The bus
@@ -2875,6 +2968,21 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           </span>
         </div>
       )}
+      {mentionState && mentionMatches.length > 0 && streaming === null && (
+        <div className="ai-slash-suggestions ai-mention-suggestions">
+          {mentionMatches.map((m, i) => (
+            <button
+              key={m.abs}
+              className={`ai-slash-item ${i === mentionIndex ? "active" : ""}`}
+              onMouseEnter={() => setMentionIndex(i)}
+              onClick={() => acceptMention(m)}
+            >
+              <span className="ai-slash-name">@{m.rel}</span>
+              <span className="ai-slash-hint">attach file</span>
+            </button>
+          ))}
+        </div>
+      )}
       {(() => {
         const isSlash = input.startsWith("/");
         if (!isSlash || streaming !== null) return null;
@@ -2953,13 +3061,28 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           }
           value={input}
           onChange={(e) => {
-            setInput(e.target.value);
+            const v = e.target.value;
+            const cursor = e.target.selectionStart ?? v.length;
+            setInput(v);
             setSlashIndex(0);
             // Any user-driven change (typing, paste) takes us out of
             // history mode so the next ArrowUp starts a fresh walk
             // from the most recent message instead of resuming a
             // stale cursor.
             if (historyIdx !== null) setHistoryIdx(null);
+            // @-mention detection. Lazy-load the workspace file list
+            // the first time we see one, then keep it cached for the
+            // session — the user's working set rarely changes mid-chat
+            // and a stale entry just means an extra second to find it.
+            const m = parseMention(v, cursor);
+            setMentionState(m);
+            setMentionIndex(0);
+            if (m && mentionFiles === null && root) {
+              void search
+                .listFiles(root, 5000)
+                .then((list) => setMentionFiles(list))
+                .catch(() => setMentionFiles([]));
+            }
           }}
           onKeyDown={(e) => {
             // Esc while a request is in flight = stop. Always wins so the
@@ -2973,6 +3096,35 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               e.preventDefault();
               stop();
               return;
+            }
+            // @-mention popover navigation takes precedence over the
+            // slash-command popover (they can't both be active — slash
+            // requires the input to start with /).
+            if (mentionState && mentionMatches.length > 0) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setMentionIndex((i) => Math.min(mentionMatches.length - 1, i + 1));
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setMentionIndex((i) => Math.max(0, i - 1));
+                return;
+              }
+              if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                e.preventDefault();
+                const idx = Math.max(
+                  0,
+                  Math.min(mentionIndex, mentionMatches.length - 1),
+                );
+                acceptMention(mentionMatches[idx]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setMentionState(null);
+                return;
+              }
             }
             const isSlash = input.startsWith("/");
             const firstWord = isSlash ? input.split(/\s+/)[0] : "";
