@@ -76,7 +76,16 @@ export type IconName =
   | "alert-triangle"
   | "globe"
   | "file-text"
-  | "wrench";
+  | "wrench"
+  | "upload"
+  | "upload-cloud"
+  | "download"
+  | "eject"
+  | "star"
+  | "star-filled"
+  | "link"
+  | "circle"
+  | "info";
 
 // Each entry returns the inner JSX for an svg with viewBox 0 0 24 24.
 // Use stroke={currentColor} + strokeWidth + strokeLinecap/Linejoin so
@@ -318,6 +327,54 @@ const ICONS: Record<IconName, ReactNode> = {
   ),
   wrench: (
     <path d="M14.7 6.3a3.5 3.5 0 0 1 0 4.95l-1.06 1.06 4.6 4.6a2 2 0 0 1-2.83 2.83l-4.6-4.6-1.06 1.06a3.5 3.5 0 0 1-4.95 0L3.7 14.5a3.5 3.5 0 0 1 0-4.95L8.65 4.6a3.5 3.5 0 0 1 4.95 0l1.1 1.7Z" />
+  ),
+  upload: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </>
+  ),
+  "upload-cloud": (
+    <>
+      <polyline points="16 16 12 12 8 16" />
+      <line x1="12" y1="12" x2="12" y2="21" />
+      <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+      <polyline points="16 16 12 12 8 16" />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </>
+  ),
+  eject: (
+    <path d="M5 17h14L12 5 5 17Zm0 3h14" />
+  ),
+  star: (
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+  ),
+  "star-filled": (
+    <polygon
+      points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+      fill="currentColor"
+    />
+  ),
+  link: (
+    <>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </>
+  ),
+  circle: <circle cx="12" cy="12" r="9" />,
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12" y2="8.01" />
+    </>
   ),
 };
 

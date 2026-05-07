@@ -255,11 +255,16 @@ export function TodosCard({ items }: TodosCardProps) {
               title={t.status}
             >
               <span className="ai-todo-mark">
-                {t.status === "completed"
-                  ? "✓"
-                  : t.status === "in_progress"
-                    ? "◐"
-                    : "○"}
+                <Icon
+                  name={
+                    t.status === "completed"
+                      ? "check"
+                      : t.status === "in_progress"
+                        ? "rotate-ccw"
+                        : "circle"
+                  }
+                  size={11}
+                />
               </span>
               <span className="ai-todo-text">
                 {t.status === "in_progress" && t.activeForm

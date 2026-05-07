@@ -24,6 +24,7 @@ import {
   setActiveSftp,
 } from "../sftpLinks";
 import { basename } from "../pathUtils";
+import { Icon } from "./Icon";
 
 // SFTP profiles live alongside the Settings editor's storage key. We
 // keep the parsing + connection-arg shape duplicated here (rather than
@@ -982,8 +983,9 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
                 ? `Push current editor file to its tracked remote path`
                 : "Push to remote (open a file from the remote tree first, or right-click a folder → Upload current editor file here)"
             }
+            aria-label="Push current file"
           >
-            ↥
+            <Icon name="upload-cloud" size={14} />
           </button>
           <button
             className={`remote-icon-btn ${activeAutoPush ? "remote-icon-btn-accent" : ""}`}
@@ -996,36 +998,42 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
                   ? "Auto-push: ON for this file. Click to disable."
                   : "Auto-push: OFF. Click to push this file to remote on every save."
             }
+            aria-pressed={activeAutoPush}
+            aria-label="Auto-push on save"
           >
-            {activeAutoPush ? "★" : "☆"}
+            <Icon name={activeAutoPush ? "star-filled" : "star"} size={14} />
           </button>
           <button
             className="remote-icon-btn"
             onClick={() => void pushAllDirty()}
             title="Push every dirty linked file in this workspace to its tracked remote path"
+            aria-label="Push all dirty files"
           >
-            ⇈
+            <Icon name="upload-cloud" size={14} />
           </button>
           <button
             className="remote-icon-btn"
             onClick={() => void uploadHere(home)}
             title="Upload a local file to home"
+            aria-label="Upload to home"
           >
-            ⬆
+            <Icon name="upload" size={14} />
           </button>
           <button
             className="remote-icon-btn"
             onClick={() => void refreshDir(home)}
             title="Refresh"
+            aria-label="Refresh remote tree"
           >
-            ↻
+            <Icon name="refresh" size={14} />
           </button>
           <button
             className="remote-icon-btn"
             onClick={() => disconnect()}
             title="Disconnect"
+            aria-label="Disconnect"
           >
-            ⏏
+            <Icon name="eject" size={14} />
           </button>
         </div>
       </div>
@@ -1245,12 +1253,12 @@ function RemoteProfileForm({
 
       {testMsg.kind === "ok" && (
         <div className="remote-form-result remote-form-result-ok">
-          ✓ {testMsg.text}
+          <Icon name="check" size={12} /> {testMsg.text}
         </div>
       )}
       {testMsg.kind === "fail" && (
         <div className="remote-form-result remote-form-result-fail">
-          ✗ {testMsg.text}
+          <Icon name="x" size={12} /> {testMsg.text}
         </div>
       )}
     </div>
@@ -1340,14 +1348,24 @@ function RemoteDirChildren({
               title={tip}
             >
               <span className="tree-caret">
-                {isDir ? (isExpanded ? "▾" : "▸") : ""}
+                {isDir && (
+                  <Icon
+                    name={isExpanded ? "chevron-down" : "chevron-right"}
+                    size={10}
+                  />
+                )}
               </span>
               <span className="tree-icon">
-                {isDir
-                  ? "📁"
-                  : entry.kind === "link"
-                    ? "🔗"
-                    : "📄"}
+                <Icon
+                  name={
+                    isDir
+                      ? "folder"
+                      : entry.kind === "link"
+                        ? "link"
+                        : "file"
+                  }
+                  size={14}
+                />
               </span>
               <span className="tree-name">{entry.name}</span>
               {!isDir && (
