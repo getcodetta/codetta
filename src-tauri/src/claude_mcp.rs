@@ -28,28 +28,14 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Write a JSON file atomically — write to a sibling .tmp file
-/// first, then rename over the target. This prevents a crash or
-/// power loss mid-write from leaving `~/.claude.json` truncated
-/// (Claude Code reads it at every invocation; a corrupt one
-/// breaks the user's entire CLI workflow until they hand-edit it).
+/// Write a JSON file atomically — delegates to crate::atomic which
+/// uses the same .codetta-tmp suffix and rename-then-cleanup-on-fail
+/// pattern across every module that needs durable writes. Important
+/// for ~/.claude.json specifically: Claude Code reads it on every
+/// invocation, so a truncated copy breaks the user's entire CLI
+/// workflow until they hand-edit it.
 fn write_json_atomic(target: &Path, contents: &str) -> Result<(), String> {
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    // Use a deterministic suffix on the same path so rename is on
-    // the same volume (atomicity guarantee). The .codetta-tmp
-    // suffix makes orphaned tmps after a crash easy to identify.
-    let mut tmp = target.as_os_str().to_owned();
-    tmp.push(".codetta-tmp");
-    let tmp = PathBuf::from(tmp);
-    fs::write(&tmp, contents).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, target).map_err(|e| {
-        // Best-effort cleanup of the tmp file on rename failure so
-        // we don't leave clutter behind.
-        let _ = fs::remove_file(&tmp);
-        e.to_string()
-    })
+    crate::atomic::write(target, contents.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -115,30 +115,9 @@ fn decode_text_bytes(bytes: &[u8]) -> String {
     cow.into_owned()
 }
 
-fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let mut tmp = path.to_path_buf();
-    let mut name = tmp
-        .file_name()
-        .map(|s| s.to_os_string())
-        .unwrap_or_default();
-    name.push(".lcp.tmp");
-    tmp.set_file_name(name);
-    std::fs::write(&tmp, contents)?;
-    // std::fs::rename atomically replaces the target on Windows (>=2019/Rust >=1.49) and Unix.
-    match std::fs::rename(&tmp, path) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            Err(e)
-        }
-    }
-}
-
 #[tauri::command]
 pub fn write_file(path: String, contents: String) -> Result<(), String> {
-    write_atomic(Path::new(&path), contents.as_bytes()).map_err(|e| e.to_string())
+    crate::atomic::write(Path::new(&path), contents.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

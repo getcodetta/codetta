@@ -37,12 +37,6 @@ fn workspace_state_file(id: &str) -> Result<PathBuf, String> {
     Ok(dir.join("state.json"))
 }
 
-fn write_atomic(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path)
-}
-
 #[tauri::command]
 pub fn workspaces_load() -> Result<WorkspacesIndex, String> {
     let path = workspaces_file()?;
@@ -57,7 +51,7 @@ pub fn workspaces_load() -> Result<WorkspacesIndex, String> {
 pub fn workspaces_save(index: WorkspacesIndex) -> Result<(), String> {
     let path = workspaces_file()?;
     let s = serde_json::to_string_pretty(&index).map_err(|e| e.to_string())?;
-    write_atomic(&path, s.as_bytes()).map_err(|e| e.to_string())
+    crate::atomic::write(&path, s.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -74,5 +68,5 @@ pub fn workspace_state_load(id: String) -> Result<serde_json::Value, String> {
 pub fn workspace_state_save(id: String, state: serde_json::Value) -> Result<(), String> {
     let path = workspace_state_file(&id)?;
     let s = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
-    write_atomic(&path, s.as_bytes()).map_err(|e| e.to_string())
+    crate::atomic::write(&path, s.as_bytes()).map_err(|e| e.to_string())
 }

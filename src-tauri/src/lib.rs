@@ -1,3 +1,4 @@
+mod atomic;
 mod claude_code;
 mod claude_mcp;
 mod claude_perm;
