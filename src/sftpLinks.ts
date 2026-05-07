@@ -53,14 +53,6 @@ export function rememberRemoteLink(
   const links = load(wsId);
   links[normalizeLocalPath(localPath)] = link;
   save(wsId, links);
-  notifyChange(wsId);
-}
-
-export function forgetRemoteLink(wsId: string, localPath: string) {
-  const links = load(wsId);
-  delete links[normalizeLocalPath(localPath)];
-  save(wsId, links);
-  notifyChange(wsId);
 }
 
 export function lookupRemoteLink(
@@ -71,32 +63,7 @@ export function lookupRemoteLink(
   return links[normalizeLocalPath(localPath)] ?? null;
 }
 
-export function listRemoteLinks(wsId: string): Record<string, RemoteLink> {
-  return load(wsId);
-}
-
-// Lightweight pub/sub so React components observing the active editor
-// can refresh their "is this file linked?" badge when a new download
-// happens elsewhere in the app.
 type Listener = () => void;
-const listeners = new Map<string, Set<Listener>>();
-
-function notifyChange(wsId: string) {
-  const set = listeners.get(wsId);
-  if (set) for (const l of set) l();
-}
-
-export function subscribeRemoteLinks(wsId: string, fn: Listener): () => void {
-  let set = listeners.get(wsId);
-  if (!set) {
-    set = new Set();
-    listeners.set(wsId, set);
-  }
-  set.add(fn);
-  return () => {
-    set!.delete(fn);
-  };
-}
 
 // Active SFTP session registry — the connected RemoteSftpPanel
 // publishes its current connection so other parts of the UI (the local

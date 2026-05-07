@@ -118,10 +118,6 @@ export function effectivePatterns(s?: PrivacySettings): string[] {
 // Matched against the path's forward-slash form (Windows or POSIX).
 // Case-insensitive on Windows (matches the OS), case-sensitive elsewhere.
 
-function isWindowsPath(p: string): boolean {
-  return /^[a-zA-Z]:[/\\]/.test(p);
-}
-
 function normalizePath(p: string): string {
   let n = p.replace(/\\/g, "/");
   // Strip Windows drive letter — globs are written without one. The
@@ -189,9 +185,3 @@ export function matchExclusion(
   return null;
 }
 
-export function isExcluded(absolutePath: string, patterns?: string[]): boolean {
-  return matchExclusion(absolutePath, patterns) !== null;
-}
-
-// Re-export so callers don't need to know about the helper directly.
-export { isWindowsPath as _isWindowsPath };
