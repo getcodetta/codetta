@@ -93,6 +93,18 @@ export const search = {
       caseSensitive,
       maxResults,
     }),
+  searchRegex: (
+    root: string,
+    pattern: string,
+    caseSensitive = false,
+    maxResults = 500,
+  ) =>
+    invoke<SearchHit[]>("search_regex", {
+      root,
+      pattern,
+      caseSensitive,
+      maxResults,
+    }),
   scanTodos: (root: string, maxResults = 1000) =>
     invoke<TodoHit[]>("scan_todos", { root, maxResults }),
   readPackageScripts: (root: string) =>

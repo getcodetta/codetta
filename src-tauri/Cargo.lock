@@ -601,6 +601,7 @@ dependencies = [
  "notify-debouncer-mini",
  "parking_lot",
  "portable-pty",
+ "regex",
  "russh",
  "russh-sftp",
  "serde",

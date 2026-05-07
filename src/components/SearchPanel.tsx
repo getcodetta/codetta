@@ -34,6 +34,7 @@ interface Props {
 interface CacheEntry {
   query: string;
   caseSensitive: boolean;
+  regex: boolean;
   hits: SearchHit[];
   ranAt: number;
 }
@@ -53,6 +54,7 @@ export function SearchPanel({ wsId, root }: Props) {
   const [caseSensitive, setCaseSensitive] = useState(
     cached?.caseSensitive ?? false,
   );
+  const [regex, setRegex] = useState(cached?.regex ?? false);
   const [hits, setHits] = useState<SearchHit[]>(cached?.hits ?? []);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,12 +87,13 @@ export function SearchPanel({ wsId, root }: Props) {
     const c = root ? lastResultByRoot.get(root) : undefined;
     setQuery(c?.query ?? "");
     setCaseSensitive(c?.caseSensitive ?? false);
+    setRegex(c?.regex ?? false);
     setHits(c?.hits ?? []);
     setError(null);
   }, [root]);
 
   const runSearch = useCallback(
-    async (q: string, cs: boolean) => {
+    async (q: string, cs: boolean, useRegex: boolean) => {
       if (!root || q.length === 0) {
         setHits([]);
         setError(null);
@@ -101,12 +104,15 @@ export function SearchPanel({ wsId, root }: Props) {
       setSearching(true);
       setError(null);
       try {
-        const out = await search.searchText(root, q, cs, MAX_HITS);
+        const out = useRegex
+          ? await search.searchRegex(root, q, cs, MAX_HITS)
+          : await search.searchText(root, q, cs, MAX_HITS);
         if (!mountedRef.current || scanIdRef.current !== id) return;
         setHits(out);
         lastResultByRoot.set(root, {
           query: q,
           caseSensitive: cs,
+          regex: useRegex,
           hits: out,
           ranAt: Date.now(),
         });
@@ -134,10 +140,10 @@ export function SearchPanel({ wsId, root }: Props) {
       return;
     }
     const handle = window.setTimeout(() => {
-      void runSearch(q, caseSensitive);
+      void runSearch(q, caseSensitive, regex);
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [query, caseSensitive, runSearch]);
+  }, [query, caseSensitive, regex, runSearch]);
 
   // Group hits by file, preserving the order Rust returned (which is
   // already sort-by-path inside the walker).
@@ -170,25 +176,46 @@ export function SearchPanel({ wsId, root }: Props) {
     // on-the-original-+-inserted-after style so the user sees what
     // each line will become.
     if (!q) return text;
-    const haystack = caseSensitive ? text : text.toLowerCase();
-    const needle = caseSensitive ? q : q.toLowerCase();
-    const idx = haystack.indexOf(needle);
+    let idx = -1;
+    let matchLen = 0;
+    if (regex) {
+      try {
+        const re = new RegExp(q, caseSensitive ? "" : "i");
+        const m = re.exec(text);
+        if (m) {
+          idx = m.index;
+          matchLen = m[0].length;
+        }
+      } catch {
+        // Bad regex — render plain text. The status row already shows
+        // the compile error from the server-side attempt.
+        return text;
+      }
+    } else {
+      const haystack = caseSensitive ? text : text.toLowerCase();
+      const needle = caseSensitive ? q : q.toLowerCase();
+      idx = haystack.indexOf(needle);
+      matchLen = needle.length;
+    }
     if (idx < 0) return text;
-    const matchSlice = text.slice(idx, idx + q.length);
+    const matchSlice = text.slice(idx, idx + matchLen);
+    // Replace preview only honours literal mode for now — regex replace
+    // would need backreference handling, which V1 leaves disabled.
+    const showReplaceMark = replaceOpen && replacement && !regex;
     return (
       <>
         {text.slice(0, idx)}
         <mark
           className={`search-hit-mark ${
-            replaceOpen && replacement ? "search-hit-mark-replaced" : ""
+            showReplaceMark ? "search-hit-mark-replaced" : ""
           }`}
         >
           {matchSlice}
         </mark>
-        {replaceOpen && replacement && (
+        {showReplaceMark && (
           <mark className="search-hit-mark-replacement">{replacement}</mark>
         )}
-        {text.slice(idx + q.length)}
+        {text.slice(idx + matchLen)}
       </>
     );
   };
@@ -264,7 +291,9 @@ export function SearchPanel({ wsId, root }: Props) {
         }
         // Re-run the search so the (now-empty) hits clear from the UI
         // and any remaining matches in still-unprocessed files appear.
-        void runSearch(q, caseSensitive);
+        // Replace is literal-only so pass regex=false here regardless
+        // of the toggle state (canReplace already gated this).
+        void runSearch(q, caseSensitive, false);
       } finally {
         setReplacing(false);
       }
@@ -283,12 +312,16 @@ export function SearchPanel({ wsId, root }: Props) {
   const totalHits = hits.length;
   const fileCount = groups.length;
   const trimmed = query.trim();
+  // Replace is intentionally literal-only — regex replace needs
+  // backreference handling ($1, $2, …) which V1 punts on. The button
+  // disables itself in regex mode with a tooltip explaining why.
   const canReplace =
     replaceOpen &&
     !replacing &&
     trimmed.length > 0 &&
     replacement !== trimmed &&
-    totalHits > 0;
+    totalHits > 0 &&
+    !regex;
 
   return (
     <div className="search-panel">
@@ -331,6 +364,19 @@ export function SearchPanel({ wsId, root }: Props) {
           aria-pressed={caseSensitive}
         >
           Aa
+        </button>
+        <button
+          className={`search-panel-toggle ${regex ? "active" : ""}`}
+          onClick={() => setRegex((v) => !v)}
+          title={
+            regex
+              ? "Regex mode (Rust regex syntax — Perl-ish without lookahead/backrefs)"
+              : "Literal substring mode"
+          }
+          aria-label={`Regex: ${regex ? "on" : "off"}`}
+          aria-pressed={regex}
+        >
+          .*
         </button>
       </div>
       {canReplace && (

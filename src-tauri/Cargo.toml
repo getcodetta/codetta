@@ -39,6 +39,10 @@ encoding_rs = "0.8"
 # Sniffs UTF-8 / UTF-16 BOMs and most CJK encodings well enough for an
 # editor-grade fallback when the file isn't valid UTF-8.
 chardetng = "0.1"
+# Regex engine for the Search panel's regex-mode toggle. Default
+# features (Unicode tables, multi-line) are fine — we only need the
+# `Regex` API.
+regex = "1"
 # SFTP client. russh is pure Rust (no libssh2 / native deps), works on
 # Windows out of the box. russh-sftp layers the SFTP protocol on top.
 russh = "0.46"

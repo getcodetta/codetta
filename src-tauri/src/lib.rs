@@ -73,6 +73,7 @@ pub fn run() {
             git::git_init,
             search::list_workspace_files,
             search::search_text,
+            search::search_regex,
             search::scan_todos,
             search::read_package_scripts,
             git::git_diff,

@@ -195,6 +195,71 @@ pub fn search_text(
     Ok(hits)
 }
 
+/// Same shape as search_text but the query is interpreted as a Rust
+/// regex (uses the `regex` crate, ~Perl-compatible without lookahead /
+/// backreferences). The case_sensitive flag flips between
+/// `Regex::new(pat)` and `RegexBuilder::new(pat).case_insensitive(true)`
+/// so the user's UI toggle behaves the same in literal and regex mode.
+///
+/// Bad patterns return Err with the regex compiler's diagnostic so the
+/// frontend can surface "expected ']' at offset 7" instead of dying
+/// silently. Empty queries return an empty hit list (same as search_text).
+#[tauri::command]
+pub fn search_regex(
+    root: String,
+    pattern: String,
+    case_sensitive: Option<bool>,
+    max_results: Option<usize>,
+) -> Result<Vec<SearchHit>, String> {
+    if pattern.is_empty() {
+        return Ok(vec![]);
+    }
+    let cs = case_sensitive.unwrap_or(false);
+    let cap = max_results.unwrap_or(2000);
+    let re = regex::RegexBuilder::new(&pattern)
+        .case_insensitive(!cs)
+        .build()
+        .map_err(|e| format!("Invalid regex: {e}"))?;
+
+    let mut paths: Vec<String> = Vec::new();
+    walk_files(Path::new(&root), &mut paths, 50_000, |_p| true);
+
+    let mut hits = Vec::new();
+    for p in paths {
+        if hits.len() >= cap {
+            break;
+        }
+        let pp = Path::new(&p);
+        let bytes = match read_text_file_capped(pp, MAX_FILE_BYTES_FOR_SEARCH) {
+            Some(b) => b,
+            None => continue,
+        };
+        let text = match std::str::from_utf8(&bytes) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        for (i, line) in text.lines().enumerate() {
+            if let Some(m) = re.find(line) {
+                hits.push(SearchHit {
+                    path: p.clone(),
+                    line: i + 1,
+                    // Convert byte offset to a 1-based column count of
+                    // chars. Most editors show columns in characters,
+                    // not bytes, and this is close enough for ASCII +
+                    // most BMP files.
+                    col: line[..m.start()].chars().count() + 1,
+                    text: line.to_string(),
+                });
+                if hits.len() >= cap {
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(hits)
+}
+
 #[derive(Serialize)]
 pub struct TodoHit {
     pub path: String,
