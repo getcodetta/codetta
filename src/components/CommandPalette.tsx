@@ -264,14 +264,27 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
               setIndex(0);
             }}
             onKeyDown={(e) => {
+              const last = Math.max(0, filtered.length - 1);
               if (e.key === "Escape") {
                 onClose();
               } else if (e.key === "ArrowDown") {
                 e.preventDefault();
-                setIndex((i) => Math.min(filtered.length - 1, i + 1));
+                setIndex((i) => Math.min(last, i + 1));
               } else if (e.key === "ArrowUp") {
                 e.preventDefault();
                 setIndex((i) => Math.max(0, i - 1));
+              } else if (e.key === "PageDown") {
+                e.preventDefault();
+                setIndex((i) => Math.min(last, i + 10));
+              } else if (e.key === "PageUp") {
+                e.preventDefault();
+                setIndex((i) => Math.max(0, i - 10));
+              } else if (e.key === "Home") {
+                e.preventDefault();
+                setIndex(0);
+              } else if (e.key === "End") {
+                e.preventDefault();
+                setIndex(last);
               } else if (e.key === "Enter") {
                 e.preventDefault();
                 activate(index);

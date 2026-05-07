@@ -85,6 +85,8 @@ export function StatusBar({ onOpenPalette }: Props) {
         <button
           className={`sb-btn ${sidebarVisible && sidebarView === "files" ? "active" : ""}`}
           title="Toggle Explorer (Ctrl+B)"
+          aria-label="Toggle Explorer"
+          aria-pressed={sidebarVisible && sidebarView === "files"}
           disabled={!activeId}
           onClick={() => runCommand("view.toggle_sidebar")}
         >
@@ -93,6 +95,8 @@ export function StatusBar({ onOpenPalette }: Props) {
         <button
           className={`sb-btn ${sidebarVisible && sidebarView === "git" ? "active" : ""}`}
           title="Source Control (Ctrl+Shift+G)"
+          aria-label="Source Control"
+          aria-pressed={sidebarVisible && sidebarView === "git"}
           disabled={!activeId}
           onClick={() => runCommand("view.source_control")}
         >
@@ -101,6 +105,8 @@ export function StatusBar({ onOpenPalette }: Props) {
         <button
           className={`sb-btn ${bottomVisible ? "active" : ""}`}
           title="Toggle Panel (Ctrl+J)"
+          aria-label="Toggle bottom panel"
+          aria-pressed={bottomVisible}
           disabled={!activeId}
           onClick={() => runCommand("view.toggle_panel")}
         >
@@ -109,6 +115,7 @@ export function StatusBar({ onOpenPalette }: Props) {
         <button
           className="sb-btn"
           title="New Terminal (Ctrl+`)"
+          aria-label="New terminal"
           disabled={!activeId}
           onClick={() => runCommand("terminal.new_bottom")}
         >
@@ -121,6 +128,8 @@ export function StatusBar({ onOpenPalette }: Props) {
               ? "Auto-save ON (click to disable)"
               : "Auto-save OFF (click to enable)"
           }
+          aria-label={settings.autoSave ? "Disable auto-save" : "Enable auto-save"}
+          aria-pressed={settings.autoSave}
           onClick={() => runCommand("edit.toggle_auto_save")}
         >
           {settings.autoSave ? "⏱" : "💾"}
@@ -128,6 +137,7 @@ export function StatusBar({ onOpenPalette }: Props) {
         <button
           className="sb-btn"
           title="Save (Ctrl+S)"
+          aria-label="Save current file"
           disabled={!editorState.filePath}
           onClick={() => runCommand("file.save")}
         >
@@ -136,6 +146,7 @@ export function StatusBar({ onOpenPalette }: Props) {
         <button
           className="sb-btn"
           title="Open Folder (Ctrl+O)"
+          aria-label="Open folder"
           onClick={() => runCommand("file.open_folder")}
         >
           📂
@@ -143,6 +154,7 @@ export function StatusBar({ onOpenPalette }: Props) {
         <button
           className="sb-btn"
           title="Command Palette (Ctrl+P)"
+          aria-label="Command palette"
           onClick={onOpenPalette}
         >
           ⌖
@@ -150,6 +162,7 @@ export function StatusBar({ onOpenPalette }: Props) {
         <button
           className="sb-btn"
           title="Settings (Ctrl+,)"
+          aria-label="Settings"
           onClick={() => runCommand("view.settings")}
         >
           ⚙
@@ -157,6 +170,7 @@ export function StatusBar({ onOpenPalette }: Props) {
         <button
           className="sb-btn sb-theme"
           title={`Theme: ${theme} — click to cycle`}
+          aria-label={`Theme: ${theme}, click to cycle`}
           onClick={cycleTheme}
         >
           {themeIcon[theme]}

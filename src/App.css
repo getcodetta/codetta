@@ -6228,13 +6228,27 @@ input {
   cursor: pointer;
   white-space: nowrap;
   font-size: 13px;
+  outline: none;
 }
 .tree-row:hover {
   background: var(--bg-hi);
 }
+.tree-row:focus-visible {
+  background: var(--bg-hi);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 .tree-row.active {
   background: var(--accent);
   color: #fff;
+}
+.tree-row.active:focus-visible {
+  box-shadow: inset 0 0 0 1px #fff;
+}
+.tree-empty {
+  padding: 16px 12px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  text-align: center;
 }
 .tree-caret {
   display: inline-block;

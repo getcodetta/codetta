@@ -112,12 +112,36 @@ function Node({ wsId, entry, depth, onContext }: NodeProps) {
     else void openFile(wsId, entry.path);
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onClick();
+    } else if (e.key === "ArrowRight" && entry.is_dir && !expanded) {
+      e.preventDefault();
+      toggleDir(wsId, entry.path);
+    } else if (e.key === "ArrowLeft" && entry.is_dir && expanded) {
+      e.preventDefault();
+      toggleDir(wsId, entry.path);
+    } else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+      // Synthesize a context-menu event at the row's bounding box so
+      // keyboard users can reach the right-click actions.
+      e.preventDefault();
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      onContext({ x: rect.left + 16, y: rect.bottom, entry });
+    }
+  };
+
   return (
     <>
       <div
         className={`tree-row ${isActive ? "active" : ""}`}
         style={{ paddingLeft: 6 + depth * 12 }}
+        tabIndex={0}
+        role={entry.is_dir ? "treeitem" : "button"}
+        aria-expanded={entry.is_dir ? expanded : undefined}
+        aria-label={entry.is_dir ? `${entry.name} folder` : entry.name}
         onClick={onClick}
+        onKeyDown={onKeyDown}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -465,20 +489,27 @@ export function FileTree({ wsId, root }: Props) {
   return (
     <div
       className="tree"
+      role="tree"
       onContextMenu={(e) => {
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY, entry: null });
       }}
     >
-      {entries.map((e) => (
-        <Node
-          key={e.path}
-          wsId={wsId}
-          entry={e}
-          depth={0}
-          onContext={(t) => setMenu(t)}
-        />
-      ))}
+      {entries.length === 0 ? (
+        <div className="tree-empty">
+          Empty folder. Right-click to create a file or folder.
+        </div>
+      ) : (
+        entries.map((e) => (
+          <Node
+            key={e.path}
+            wsId={wsId}
+            entry={e}
+            depth={0}
+            onContext={(t) => setMenu(t)}
+          />
+        ))
+      )}
       {menu && (
         <ContextMenu
           x={menu.x}
