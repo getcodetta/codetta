@@ -21,7 +21,6 @@ export function ActivityBar() {
   const recent = useStore((s) => s.recent);
   const removeRecent = useStore((s) => s.removeFromRecent);
   const openWs = useStore((s) => s.openWorkspace);
-  const setSidebarView = useStore((s) => s.setSidebarView);
   const setSidebarVisible = useStore((s) => s.setSidebarVisible);
 
   const ws = activeId ? loaded[activeId] : null;
@@ -34,6 +33,7 @@ export function ActivityBar() {
   const aiPanelVisible = ws?.layout.aiPanelVisible ?? false;
   const hasSection = (v: SidebarView) =>
     sections.some((s) => s.view === v && !s.collapsed);
+  const sectionActive = (v: SidebarView) => sidebarVisible && hasSection(v);
 
   const [addOpen, setAddOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement>(null);
@@ -54,8 +54,6 @@ export function ActivityBar() {
     // section auto-hides the sidebar (handled in the store action).
     toggleSidebarSection(activeId, v);
   };
-  // satisfy ts lint (used to be referenced)
-  void setSidebarView;
 
   const recentNotOpen = recent.filter((w) => !openIds.includes(w.id));
 
@@ -95,6 +93,7 @@ export function ActivityBar() {
                   void closeWs(id);
                 }}
                 title="Close workspace"
+                aria-label={`Close workspace ${meta.name}`}
               >
                 ×
               </button>
@@ -105,6 +104,9 @@ export function ActivityBar() {
           ref={addBtnRef}
           className="ws-icon ws-icon-add"
           title="Open workspace"
+          aria-label="Open workspace"
+          aria-haspopup="menu"
+          aria-expanded={addOpen}
           onClick={() => setAddOpen((v) => !v)}
         >
           +
@@ -113,42 +115,52 @@ export function ActivityBar() {
 
       <div className="activity-sep" />
 
-      <div className="activity-section view-icons">
+      <div className="activity-section view-icons" role="toolbar" aria-label="Sidebar sections">
         <button
-          className={`activity-icon ${sidebarVisible && hasSection("files") ? "active" : ""}`}
+          className={`activity-icon ${sectionActive("files") ? "active" : ""}`}
           title="Explorer (Ctrl+Shift+E) — click to toggle section"
+          aria-label="Explorer"
+          aria-pressed={sectionActive("files")}
           onClick={() => switchView("files")}
           disabled={!activeId}
         >
           📁
         </button>
         <button
-          className={`activity-icon ${sidebarVisible && hasSection("git") ? "active" : ""}`}
+          className={`activity-icon ${sectionActive("git") ? "active" : ""}`}
           title="Source Control (Ctrl+Shift+G) — click to toggle section"
+          aria-label="Source Control"
+          aria-pressed={sectionActive("git")}
           onClick={() => switchView("git")}
           disabled={!activeId}
         >
           ⎇
         </button>
         <button
-          className={`activity-icon ${sidebarVisible && hasSection("tasks") ? "active" : ""}`}
+          className={`activity-icon ${sectionActive("tasks") ? "active" : ""}`}
           title="Tasks (npm scripts) — click to toggle section"
+          aria-label="Tasks"
+          aria-pressed={sectionActive("tasks")}
           onClick={() => switchView("tasks")}
           disabled={!activeId}
         >
           ▷
         </button>
         <button
-          className={`activity-icon ${sidebarVisible && hasSection("todos") ? "active" : ""}`}
+          className={`activity-icon ${sectionActive("todos") ? "active" : ""}`}
           title="TODO / FIXME (Ctrl+Shift+T) — click to toggle section"
+          aria-label="TODO and FIXME"
+          aria-pressed={sectionActive("todos")}
           onClick={() => switchView("todos")}
           disabled={!activeId}
         >
           ✎
         </button>
         <button
-          className={`activity-icon ${sidebarVisible && hasSection("remote") ? "active" : ""}`}
+          className={`activity-icon ${sectionActive("remote") ? "active" : ""}`}
           title="Remote (SFTP) — click to toggle section. Manage connections in Settings."
+          aria-label="Remote SFTP"
+          aria-pressed={sectionActive("remote")}
           onClick={() => switchView("remote")}
           disabled={!activeId}
         >
@@ -157,6 +169,8 @@ export function ActivityBar() {
         <button
           className={`activity-icon ${aiPanelVisible ? "active" : ""}`}
           title="AI Chat (Claude Code · Anthropic · OpenAI · Ollama) — opens on the right"
+          aria-label="AI chat panel"
+          aria-pressed={aiPanelVisible}
           onClick={() => activeId && setAIPanelVisible(activeId, !aiPanelVisible)}
           disabled={!activeId}
         >

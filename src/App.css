@@ -424,10 +424,16 @@ input {
   display: grid;
   place-items: center;
   padding: 0;
+  outline: none;
 }
 .activity-icon:hover:not(:disabled) {
   background: var(--bg-hi);
   color: var(--fg);
+}
+.activity-icon:focus-visible:not(:disabled) {
+  background: var(--bg-hi);
+  color: var(--fg);
+  border-color: var(--accent);
 }
 .activity-icon.active {
   color: var(--fg);
@@ -1388,6 +1394,11 @@ input {
   cursor: pointer;
   user-select: none;
   border: 1px solid transparent;
+  outline: none;
+}
+.ai-chats-rail-item:focus-visible {
+  border-color: var(--accent);
+  background: var(--bg-hi);
 }
 .ai-chats-rail.expanded .ai-chats-rail-item {
   justify-content: flex-start;

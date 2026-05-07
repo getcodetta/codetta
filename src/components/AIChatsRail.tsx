@@ -145,15 +145,18 @@ export function AIChatsRail({ wsId, ws }: Props) {
           className="ai-chats-rail-add"
           onClick={() => addAIChat(wsId, "editor")}
           title="New AI chat"
+          aria-label="New AI chat"
         >
           <AIIcon size={14} />
-          <span className="ai-chats-rail-plus">+</span>
+          <span className="ai-chats-rail-plus" aria-hidden="true">+</span>
           {expanded && <span className="ai-chats-rail-add-label">New chat</span>}
         </button>
         <button
           className="ai-chats-rail-toggle"
           onClick={() => setAIRailExpanded(wsId, !expanded)}
           title={expanded ? "Collapse rail" : "Expand rail to show chat titles"}
+          aria-label={expanded ? "Collapse AI chat rail" : "Expand AI chat rail"}
+          aria-expanded={expanded}
         >
           {expanded
             ? layout.sidebarSide === "left"
@@ -164,7 +167,7 @@ export function AIChatsRail({ wsId, ws }: Props) {
               : "›"}
         </button>
       </div>
-      <div className="ai-chats-rail-list">
+      <div className="ai-chats-rail-list" role="tablist" aria-label="AI chats">
         {chats.length === 0 && (
           <div className="ai-chats-rail-empty" title="No AI chats yet">
             {expanded ? "No chats yet — click + to start." : "·"}
@@ -183,15 +186,32 @@ export function AIChatsRail({ wsId, ws }: Props) {
                   isDragging ? "dragging" : ""
                 }`}
                 draggable
+                role="tab"
+                tabIndex={0}
+                aria-selected={isActive}
+                aria-label={`${chat.title} — ${badge.full}`}
                 onDragStart={(e) => onItemDragStart(e, chat.id)}
                 onDragOver={(e) => onItemDragOver(e, chat.id)}
                 onDrop={onItemDrop}
                 onDragEnd={onItemDragEnd}
                 onClick={() => focusChat(chat.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    focusChat(chat.id);
+                  } else if (
+                    (e.key === "Delete" || e.key === "Backspace") &&
+                    !e.repeat
+                  ) {
+                    e.preventDefault();
+                    closeAIChat(wsId, chat.id);
+                  }
+                }}
                 title={`${chat.title}\n${badge.full}`}
               >
                 <span
                   className={`ai-chats-rail-badge ${badge.className}`}
+                  aria-hidden="true"
                 >
                   {badge.short}
                 </span>
@@ -207,6 +227,7 @@ export function AIChatsRail({ wsId, ws }: Props) {
                     closeAIChat(wsId, chat.id);
                   }}
                   title="Close chat"
+                  aria-label={`Close chat ${chat.title}`}
                 >
                   ×
                 </button>

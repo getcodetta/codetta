@@ -130,6 +130,7 @@ export function WorkspacePicker() {
                         void removeRecent(w.id);
                       }}
                       title="Remove from list"
+                      aria-label={`Remove ${w.name} from recent workspaces`}
                     >
                       ×
                     </button>
