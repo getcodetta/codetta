@@ -44,15 +44,22 @@ export function captureSnapshot(
     map.set(path, f.contents);
   }
   if (map.size === 0) return;
+  // If this key already exists, delete first so re-set re-positions it
+  // at the back of the insertion-ordered map. Without this, re-capturing
+  // the same turn (rare but possible during a retry) leaves the original
+  // entry at its old position and the eviction below could drop the
+  // newer copy.
+  snapshots.delete(key(wsId, chatId, turnIndex));
   snapshots.set(key(wsId, chatId, turnIndex), { ts: Date.now(), files: map });
   // Bound total memory: keep at most 20 snapshots across the app
   // (chats older than that lose the revert option, which is fine —
-  // reverting an hour-old change isn't a real workflow).
-  if (snapshots.size > 20) {
-    const oldest = [...snapshots.entries()].sort(
-      (a, b) => a[1].ts - b[1].ts,
-    )[0];
-    if (oldest) snapshots.delete(oldest[0]);
+  // reverting an hour-old change isn't a real workflow). Map iteration
+  // order is insertion order, so .keys().next() is the oldest entry —
+  // O(1) eviction instead of the previous sort-the-entries approach.
+  while (snapshots.size > 20) {
+    const oldest = snapshots.keys().next().value;
+    if (oldest === undefined) break;
+    snapshots.delete(oldest);
   }
 }
 

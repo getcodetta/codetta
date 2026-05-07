@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useStore } from "./store";
@@ -44,6 +44,14 @@ function MainApp() {
   const loaded = useStore((s) => s.loaded);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteInitial, setPaletteInitial] = useState("");
+  // Mirror paletteOpen into a ref so the keyboard-shortcut effect below
+  // can read its current value without listing it as a dependency.
+  // Without the ref, every palette open/close would tear down + re-add
+  // four global keydown listeners.
+  const paletteOpenRef = useRef(paletteOpen);
+  useEffect(() => {
+    paletteOpenRef.current = paletteOpen;
+  }, [paletteOpen]);
   const [recentOverlayOpen, setRecentOverlayOpen] = useState(false);
   const [recentSelected, setRecentSelected] = useState(0);
   const [recentList, setRecentList] = useState<string[]>([]);
@@ -189,7 +197,7 @@ function MainApp() {
       // Command palette
       if (k === "p" || k === "P") {
         e.preventDefault();
-        if (paletteOpen) {
+        if (paletteOpenRef.current) {
           setPaletteOpen(false);
         } else {
           setPaletteInitial("");
@@ -328,7 +336,7 @@ function MainApp() {
       window.removeEventListener("keydown", onEsc);
       window.removeEventListener("keydown", onKey);
     };
-  }, [paletteOpen]);
+  }, []);
 
   // Min-display gate so the splash brand doesn't flash for 30 ms
   // when hydration is fast. Holds the splash until BOTH conditions
