@@ -17,6 +17,7 @@ import { warning } from "../notify";
 import { pushRecentFile } from "../recentFiles";
 import { confirm as dialogConfirm } from "../dialog";
 import { langOf } from "../langDetect";
+import { dirname } from "../pathUtils";
 
 interface GitChangeRange {
   kind: "added" | "modified" | "deleted";
@@ -100,12 +101,6 @@ function parseDiffHunks(diff: string): GitChangeRange[] {
     }
   }
   return out;
-}
-
-function dirname(p: string): string {
-  const norm = p.replace(/\\/g, "/").replace(/\/+$/, "");
-  const i = norm.lastIndexOf("/");
-  return i > 0 ? norm.slice(0, i) : norm;
 }
 
 // Replace both `contents` and `original` for an open file with the given

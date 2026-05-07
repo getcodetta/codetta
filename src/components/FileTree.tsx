@@ -20,23 +20,7 @@ import {
   rememberRemoteLink,
   subscribeActiveSftp,
 } from "../sftpLinks";
-
-function basename(p: string): string {
-  const norm = p.replace(/\\/g, "/").replace(/\/+$/, "");
-  const i = norm.lastIndexOf("/");
-  return i >= 0 ? norm.slice(i + 1) : norm;
-}
-
-function dirname(p: string): string {
-  const norm = p.replace(/\\/g, "/").replace(/\/+$/, "");
-  const i = norm.lastIndexOf("/");
-  return i > 0 ? norm.slice(0, i) : norm;
-}
-
-function joinPath(base: string, name: string): string {
-  const norm = base.replace(/\\/g, "/").replace(/\/+$/, "");
-  return `${norm}/${name}`;
-}
+import { basename, dirname, joinPath } from "../pathUtils";
 
 interface MenuTarget {
   x: number;

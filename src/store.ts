@@ -19,6 +19,7 @@ import {
 } from "./ipc";
 import { confirm as dialogConfirm } from "./dialog";
 import { getEditorSettings } from "./editorSettings";
+import { basename } from "./pathUtils";
 
 /**
  * Close the pop-out window hosting a terminal, if any. Best-effort —
@@ -523,12 +524,6 @@ const defaultLayout = (): WorkspaceLayout => {
     aiRailExpanded: false,
   };
 };
-
-function basename(p: string): string {
-  const norm = p.replace(/\\/g, "/").replace(/\/+$/, "");
-  const idx = norm.lastIndexOf("/");
-  return idx >= 0 ? norm.slice(idx + 1) : norm;
-}
 
 function makeWsId(root: string): string {
   let h = 0;

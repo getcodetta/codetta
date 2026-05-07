@@ -1,0 +1,49 @@
+// Cross-platform path helpers used by the file tree, editor tabs, command
+// palette, recent-files overlay, and the remote SFTP browser.
+//
+// Tauri's fs commands accept either separator on Windows, so we normalize
+// to forward slashes everywhere and don't bother with the OS path
+// separator. Five copies of `basename` and three copies of `joinPath`
+// were drifting; this single set is the one all callers should reach for.
+//
+// All inputs are tolerant of mixed separators and trailing slashes —
+// "C:\Users\me\proj\", "C:/Users/me/proj/", and "C:/Users/me/proj" all
+// produce the same basename.
+
+/** Basename of a file or directory path. Strips trailing slashes first
+ *  so basename("/a/b/") returns "b". */
+export function basename(p: string): string {
+  const norm = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const i = norm.lastIndexOf("/");
+  return i >= 0 ? norm.slice(i + 1) : norm;
+}
+
+/** Parent directory of the given path. Strips trailing slashes first.
+ *  Returns the input unchanged if there's no separator (so dirname("foo")
+ *  returns "foo", not "" — callers expect a non-empty fallback). */
+export function dirname(p: string): string {
+  const norm = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const i = norm.lastIndexOf("/");
+  return i > 0 ? norm.slice(0, i) : norm;
+}
+
+/** Join one or more path segments into a forward-slash path. Trims
+ *  trailing slashes from every segment except the last. Empty / null
+ *  segments are skipped. */
+export function joinPath(...parts: string[]): string {
+  return parts
+    .map((p) => p.replace(/[\\/]+$/, ""))
+    .filter(Boolean)
+    .join("/");
+}
+
+/** Path relative to a workspace root. Returns the original path unchanged
+ *  if it doesn't live under the root (different drive, network share,
+ *  symlink-escaped, etc.) — callers want to display *something* rather
+ *  than an empty string. */
+export function relPath(path: string, root: string): string {
+  if (!root) return path;
+  const p = path.replace(/\\/g, "/");
+  const r = root.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
+  return p.startsWith(r) ? p.slice(r.length) : p;
+}

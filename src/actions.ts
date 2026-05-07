@@ -24,6 +24,7 @@ import {
   zoomOut,
   zoomReset,
 } from "./editorSettings";
+import { joinPath } from "./pathUtils";
 
 function runEditorAction(actionId: string) {
   const ed = getActiveEditor();
@@ -532,15 +533,6 @@ export function commandsForCategory(
 // don't know it exists — these palette commands surface it.
 // -----------------------------------------------------------------
 
-function joinPath(...parts: string[]): string {
-  // Plain string join with normalization. We don't need OS-specific
-  // separators here because the Tauri fs commands accept either on
-  // Windows.
-  return parts
-    .map((p) => p.replace(/[\\/]+$/, ""))
-    .filter(Boolean)
-    .join("/");
-}
 
 async function ensureClaudeMd(absPath: string, scaffold: string | null): Promise<void> {
   const exists = await fs.exists(absPath).catch(() => false);

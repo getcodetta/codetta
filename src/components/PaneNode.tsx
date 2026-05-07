@@ -21,12 +21,7 @@ import { prompt as dialogPrompt } from "../dialog";
 import { popOutTerminal, redockTerminal } from "../terminalPopout";
 import { AIIcon } from "./AIIcon";
 import { lookupRemoteLink } from "../sftpLinks";
-
-function basename(p: string): string {
-  const norm = p.replace(/\\/g, "/");
-  const i = norm.lastIndexOf("/");
-  return i >= 0 ? norm.slice(i + 1) : norm;
-}
+import { basename } from "../pathUtils";
 
 function tabLabel(
   ws: WorkspaceData,

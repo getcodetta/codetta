@@ -23,6 +23,7 @@ import {
   lookupRemoteLink,
   setActiveSftp,
 } from "../sftpLinks";
+import { basename } from "../pathUtils";
 
 // SFTP profiles live alongside the Settings editor's storage key. We
 // keep the parsing + connection-arg shape duplicated here (rather than
@@ -116,12 +117,6 @@ function profileToConn(p: SftpProfile): SftpConnectArgs {
 function joinRemote(parent: string, name: string): string {
   if (parent === "/" || parent === "") return "/" + name;
   return parent.replace(/\/$/, "") + "/" + name;
-}
-
-function basename(p: string): string {
-  const norm = p.replace(/\\/g, "/").replace(/\/$/, "");
-  const idx = norm.lastIndexOf("/");
-  return idx >= 0 ? norm.slice(idx + 1) : norm;
 }
 
 function formatBytes(n: number): string {

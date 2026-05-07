@@ -6,13 +6,8 @@ import { requestDiff } from "../editorState";
 import { error as toastError, errMsg, success as toastSuccess } from "../notify";
 import { confirm as dialogConfirm } from "../dialog";
 import { langOf } from "../langDetect";
+import { joinPath } from "../pathUtils";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
-
-function joinPath(root: string, rel: string): string {
-  const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
-  const x = rel.replace(/\\/g, "/").replace(/^\/+/, "");
-  return `${r}/${x}`;
-}
 
 interface GitFile {
   path: string;

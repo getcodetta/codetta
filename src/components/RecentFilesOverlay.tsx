@@ -1,16 +1,5 @@
 import { createPortal } from "react-dom";
-
-function basename(p: string): string {
-  const norm = p.replace(/\\/g, "/");
-  const i = norm.lastIndexOf("/");
-  return i >= 0 ? norm.slice(i + 1) : norm;
-}
-
-function relPath(path: string, root: string): string {
-  const p = path.replace(/\\/g, "/");
-  const r = root.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
-  return p.startsWith(r) ? p.slice(r.length) : p;
-}
+import { basename, relPath } from "../pathUtils";
 
 interface Props {
   open: boolean;

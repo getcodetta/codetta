@@ -3,6 +3,7 @@ import { commands, type CommandSpec } from "../actions";
 import { useStore } from "../store";
 import { search } from "../ipc";
 import { setEditorGoto } from "../editorState";
+import { relPath } from "../pathUtils";
 
 interface PaletteEntry {
   key: string;
@@ -34,12 +35,6 @@ function fuzzy(query: string, text: string): boolean {
     i = idx + 1;
   }
   return true;
-}
-
-function relPath(path: string, root: string): string {
-  const p = path.replace(/\\/g, "/");
-  const r = root.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
-  return p.startsWith(r) ? p.slice(r.length) : p;
 }
 
 export function CommandPalette({ open, onClose, initialQuery }: Props) {

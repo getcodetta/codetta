@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../store";
 import { setEditorGoto } from "../editorState";
 import { errMsg } from "../notify";
+import { relPath } from "../pathUtils";
 
 interface TodoHit {
   path: string;
@@ -25,16 +26,6 @@ interface CacheEntry {
 // to the TODOs tab is instant after the first scan; the user can still
 // hit ⟳ for a fresh scan.
 const todoCache = new Map<string, CacheEntry>();
-
-function relativePath(path: string, root: string): string {
-  if (!root) return path;
-  const normRoot = root.replace(/[\\/]+$/, "");
-  if (path.startsWith(normRoot)) {
-    const rest = path.slice(normRoot.length);
-    return rest.replace(/^[\\/]+/, "");
-  }
-  return path;
-}
 
 // Keep render cost bounded. On large repos with many hits, rendering
 // every row on first paint causes long jank. Show the first slice and
@@ -205,7 +196,7 @@ export function TodosPanel({ wsId, root }: Props) {
       {visibleGroups.map(([path, items]) => (
         <div key={path} className="todos-group">
           <div className="todos-group-header">
-            <span>{relativePath(path, root)}</span>
+            <span>{relPath(path, root)}</span>
             <span>{items.length}</span>
           </div>
           {items.map((hit, i) => (
