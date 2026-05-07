@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useStore } from "../store";
 import { useEditorState } from "../editorState";
 import { useTheme, type ThemeMode } from "../theme";
@@ -5,6 +6,7 @@ import { runCommand } from "../actions";
 import { useEditorSettings } from "../editorSettings";
 import { basename } from "../pathUtils";
 import { Icon, type IconName } from "./Icon";
+import { git as gitApi, type GitStatus } from "../ipc";
 
 interface Props {
   onOpenPalette: () => void;
@@ -37,6 +39,34 @@ export function StatusBar({ onOpenPalette }: Props) {
   const bottomVisible = ws?.layout.bottomVisible ?? true;
   const sidebarView = ws?.layout.sidebarView ?? "files";
 
+  // Lightweight git status pulled every 15s — branch + ahead/behind +
+  // working-tree change count for the status-bar chip. The Source
+  // Control panel does its own richer fetch when open; this is the
+  // always-on glance.
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  const wsRoot = ws?.meta.root;
+  useEffect(() => {
+    if (!wsRoot) {
+      setGitStatus(null);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const s = await gitApi.status(wsRoot);
+        if (!cancelled) setGitStatus(s);
+      } catch {
+        if (!cancelled) setGitStatus(null);
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [wsRoot]);
+
   const cycleTheme = () => setTheme(themeNext[theme]);
 
   return (
@@ -63,6 +93,45 @@ export function StatusBar({ onOpenPalette }: Props) {
           >
             ● {dirtyCount}
           </span>
+        )}
+        {gitStatus?.is_repo && gitStatus.branch && (
+          <button
+            type="button"
+            className="sb-item sb-git"
+            title={(() => {
+              const parts: string[] = [`Branch: ${gitStatus.branch}`];
+              if (gitStatus.upstream) {
+                parts.push(`tracking ${gitStatus.upstream}`);
+              }
+              if (gitStatus.ahead || gitStatus.behind) {
+                parts.push(
+                  `${gitStatus.ahead} ahead, ${gitStatus.behind} behind`,
+                );
+              }
+              if (gitStatus.files.length > 0) {
+                parts.push(
+                  `${gitStatus.files.length} changed file${
+                    gitStatus.files.length > 1 ? "s" : ""
+                  }`,
+                );
+              }
+              parts.push("(click for Source Control)");
+              return parts.join(" · ");
+            })()}
+            onClick={() => runCommand("view.source_control")}
+          >
+            <Icon name="git-branch" size={11} />
+            <span>{gitStatus.branch}</span>
+            {(gitStatus.ahead > 0 || gitStatus.behind > 0) && (
+              <span className="sb-git-trail">
+                {gitStatus.ahead > 0 && ` ↑${gitStatus.ahead}`}
+                {gitStatus.behind > 0 && ` ↓${gitStatus.behind}`}
+              </span>
+            )}
+            {gitStatus.files.length > 0 && (
+              <span className="sb-git-trail">·{gitStatus.files.length}</span>
+            )}
+          </button>
         )}
       </div>
 
