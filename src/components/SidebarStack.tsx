@@ -154,28 +154,48 @@ export function SidebarStack({ wsId, ws }: Props) {
                 onClick={() =>
                   collapseSidebarSection(wsId, sec.view, !sec.collapsed)
                 }
+                aria-expanded={!sec.collapsed}
+                aria-controls={`sidebar-body-${sec.view}`}
               >
-                <span className="sidebar-section-caret">
+                <span className="sidebar-section-caret" aria-hidden="true">
                   {sec.collapsed ? "▸" : "▾"}
                 </span>
                 <span className="sidebar-section-title">
                   {sec.view === "files" ? ws.meta.name : VIEW_LABEL[sec.view]}
                 </span>
                 {sections.length > 1 && (
+                  // span (not <button>) because nested interactive elements
+                  // are invalid HTML — the parent header is a <button>. We
+                  // keep keyboard reachability via tabIndex + onKeyDown so
+                  // the close action stays accessible without breaking the
+                  // outer collapse-toggle.
                   <span
                     className="sidebar-section-close"
+                    role="button"
+                    tabIndex={0}
                     onClick={(e) => {
                       e.stopPropagation();
                       removeSidebarSection(wsId, sec.view);
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        removeSidebarSection(wsId, sec.view);
+                      }
+                    }}
                     title="Remove section"
+                    aria-label={`Remove ${VIEW_LABEL[sec.view]} section`}
                   >
                     ×
                   </span>
                 )}
               </button>
               {!sec.collapsed && (
-                <div className="sidebar-section-body">
+                <div
+                  className="sidebar-section-body"
+                  id={`sidebar-body-${sec.view}`}
+                >
                   {renderContent(sec.view)}
                 </div>
               )}
@@ -183,6 +203,25 @@ export function SidebarStack({ wsId, ws }: Props) {
             {i < sections.length - 1 && (
               <div
                 className="sidebar-section-split"
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label={`Resize between ${VIEW_LABEL[sec.view]} and ${VIEW_LABEL[sections[i + 1].view]}`}
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  // Up/Down keyboard nudging — same proportional scheme
+                  // as the mouse drag, with 0.05 increments per press.
+                  if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                  const top = sec;
+                  const bottom = sections[i + 1];
+                  if (top.collapsed || bottom.collapsed) return;
+                  e.preventDefault();
+                  const dir = e.key === "ArrowDown" ? 1 : -1;
+                  const total = top.size + bottom.size;
+                  const newTop = Math.max(0.2, top.size + dir * 0.05);
+                  const newBottom = Math.max(0.2, total - newTop);
+                  setSidebarSectionSize(wsId, top.view, newTop);
+                  setSidebarSectionSize(wsId, bottom.view, newBottom);
+                }}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   // Resize between sec[i] and sec[i+1] proportionally.
@@ -218,6 +257,25 @@ export function SidebarStack({ wsId, ws }: Props) {
       </div>
       <div
         className="vsplit"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        aria-valuenow={layout.sidebarW}
+        aria-valuemin={160}
+        aria-valuemax={700}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          const dir = e.key === "ArrowRight" ? 1 : -1;
+          const sign = layout.sidebarSide === "right" ? -1 : 1;
+          const step = e.shiftKey ? 60 : 20;
+          const next = Math.max(
+            160,
+            Math.min(700, layout.sidebarW + dir * sign * step),
+          );
+          setSidebarW(wsId, next);
+        }}
         onMouseDown={(e) => {
           e.preventDefault();
           const startX = e.clientX;

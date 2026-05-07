@@ -1211,11 +1211,15 @@ input {
   color: var(--fg-muted);
   opacity: 0;
   transition: opacity 0.1s;
+  outline: none;
+  cursor: pointer;
 }
-.sidebar-section-header:hover .sidebar-section-close {
+.sidebar-section-header:hover .sidebar-section-close,
+.sidebar-section-close:focus-visible {
   opacity: 1;
 }
-.sidebar-section-close:hover {
+.sidebar-section-close:hover,
+.sidebar-section-close:focus-visible {
   background: var(--danger);
   color: #fff;
 }
@@ -1231,8 +1235,10 @@ input {
   cursor: row-resize;
   background: transparent;
   flex-shrink: 0;
+  outline: none;
 }
-.sidebar-section-split:hover {
+.sidebar-section-split:hover,
+.sidebar-section-split:focus-visible {
   background: var(--accent);
 }
 .sidebar-section.dragging {
@@ -1579,8 +1585,10 @@ input {
   cursor: col-resize;
   background: transparent;
   flex-shrink: 0;
+  outline: none;
 }
-.vsplit:hover {
+.vsplit:hover,
+.vsplit:focus-visible {
   background: var(--accent);
 }
 .hsplit {
@@ -1588,8 +1596,10 @@ input {
   cursor: row-resize;
   background: transparent;
   flex-shrink: 0;
+  outline: none;
 }
-.hsplit:hover {
+.hsplit:hover,
+.hsplit:focus-visible {
   background: var(--accent);
 }
 .main-col {

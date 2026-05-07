@@ -251,6 +251,27 @@ export function WorkspaceShell({ wsId, isActive }: Props) {
             {layout.bottomVisible && (
               <div
                 className="hsplit"
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="Resize bottom panel"
+                aria-valuenow={layout.termH}
+                aria-valuemin={80}
+                aria-valuemax={800}
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                  e.preventDefault();
+                  // ArrowUp grows the bottom panel (taller), ArrowDown
+                  // shrinks it. Matches the mouse drag where dragging up
+                  // grows the panel.
+                  const dir = e.key === "ArrowUp" ? 1 : -1;
+                  const step = e.shiftKey ? 60 : 20;
+                  const next = Math.max(
+                    80,
+                    Math.min(800, layout.termH + dir * step),
+                  );
+                  setTermH(wsId, next);
+                }}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   const startY = e.clientY;
