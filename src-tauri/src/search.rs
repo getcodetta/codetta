@@ -573,6 +573,64 @@ fn extract_symbols(path: &str, text: &str, out: &mut Vec<SymbolHit>, cap: usize)
     let is_rust = lower.ends_with(".rs");
     let is_python = lower.ends_with(".py") || lower.ends_with(".pyi");
     let is_go = lower.ends_with(".go");
+    let is_markdown =
+        lower.ends_with(".md") || lower.ends_with(".markdown") || lower.ends_with(".mdx");
+
+    // Markdown headings need a different shape than the regex set:
+    // depth comes from the '#' count and we have to skip fenced code
+    // blocks. Walk the file separately and short-circuit once we've
+    // collected its headings.
+    if is_markdown {
+        let mut in_fence = false;
+        let mut fence_marker = "";
+        for (i, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                let marker = if trimmed.starts_with("```") {
+                    "```"
+                } else {
+                    "~~~"
+                };
+                if !in_fence {
+                    in_fence = true;
+                    fence_marker = marker;
+                } else if trimmed.starts_with(fence_marker) {
+                    in_fence = false;
+                    fence_marker = "";
+                }
+                continue;
+            }
+            if in_fence {
+                continue;
+            }
+            // ATX heading: 1–6 leading '#'s + space + heading text.
+            // Optional trailing '#'s (closing form) are stripped.
+            let bytes = line.as_bytes();
+            let mut hcount = 0;
+            while hcount < bytes.len() && hcount < 6 && bytes[hcount] == b'#' {
+                hcount += 1;
+            }
+            if hcount == 0 || hcount >= bytes.len() || bytes[hcount] != b' ' {
+                continue;
+            }
+            let rest = line[hcount + 1..]
+                .trim_end_matches(|c: char| c == '#' || c.is_whitespace())
+                .trim();
+            if rest.is_empty() {
+                continue;
+            }
+            out.push(SymbolHit {
+                path: path.to_string(),
+                line: i + 1,
+                kind: format!("h{}", hcount),
+                name: rest.to_string(),
+            });
+            if out.len() >= cap {
+                return;
+            }
+        }
+        return;
+    }
 
     // Patterns are anchored at line start (after any whitespace) so
     // we don't match `// fn foo()` style comments. Matching only the
@@ -641,7 +699,7 @@ fn find_symbols_blocking(root: String, cap: usize) -> Vec<SymbolHit> {
     walk_files(Path::new(&root), &mut paths, 50_000, |p| {
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let lower = name.to_ascii_lowercase();
-        // Only the four languages the symbol extractor knows about.
+        // Only languages the symbol extractor knows about.
         // Lockfiles / test fixtures are covered by HEAVY_DIRS.
         lower.ends_with(".ts")
             || lower.ends_with(".tsx")
@@ -653,6 +711,9 @@ fn find_symbols_blocking(root: String, cap: usize) -> Vec<SymbolHit> {
             || lower.ends_with(".py")
             || lower.ends_with(".pyi")
             || lower.ends_with(".go")
+            || lower.ends_with(".md")
+            || lower.ends_with(".markdown")
+            || lower.ends_with(".mdx")
     });
 
     let mut hits: Vec<SymbolHit> = Vec::with_capacity(cap.min(1024));

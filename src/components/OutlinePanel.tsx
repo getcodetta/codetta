@@ -42,6 +42,15 @@ const KIND_ICON: Record<string, IconName> = {
   const: "circle",
   var: "circle",
   let: "circle",
+  // Markdown headings use a single icon — depth is encoded by the
+  // existing tree-style indentation in the panel, so an h1/h2/h3
+  // distinction here would just add visual noise.
+  h1: "hash",
+  h2: "hash",
+  h3: "hash",
+  h4: "hash",
+  h5: "hash",
+  h6: "hash",
 };
 
 function iconForKind(kind: string): IconName {

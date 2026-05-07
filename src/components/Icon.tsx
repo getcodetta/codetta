@@ -85,7 +85,8 @@ export type IconName =
   | "star-filled"
   | "link"
   | "circle"
-  | "info";
+  | "info"
+  | "hash";
 
 // Each entry returns the inner JSX for an svg with viewBox 0 0 24 24.
 // Use stroke={currentColor} + strokeWidth + strokeLinecap/Linejoin so
@@ -374,6 +375,14 @@ const ICONS: Record<IconName, ReactNode> = {
       <circle cx="12" cy="12" r="9" />
       <line x1="12" y1="16" x2="12" y2="12" />
       <line x1="12" y1="8" x2="12" y2="8.01" />
+    </>
+  ),
+  hash: (
+    <>
+      <line x1="4" y1="9" x2="20" y2="9" />
+      <line x1="4" y1="15" x2="20" y2="15" />
+      <line x1="10" y1="3" x2="8" y2="21" />
+      <line x1="16" y1="3" x2="14" y2="21" />
     </>
   ),
 };

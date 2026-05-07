@@ -128,6 +128,59 @@ function pickSet(filePath: string): PatternSet | null {
   return null;
 }
 
+function isMarkdown(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  return (
+    lower.endsWith(".md") ||
+    lower.endsWith(".markdown") ||
+    lower.endsWith(".mdx")
+  );
+}
+
+// Markdown headings need different handling than the regex-per-line
+// pattern set: depth comes from the '#' count, not leading whitespace.
+// We also skip headings that sit inside a fenced code block, since '#'
+// in code is rarely a real section header (e.g. shell comments,
+// Python comments inside a Python tutorial).
+function extractMarkdownOutline(content: string): OutlineSymbol[] {
+  const out: OutlineSymbol[] = [];
+  const lines = content.split("\n");
+  let inFence = false;
+  let fenceTick = "";
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    // Track fenced code blocks (``` and ~~~). A fence opens on its own
+    // line and closes on a matching marker; nested fences aren't a
+    // thing in commonmark, so we keep this dead simple.
+    if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+      const marker = trimmed.startsWith("```") ? "```" : "~~~";
+      if (!inFence) {
+        inFence = true;
+        fenceTick = marker;
+      } else if (trimmed.startsWith(fenceTick)) {
+        inFence = false;
+        fenceTick = "";
+      }
+      continue;
+    }
+    if (inFence) continue;
+    // ATX heading: 1–6 '#' followed by space and the heading text.
+    const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (!m) continue;
+    const depth = m[1].length - 1; // '#' = depth 0, '##' = depth 1
+    const name = m[2].trim();
+    if (!name) continue;
+    out.push({
+      line: i + 1,
+      kind: `h${m[1].length}`,
+      name,
+      depth,
+    });
+  }
+  return out;
+}
+
 function leadingWhitespace(line: string): number {
   let n = 0;
   for (const ch of line) {
@@ -149,6 +202,7 @@ export function extractFileOutline(
   filePath: string,
   content: string,
 ): OutlineSymbol[] {
+  if (isMarkdown(filePath)) return extractMarkdownOutline(content);
   const set = pickSet(filePath);
   if (!set) return [];
   const out: OutlineSymbol[] = [];
