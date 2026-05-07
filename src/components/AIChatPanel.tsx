@@ -2096,7 +2096,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 }
               }}
             >
-              ▶ Try to start Ollama
+              <Icon name="play" size={12} />
+              <span>Try to start Ollama</span>
             </button>
             <button
               onClick={() => {
@@ -2328,7 +2329,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             return (
               <details key={i} className="ai-msg ai-msg-tool">
                 <summary className="ai-tool-summary">
-                  <span className="ai-tool-icon">📄</span>
+                  <span className="ai-tool-icon">
+                    <Icon name="file-text" size={12} />
+                  </span>
                   Tool result
                   <span className="ai-tool-meta">
                     {m.content.length} chars
@@ -2611,7 +2614,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                     <>
                       <span className="ai-thinking ai-running-header">
                         {allDone && !streamStillActive ? (
-                          <span className="ai-running-check">✓</span>
+                          <span className="ai-running-check">
+                            <Icon name="check" size={12} />
+                          </span>
                         ) : (
                           <span className="ai-spinner" />
                         )}

@@ -12,6 +12,7 @@ import { useState } from "react";
 import type { ChatMessage, ToolCall } from "../ai";
 import { balanceFences } from "../chatTextUtils";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { Icon, type IconName } from "./Icon";
 
 // ---------- Tool-name labelling ----------
 
@@ -138,32 +139,33 @@ export function toolDetailFor(
   return "";
 }
 
-// One-character icon per tool family. Helps the user scan a list of
-// 6+ in-flight calls without reading each name.
-function toolIconFor(name: string): string {
+// Per-tool-family icon. Helps the user scan a list of 6+ in-flight
+// calls without reading each name. Returns null for tools we don't
+// recognise — the caller renders a small bullet placeholder instead.
+function toolIconFor(name: string): IconName | null {
   switch (name) {
     case "Read":
     case "Glob":
-      return "📄";
+      return "file-text";
     case "Grep":
     case "WebSearch":
-      return "🔎";
+      return "search";
     case "Edit":
     case "MultiEdit":
-      return "✏";
+      return "edit";
     case "Write":
     case "create_file":
-      return "✨";
+      return "plus";
     case "Bash":
-      return "⌨";
+      return "terminal";
     case "WebFetch":
-      return "🌐";
+      return "globe";
     case "TodoWrite":
-      return "✅";
+      return "check-square";
     case "NotebookEdit":
-      return "📓";
+      return "file-text";
     default:
-      return "•";
+      return null;
   }
 }
 
@@ -289,7 +291,7 @@ export function RunningToolRow({
     <div className={`ai-running-row ai-running-row-${status}`}>
       <div className="ai-running-row-head">
         <span className="ai-running-row-icon" aria-hidden>
-          {icon}
+          {icon ? <Icon name={icon} size={12} /> : "•"}
         </span>
         <span className="ai-running-row-name">{entry.name}</span>
         {niceDetail && (
@@ -304,10 +306,14 @@ export function RunningToolRow({
           <span className="ai-spinner ai-spinner-sm ai-running-row-spinner" />
         )}
         {status === "done" && (
-          <span className="ai-running-row-check" title="Finished">✓</span>
+          <span className="ai-running-row-check" title="Finished">
+            <Icon name="check" size={11} />
+          </span>
         )}
         {status === "error" && (
-          <span className="ai-running-row-x" title="Errored">✗</span>
+          <span className="ai-running-row-x" title="Errored">
+            <Icon name="x" size={11} />
+          </span>
         )}
       </div>
       {previewLines && (
@@ -462,7 +468,8 @@ function EditDiffCard({ call, diffs, result }: EditDiffCardProps) {
             <div
               className={`ai-tcall-edit-result ${isError ? "errored" : "applied"}`}
             >
-              {isError ? "✗" : "✓"} {result.split("\n")[0]}
+              <Icon name={isError ? "x" : "check"} size={11} />{" "}
+              {result.split("\n")[0]}
             </div>
           )}
         </div>

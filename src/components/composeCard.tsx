@@ -25,6 +25,7 @@ import {
   success as toastSuccess,
 } from "../notify";
 import { useStore } from "../store";
+import { Icon } from "./Icon";
 
 /**
  * Revert button rendered inside the ComposeCard header. Looks up the
@@ -116,7 +117,8 @@ function ComposeRevertButton({
   if (reverted) {
     return (
       <span className="ai-compose-reverted" title="Files restored to pre-turn state">
-        ✓ Reverted
+        <Icon name="check" size={12} />
+        <span>Reverted</span>
       </span>
     );
   }

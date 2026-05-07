@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { matchExclusion } from "../aiPrivacy";
 import { error as toastError } from "../notify";
 import { getJson as lsGetJson, setJson as lsSetJson } from "../localStore";
+import { Icon } from "./Icon";
 
 /**
  * Per-user always-allow rules persisted in localStorage. Three kinds:
@@ -347,7 +348,8 @@ export function ClaudePermissionOverlay() {
             onClick={() => void respond("deny")}
             title="Block this tool call. The agent treats it as a failure and may try a different approach."
           >
-            ✕ Deny
+            <Icon name="x" size={12} />
+            <span>Deny</span>
           </button>
           <button
             className="cc-perm-btn cc-perm-allow-session"
@@ -358,7 +360,8 @@ export function ClaudePermissionOverlay() {
                 : `Auto-allow ${req.tool_name} for the rest of this Codetta session (resets on restart).`
             }
           >
-            ✓ Allow this session
+            <Icon name="check" size={12} />
+            <span>Allow this session</span>
           </button>
           {isBash && bashPrefix && (
             <button
@@ -366,8 +369,11 @@ export function ClaudePermissionOverlay() {
               onClick={() => void allowAlwaysBashPrefix()}
               title={`Always allow Bash commands starting with "${bashPrefix}". Persisted across restarts. Manage in Settings.`}
             >
-              ✓✓ Always allow{" "}
-              <code className="cc-perm-prefix">{bashPrefix}</code>
+              <Icon name="check-circle" size={12} />
+              <span>
+                Always allow{" "}
+                <code className="cc-perm-prefix">{bashPrefix}</code>
+              </span>
             </button>
           )}
           {fileExt && (
@@ -376,8 +382,11 @@ export function ClaudePermissionOverlay() {
               onClick={() => void allowAlwaysExt()}
               title={`Always allow ${req.tool_name} on ${fileExt} files. Persisted. Manage in Settings.`}
             >
-              ✓✓ Always allow {req.tool_name} on{" "}
-              <code className="cc-perm-prefix">{fileExt}</code>
+              <Icon name="check-circle" size={12} />
+              <span>
+                Always allow {req.tool_name} on{" "}
+                <code className="cc-perm-prefix">{fileExt}</code>
+              </span>
             </button>
           )}
           {canBlanketAllow && (
@@ -386,7 +395,8 @@ export function ClaudePermissionOverlay() {
               onClick={() => void allowAlwaysTool()}
               title={`Always allow every ${req.tool_name} call. Persisted. Manage in Settings.`}
             >
-              ✓✓ Always allow {req.tool_name}
+              <Icon name="check-circle" size={12} />
+              <span>Always allow {req.tool_name}</span>
             </button>
           )}
           <button
@@ -394,7 +404,8 @@ export function ClaudePermissionOverlay() {
             onClick={() => void respond("allow")}
             title="Run this single call. You'll be prompted again next time."
           >
-            ✓ Allow once
+            <Icon name="check" size={12} />
+            <span>Allow once</span>
           </button>
         </div>
         <div className="cc-perm-shortcut-hint">

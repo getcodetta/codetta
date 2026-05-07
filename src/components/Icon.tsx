@@ -69,7 +69,14 @@ export type IconName =
   | "edit"
   | "eye"
   | "send"
-  | "x";
+  | "x"
+  | "check"
+  | "check-circle"
+  | "x-circle"
+  | "alert-triangle"
+  | "globe"
+  | "file-text"
+  | "wrench";
 
 // Each entry returns the inner JSX for an svg with viewBox 0 0 24 24.
 // Use stroke={currentColor} + strokeWidth + strokeLinecap/Linejoin so
@@ -273,6 +280,45 @@ const ICONS: Record<IconName, ReactNode> = {
     </>
   ),
   x: <path d="m6 6 12 12M18 6 6 18" />,
+  check: <polyline points="5 12 10 17 19 7" />,
+  "check-circle": (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="8 12 11 15 16 9" />
+    </>
+  ),
+  "x-circle": (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <line x1="9" y1="9" x2="15" y2="15" />
+      <line x1="15" y1="9" x2="9" y2="15" />
+    </>
+  ),
+  "alert-triangle": (
+    <>
+      <path d="M12 3 2 21h20L12 3Z" />
+      <line x1="12" y1="10" x2="12" y2="14" />
+      <line x1="12" y1="17" x2="12" y2="17.01" />
+    </>
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <path d="M12 3a13 13 0 0 1 0 18 13 13 0 0 1 0-18Z" />
+    </>
+  ),
+  "file-text": (
+    <>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+      <polyline points="14 3 14 8 19 8" />
+      <line x1="8" y1="13" x2="16" y2="13" />
+      <line x1="8" y1="17" x2="13" y2="17" />
+    </>
+  ),
+  wrench: (
+    <path d="M14.7 6.3a3.5 3.5 0 0 1 0 4.95l-1.06 1.06 4.6 4.6a2 2 0 0 1-2.83 2.83l-4.6-4.6-1.06 1.06a3.5 3.5 0 0 1-4.95 0L3.7 14.5a3.5 3.5 0 0 1 0-4.95L8.65 4.6a3.5 3.5 0 0 1 4.95 0l1.1 1.7Z" />
+  ),
 };
 
 export function Icon({ name, size = 16, className, title }: IconProps) {

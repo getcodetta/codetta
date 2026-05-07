@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import type { ToolCall } from "../ai";
 import { matchExclusion, subscribePrivacy } from "../aiPrivacy";
 import { openSettings } from "../settingsBus";
+import { Icon } from "./Icon";
 import {
   extractPathArg,
   rememberToolAlways,
@@ -59,7 +60,8 @@ export function PermissionCard({
           onClick={() => onResolve("allow")}
           title="Run this call only"
         >
-          ✓ Allow once
+          <Icon name="check" size={12} />
+          <span>Allow once</span>
         </button>
         <button
           className="ai-perm-btn"
@@ -69,7 +71,8 @@ export function PermissionCard({
           }}
           title={`Auto-allow every future ${call.function.name} call`}
         >
-          ✓ Allow always ({call.function.name})
+          <Icon name="check" size={12} />
+          <span>Allow always ({call.function.name})</span>
         </button>
         {path && (
           <button
@@ -80,7 +83,8 @@ export function PermissionCard({
             }}
             title={`Auto-allow ${call.function.name} calls for this exact path`}
           >
-            ✓ Allow this path
+            <Icon name="check" size={12} />
+            <span>Allow this path</span>
           </button>
         )}
         <button

@@ -18,6 +18,7 @@ import { pushRecentFile } from "../recentFiles";
 import { confirm as dialogConfirm } from "../dialog";
 import { langOf } from "../langDetect";
 import { dirname } from "../pathUtils";
+import { Icon } from "./Icon";
 
 interface GitChangeRange {
   kind: "added" | "modified" | "deleted";
@@ -346,7 +347,8 @@ export function EditorPane({ wsId, path }: Props) {
           aria-label="Toggle Markdown preview"
           aria-pressed={previewOpen}
         >
-          {previewOpen ? "✎ Edit only" : "👁 Preview"}
+          <Icon name={previewOpen ? "edit" : "eye"} size={12} />
+          <span>{previewOpen ? "Edit only" : "Preview"}</span>
         </button>
       )}
       <div className="editor-half">
