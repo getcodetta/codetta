@@ -7205,6 +7205,17 @@ input {
   color: var(--fg);
   max-width: 880px;
 }
+/* Click-to-jump affordance on heading anchors. Only applied when the
+   preview is rendered with `interactive` (the markdown split view) —
+   chat bubbles + tool output use the same renderer but their data-
+   source-line refers to files the user isn't editing, so we don't
+   want to dangle a "click me" cue there. */
+.md-preview-interactive .md-anchor {
+  cursor: pointer;
+}
+.md-preview-interactive .md-anchor:hover {
+  color: var(--accent);
+}
 .md-preview h1,
 .md-preview h2,
 .md-preview h3,

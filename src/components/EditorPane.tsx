@@ -512,7 +512,7 @@ export function EditorPane({ wsId, path }: Props) {
       </div>
       {isMarkdown && previewOpen && (
         <div className="preview-half">
-          <MarkdownPreview content={file.contents} />
+          <MarkdownPreview content={file.contents} interactive />
         </div>
       )}
     </div>

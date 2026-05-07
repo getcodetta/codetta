@@ -105,6 +105,11 @@ export interface Block {
     rows: string[][];
     aligns: Array<"left" | "center" | "right" | null>;
   };
+  /** 1-based line number of the block's first source line. Set by
+   *  tokenize so the rendered HTML can carry a data-source-line
+   *  attribute, enabling click-to-jump from the markdown preview
+   *  back into the editor. */
+  line?: number;
 }
 
 function tokenize(md: string): Block[] {
@@ -113,6 +118,7 @@ function tokenize(md: string): Block[] {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
+    const blockLine = i + 1;
     // Fenced code block
     const fence = line.match(/^```(\w*)\s*$/);
     if (fence) {
@@ -124,6 +130,7 @@ function tokenize(md: string): Block[] {
         kind: "code",
         lang,
         text: lines.slice(start, i).join("\n"),
+        line: blockLine,
       });
       i++; // skip closing fence (or end)
       continue;
@@ -131,13 +138,18 @@ function tokenize(md: string): Block[] {
     // Heading
     const h = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
     if (h) {
-      blocks.push({ kind: "heading", level: h[1].length, text: h[2] });
+      blocks.push({
+        kind: "heading",
+        level: h[1].length,
+        text: h[2],
+        line: blockLine,
+      });
       i++;
       continue;
     }
     // Horizontal rule
     if (/^(?:-{3,}|_{3,}|\*{3,})\s*$/.test(line)) {
-      blocks.push({ kind: "hr" });
+      blocks.push({ kind: "hr", line: blockLine });
       i++;
       continue;
     }
@@ -148,7 +160,7 @@ function tokenize(md: string): Block[] {
         buf.push(lines[i].replace(/^>\s?/, ""));
         i++;
       }
-      blocks.push({ kind: "quote", text: buf.join("\n") });
+      blocks.push({ kind: "quote", text: buf.join("\n"), line: blockLine });
       continue;
     }
     // Task list: bullet followed by [ ] / [x]. AI assistants emit these
@@ -164,7 +176,7 @@ function tokenize(md: string): Block[] {
         items.push(lines[i].replace(TASK_RE, ""));
         i++;
       }
-      blocks.push({ kind: "tasklist", items, checked });
+      blocks.push({ kind: "tasklist", items, checked, line: blockLine });
       continue;
     }
     // Unordered list
@@ -174,7 +186,7 @@ function tokenize(md: string): Block[] {
         items.push(lines[i].replace(/^\s*[-*+]\s+/, ""));
         i++;
       }
-      blocks.push({ kind: "ul", items });
+      blocks.push({ kind: "ul", items, line: blockLine });
       continue;
     }
     // Ordered list
@@ -184,7 +196,7 @@ function tokenize(md: string): Block[] {
         items.push(lines[i].replace(/^\s*\d+\.\s+/, ""));
         i++;
       }
-      blocks.push({ kind: "ol", items });
+      blocks.push({ kind: "ol", items, line: blockLine });
       continue;
     }
     // Blank
@@ -211,7 +223,7 @@ function tokenize(md: string): Block[] {
       buf.push(lines[i]);
       i++;
     }
-    blocks.push({ kind: "paragraph", text: buf.join("\n") });
+    blocks.push({ kind: "paragraph", text: buf.join("\n"), line: blockLine });
   }
   return blocks;
 }
@@ -219,26 +231,34 @@ function tokenize(md: string): Block[] {
 export function renderMarkdown(md: string): string {
   const blocks = tokenize(md);
   const parts: string[] = [];
+  // Emit `data-source-line` on every block so the preview can map a
+  // click back to a source line and the editor can highlight which
+  // block the cursor is currently in. Headings get a bonus
+  // `md-anchor` class to flag them as primary jump targets.
+  const lineAttr = (b: Block) =>
+    b.line ? ` data-source-line="${b.line}"` : "";
   for (const b of blocks) {
     switch (b.kind) {
       case "heading": {
         const lvl = b.level ?? 1;
-        parts.push(`<h${lvl}>${inlineMd(b.text ?? "")}</h${lvl}>`);
+        parts.push(
+          `<h${lvl} class="md-anchor"${lineAttr(b)}>${inlineMd(b.text ?? "")}</h${lvl}>`,
+        );
         break;
       }
       case "paragraph": {
-        parts.push(`<p>${inlineMd(b.text ?? "")}</p>`);
+        parts.push(`<p${lineAttr(b)}>${inlineMd(b.text ?? "")}</p>`);
         break;
       }
       case "code": {
         parts.push(
-          `<pre><code class="lang-${b.lang ?? ""}">${escapeHtml(b.text ?? "")}</code></pre>`,
+          `<pre${lineAttr(b)}><code class="lang-${b.lang ?? ""}">${escapeHtml(b.text ?? "")}</code></pre>`,
         );
         break;
       }
       case "ul": {
         parts.push(
-          `<ul>${(b.items ?? [])
+          `<ul${lineAttr(b)}>${(b.items ?? [])
             .map((it) => `<li>${inlineMd(it)}</li>`)
             .join("")}</ul>`,
         );
@@ -246,7 +266,7 @@ export function renderMarkdown(md: string): string {
       }
       case "ol": {
         parts.push(
-          `<ol>${(b.items ?? [])
+          `<ol${lineAttr(b)}>${(b.items ?? [])
             .map((it) => `<li>${inlineMd(it)}</li>`)
             .join("")}</ol>`,
         );
@@ -256,7 +276,7 @@ export function renderMarkdown(md: string): string {
         const items = b.items ?? [];
         const checked = b.checked ?? [];
         parts.push(
-          `<ul class="md-tasklist">${items
+          `<ul class="md-tasklist"${lineAttr(b)}>${items
             .map((it, idx) => {
               const isChecked = !!checked[idx];
               const box = isChecked
@@ -270,11 +290,11 @@ export function renderMarkdown(md: string): string {
       }
       case "quote": {
         const inner = renderMarkdown(b.text ?? "");
-        parts.push(`<blockquote>${inner}</blockquote>`);
+        parts.push(`<blockquote${lineAttr(b)}>${inner}</blockquote>`);
         break;
       }
       case "hr": {
-        parts.push("<hr>");
+        parts.push(`<hr${lineAttr(b)}>`);
         break;
       }
       case "blank":
