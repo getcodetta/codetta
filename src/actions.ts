@@ -1,5 +1,8 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+
+// Injected by vite from package.json — same hook the Splash uses.
+declare const __APP_VERSION__: string;
 import { findPaneById, parseKey, useStore } from "./store";
 import { openPalette } from "./paletteBus";
 import { openSettings } from "./settingsBus";
@@ -497,7 +500,7 @@ export const commands: CommandSpec[] = [
     category: "Help",
     run: () =>
       void dialogAlert(
-        "Codetta — a lightweight Tauri-based code editor with first-class AI.\n\nMulti-workspace · multi-terminal (with pop-out) · integrated git · drag-and-drop splits · BYOK AI (Anthropic, OpenAI, Ollama, Claude Code).\n\nhttps://codetta.dev",
+        `Codetta v${__APP_VERSION__} — a lightweight Tauri-based code editor with first-class AI.\n\nMulti-workspace · multi-terminal (with pop-out) · integrated git · drag-and-drop splits · BYOK AI (Anthropic, OpenAI, Ollama, Claude Code).\n\nhttps://codetta.dev`,
         { title: "About Codetta" },
       ),
   },
