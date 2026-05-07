@@ -10,6 +10,7 @@ import { SourceControlPanel } from "./SourceControlPanel";
 import { TasksPanel } from "./TasksPanel";
 import { TodosPanel } from "./TodosPanel";
 import { AIChatPanel } from "./AIChatPanel";
+import { OutlinePanel } from "./OutlinePanel";
 import { RemoteSftpPanel } from "./RemoteSftpPanel";
 import { Icon } from "./Icon";
 
@@ -19,6 +20,7 @@ const VIEW_LABEL: Record<SidebarView, string> = {
   git: "Source Control",
   tasks: "Tasks",
   todos: "TODO / FIXME",
+  outline: "Outline",
   ai: "AI Chat",
   remote: "Remote (SFTP)",
 };
@@ -126,6 +128,8 @@ export function SidebarStack({ wsId, ws }: Props) {
         return <TasksPanel wsId={wsId} root={ws.meta.root} />;
       case "todos":
         return <TodosPanel wsId={wsId} root={ws.meta.root} />;
+      case "outline":
+        return <OutlinePanel wsId={wsId} root={ws.meta.root} />;
       case "ai":
         return <AIChatPanel wsId={wsId} root={ws.meta.root} />;
       case "remote":

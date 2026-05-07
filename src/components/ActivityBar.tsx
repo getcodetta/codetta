@@ -178,6 +178,16 @@ export function ActivityBar() {
           <Icon name="check-square" size={20} />
         </button>
         <button
+          className={`activity-icon ${sectionActive("outline") ? "active" : ""}`}
+          title="Outline — symbols defined in the active editor file"
+          aria-label="Outline"
+          aria-pressed={sectionActive("outline")}
+          onClick={() => switchView("outline")}
+          disabled={!activeId}
+        >
+          <Icon name="file-text" size={20} />
+        </button>
+        <button
           className={`activity-icon ${sectionActive("remote") ? "active" : ""}`}
           title="Remote (SFTP) — click to toggle section. Manage connections in Settings."
           aria-label="Remote SFTP"
