@@ -126,6 +126,9 @@ export function TasksPanel({ wsId, root }: Props) {
         </button>
       </div>
       {error && <div className="tasks-empty">{error}</div>}
+      {!error && loading && scripts.length === 0 && (
+        <div className="tasks-empty">Scanning package.json…</div>
+      )}
       {!error && !loading && scripts.length === 0 && (
         <div className="tasks-empty">No package.json scripts found</div>
       )}
@@ -140,6 +143,8 @@ export function TasksPanel({ wsId, root }: Props) {
               <button
                 className="task-run"
                 onClick={() => runScript(s.name)}
+                title={`Run "${pm} run ${s.name}" in a new bottom-panel terminal`}
+                aria-label={`Run ${s.name} script`}
               >
                 ▷ Run
               </button>

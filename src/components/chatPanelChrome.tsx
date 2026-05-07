@@ -59,6 +59,12 @@ export function TimelineScrubber({
         }}
         className="ai-scrubber-range"
         title="Scrub through past turns"
+        aria-label={`Chat history scrubber: turn ${value + 1} of ${totalMessages}`}
+        aria-valuetext={
+          isScrubbed
+            ? `Viewing turn ${value + 1} of ${totalMessages}`
+            : "Live view, latest turn"
+        }
       />
       <div className="ai-scrubber-info">
         {isScrubbed ? (
@@ -340,11 +346,14 @@ export function HeaderMenu({
         className={`ai-header-menu-btn ${open ? "active" : ""}`}
         onClick={() => setOpen((v) => !v)}
         title="More"
+        aria-label="More chat actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         ⋯
       </button>
       {open && (
-        <div className="ai-header-menu-popover">
+        <div className="ai-header-menu-popover" role="menu">
           <button
             className="ai-header-menu-item"
             onClick={() => {
