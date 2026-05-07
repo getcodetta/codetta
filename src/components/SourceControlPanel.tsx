@@ -163,6 +163,24 @@ export function SourceControlPanel({ wsId, root }: Props) {
   const pull = () => run("Pulling", "git_pull", { path: root });
   const push = () => run("Pushing", "git_push", { path: root });
   const fetch_ = () => run("Fetching", "git_fetch", { path: root });
+  // VS Code-style sync: pull then push so a single click reconciles both
+  // sides of the upstream relationship. We bail on pull failure so a
+  // merge conflict isn't immediately followed by a push attempt.
+  const sync = useCallback(async () => {
+    if (busy) return;
+    setBusy("Syncing");
+    setLog("");
+    try {
+      const pullOut = await invoke<string>("git_pull", { path: root });
+      const pushOut = await invoke<string>("git_push", { path: root });
+      setLog(`${pullOut}\n${pushOut}`.trim());
+    } catch (e) {
+      setLog(errMsg(e));
+    } finally {
+      setBusy(null);
+      await refresh();
+    }
+  }, [busy, root, refresh]);
 
   const showDiff = useCallback(
     async (f: GitFile, staged: boolean) => {
@@ -335,17 +353,27 @@ export function SourceControlPanel({ wsId, root }: Props) {
           <button
             onClick={() => void pull()}
             disabled={!!busy}
-            title="Pull"
+            title="Pull from upstream"
           >
             Pull
           </button>
           <button
             onClick={() => void push()}
             disabled={!!busy}
-            title="Push"
+            title="Push to upstream"
           >
             Push
           </button>
+          {(status.ahead > 0 || status.behind > 0) && status.upstream && (
+            <button
+              onClick={() => void sync()}
+              disabled={!!busy}
+              className="primary"
+              title={`Sync — pull ${status.behind} then push ${status.ahead}`}
+            >
+              Sync
+            </button>
+          )}
         </div>
       </div>
 
@@ -400,7 +428,16 @@ export function SourceControlPanel({ wsId, root }: Props) {
         {staged.map((f) => (
           <li
             key={"s:" + f.path}
+            tabIndex={0}
+            role="button"
+            aria-label={`View diff for staged ${f.path}`}
             onClick={() => void showDiff(f, true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                void showDiff(f, true);
+              }
+            }}
             onContextMenu={(e) => {
               e.preventDefault();
               setCtx({ x: e.clientX, y: e.clientY, file: f });
@@ -436,7 +473,16 @@ export function SourceControlPanel({ wsId, root }: Props) {
         {changes.map((f) => (
           <li
             key={"c:" + f.path}
+            tabIndex={0}
+            role="button"
+            aria-label={`View diff for ${f.path}`}
             onClick={() => void showDiff(f, false)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                void showDiff(f, false);
+              }
+            }}
             onContextMenu={(e) => {
               e.preventDefault();
               setCtx({ x: e.clientX, y: e.clientY, file: f });

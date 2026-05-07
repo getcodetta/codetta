@@ -47,6 +47,7 @@ export function TodosPanel({ wsId, root }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [filter, setFilter] = useState("");
   const [scannedAt, setScannedAt] = useState<number | null>(
     cached?.scannedAt ?? null,
   );
@@ -87,26 +88,50 @@ export function TodosPanel({ wsId, root }: Props) {
   }, [root]);
 
   // Auto-scan on first mount per workspace; subsequent mounts use cache.
+  // On root change, also reset the per-root view state (expanded toggle,
+  // filter text) so a stale UI from the previous workspace doesn't leak.
   useEffect(() => {
-    if (!root) return;
+    setExpanded(false);
+    setFilter("");
+    setError(null);
+    if (!root) {
+      setHits([]);
+      setScannedAt(null);
+      return;
+    }
     if (todoCache.has(root)) {
       const c = todoCache.get(root)!;
       setHits(c.hits);
       setScannedAt(c.scannedAt);
       return;
     }
+    // Clear stale hits while the new scan runs so we don't briefly show
+    // results from the previous root.
+    setHits([]);
+    setScannedAt(null);
     void refresh();
   }, [root, refresh]);
 
+  const filteredHits = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return hits;
+    return hits.filter(
+      (h) =>
+        h.text.toLowerCase().includes(q) ||
+        h.kind.toLowerCase().includes(q) ||
+        h.path.toLowerCase().includes(q),
+    );
+  }, [hits, filter]);
+
   const groups = useMemo(() => {
     const m = new Map<string, TodoHit[]>();
-    for (const h of hits) {
+    for (const h of filteredHits) {
       const existing = m.get(h.path);
       if (existing) existing.push(h);
       else m.set(h.path, [h]);
     }
     return Array.from(m.entries());
-  }, [hits]);
+  }, [filteredHits]);
 
   const visibleGroups = expanded
     ? groups
@@ -124,7 +149,9 @@ export function TodosPanel({ wsId, root }: Props) {
         <span>
           Tasks &amp; TODOs
           {hits.length > 0 && (
-            <span className="todos-count"> · {hits.length}</span>
+            <span className="todos-count">
+              {" "}· {filter ? `${filteredHits.length}/${hits.length}` : hits.length}
+            </span>
           )}
         </span>
         <button
@@ -135,16 +162,43 @@ export function TodosPanel({ wsId, root }: Props) {
               ? `Last scanned ${new Date(scannedAt).toLocaleTimeString()}`
               : "Scan workspace"
           }
+          aria-label="Rescan workspace for TODOs"
         >
           {scanning ? "…" : "⟳"}
         </button>
       </div>
+      {hits.length > 0 && (
+        <div className="todos-filter">
+          <input
+            type="text"
+            placeholder="Filter by text, kind, or path…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            aria-label="Filter TODOs"
+          />
+          {filter && (
+            <button
+              className="todos-filter-clear"
+              onClick={() => setFilter("")}
+              title="Clear filter"
+              aria-label="Clear filter"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
       {scanning && hits.length === 0 && (
         <div className="todos-group todos-empty">Scanning workspace…</div>
       )}
       {!scanning && !error && hits.length === 0 && (
         <div className="todos-group todos-empty">
           No TODOs found in scannable files.
+        </div>
+      )}
+      {!scanning && !error && hits.length > 0 && filteredHits.length === 0 && (
+        <div className="todos-group todos-empty">
+          No matches for “{filter}”.
         </div>
       )}
       {error && <div className="todos-group todos-error">{error}</div>}

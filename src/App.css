@@ -2119,6 +2119,40 @@ input {
   background: var(--bg-hi);
   color: var(--fg);
 }
+.todos-filter {
+  position: relative;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.todos-filter input {
+  width: 100%;
+  padding: 4px 22px 4px 8px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  outline: none;
+}
+.todos-filter input:focus {
+  border-color: var(--accent);
+}
+.todos-filter-clear {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 6px;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.todos-filter-clear:hover {
+  color: var(--fg);
+}
 
 /* ---------- Remote SFTP panel ---------- */
 .remote-panel {
@@ -6830,9 +6864,14 @@ input {
   gap: 6px;
   padding: 2px 6px;
   border-radius: 3px;
+  outline: none;
 }
 .git-files li:hover {
   background: var(--bg-hi);
+}
+.git-files li:focus-visible {
+  background: var(--bg-hi);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .git-status-tag {
   display: inline-block;
