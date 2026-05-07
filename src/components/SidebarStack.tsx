@@ -11,6 +11,7 @@ import { TasksPanel } from "./TasksPanel";
 import { TodosPanel } from "./TodosPanel";
 import { AIChatPanel } from "./AIChatPanel";
 import { OutlinePanel } from "./OutlinePanel";
+import { BookmarksPanel } from "./BookmarksPanel";
 import { RemoteSftpPanel } from "./RemoteSftpPanel";
 import { Icon } from "./Icon";
 
@@ -21,6 +22,7 @@ const VIEW_LABEL: Record<SidebarView, string> = {
   tasks: "Tasks",
   todos: "TODO / FIXME",
   outline: "Outline",
+  bookmarks: "Bookmarks",
   ai: "AI Chat",
   remote: "Remote (SFTP)",
 };
@@ -130,6 +132,8 @@ export function SidebarStack({ wsId, ws }: Props) {
         return <TodosPanel wsId={wsId} root={ws.meta.root} />;
       case "outline":
         return <OutlinePanel wsId={wsId} root={ws.meta.root} />;
+      case "bookmarks":
+        return <BookmarksPanel wsId={wsId} root={ws.meta.root} />;
       case "ai":
         return <AIChatPanel wsId={wsId} root={ws.meta.root} />;
       case "remote":

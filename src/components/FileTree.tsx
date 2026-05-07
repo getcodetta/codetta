@@ -22,6 +22,12 @@ import {
 } from "../sftpLinks";
 import { basename, dirname, joinPath } from "../pathUtils";
 import { dropRecentFile } from "../recentFiles";
+import {
+  isBookmarked,
+  removeBookmark,
+  addBookmark,
+  renameBookmark,
+} from "../bookmarks";
 import { Icon } from "./Icon";
 
 interface MenuTarget {
@@ -259,7 +265,10 @@ export function FileTree({ wsId, root }: Props) {
             // stack so Ctrl+Tab doesn't try to reopen a path that no
             // longer exists. The Monaco editor for the open buffer
             // will follow the rename via its own buffer-key change.
-            if (!target.is_dir) dropRecentFile(wsId, target.path);
+            if (!target.is_dir) {
+              dropRecentFile(wsId, target.path);
+              renameBookmark(wsId, target.path, newPath);
+            }
           } catch (e) {
             toastError(`Failed to rename: ${errMsg(e)}`);
           }
@@ -291,13 +300,26 @@ export function FileTree({ wsId, root }: Props) {
             // recents — skipping that since the Ctrl+Tab opener will
             // fall through with a "file not found" toast for any
             // child that's gone, which is acceptable degraded behavior.
-            if (!target.is_dir) dropRecentFile(wsId, target.path);
+            if (!target.is_dir) {
+              dropRecentFile(wsId, target.path);
+              removeBookmark(wsId, target.path);
+            }
           } catch (e) {
             toastError(`Failed to delete: ${errMsg(e)}`);
           }
         },
       });
       out.push("separator");
+      if (!target.is_dir) {
+        const pinned = isBookmarked(wsId, target.path);
+        out.push({
+          label: pinned ? "Unpin from bookmarks" : "Pin to bookmarks",
+          onClick: () => {
+            if (pinned) removeBookmark(wsId, target.path);
+            else addBookmark(wsId, target.path);
+          },
+        });
+      }
       out.push({
         label: "Reveal in File Explorer",
         onClick: async () => {

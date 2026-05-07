@@ -2484,6 +2484,135 @@ input {
   font-family: "Cascadia Mono", Consolas, monospace;
 }
 
+/* ---------- Bookmarks panel ---------- */
+.bookmarks-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 12px;
+}
+.bookmarks-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-muted);
+}
+.bookmarks-count {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--fg-muted);
+}
+.bookmarks-empty {
+  padding: 16px 12px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  line-height: 1.4;
+  text-align: center;
+}
+.bookmarks-list {
+  flex: 1;
+  overflow-y: auto;
+}
+.bookmarks-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+.bookmarks-row:hover {
+  background: var(--bg-hi);
+}
+.bookmarks-row-main {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px 6px 10px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--fg);
+  min-width: 0;
+  outline: none;
+}
+.bookmarks-row-main:focus-visible {
+  background: var(--bg-hi);
+}
+.bookmarks-star {
+  color: #f5b524;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.bookmarks-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.bookmarks-name {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bookmarks-rel {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bookmarks-note {
+  font-size: 11px;
+  color: var(--fg);
+  font-style: italic;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bookmarks-time {
+  font-size: 10px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+}
+.bookmarks-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 10px 6px 4px;
+}
+.bookmarks-action {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: grid;
+  place-items: center;
+  outline: none;
+}
+.bookmarks-action:hover,
+.bookmarks-action:focus-visible {
+  color: var(--fg);
+  border-color: var(--border);
+}
+.bookmarks-action-danger:hover,
+.bookmarks-action-danger:focus-visible {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 /* ---------- Remote SFTP panel ---------- */
 .remote-panel {
   display: flex;

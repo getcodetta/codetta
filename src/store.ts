@@ -100,6 +100,7 @@ export type SidebarView =
   | "tasks"
   | "todos"
   | "outline"
+  | "bookmarks"
   | "ai"
   | "remote";
 
@@ -605,7 +606,7 @@ function commonLayoutFields(
   r: Record<string, unknown>,
 ): Omit<WorkspaceLayout, "editorRoot" | "bottomRoot" | "activePaneId"> {
   const validViews: SidebarView[] = [
-    "files", "search", "git", "tasks", "todos", "outline", "ai", "remote",
+    "files", "search", "git", "tasks", "todos", "outline", "bookmarks", "ai", "remote",
   ];
   const view = validViews.includes(r.sidebarView as SidebarView)
     ? (r.sidebarView as SidebarView)

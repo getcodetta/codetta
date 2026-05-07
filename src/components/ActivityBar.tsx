@@ -188,6 +188,16 @@ export function ActivityBar() {
           <Icon name="file-text" size={20} />
         </button>
         <button
+          className={`activity-icon ${sectionActive("bookmarks") ? "active" : ""}`}
+          title="Bookmarks — pinned files for quick access"
+          aria-label="Bookmarks"
+          aria-pressed={sectionActive("bookmarks")}
+          onClick={() => switchView("bookmarks")}
+          disabled={!activeId}
+        >
+          <Icon name="star" size={20} />
+        </button>
+        <button
           className={`activity-icon ${sectionActive("remote") ? "active" : ""}`}
           title="Remote (SFTP) — click to toggle section. Manage connections in Settings."
           aria-label="Remote SFTP"
