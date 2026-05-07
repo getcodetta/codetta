@@ -11,6 +11,13 @@ export interface EditorSettings {
   minimap: boolean;
   trimTrailingWhitespace: boolean;
   insertFinalNewline: boolean;
+  /** Run Monaco's "format document" action on Ctrl+S before writing
+   *  to disk. Skipped on auto-save to avoid the editor jumping while
+   *  the user is still typing. */
+  formatOnSave: boolean;
+  /** Vertical guides at the configured columns (e.g. [80, 100]).
+   *  Empty array disables. */
+  rulers: number[];
 }
 
 const STORAGE_KEY = "lcp.editorSettings";
@@ -23,6 +30,8 @@ const DEFAULT: EditorSettings = {
   minimap: false,
   trimTrailingWhitespace: false,
   insertFinalNewline: false,
+  formatOnSave: false,
+  rulers: [],
 };
 
 function read(): EditorSettings {
@@ -63,6 +72,16 @@ function read(): EditorSettings {
       typeof raw.insertFinalNewline === "boolean"
         ? raw.insertFinalNewline
         : DEFAULT.insertFinalNewline,
+    formatOnSave:
+      typeof raw.formatOnSave === "boolean"
+        ? raw.formatOnSave
+        : DEFAULT.formatOnSave,
+    rulers: Array.isArray(raw.rulers)
+      ? raw.rulers.filter(
+          (n): n is number =>
+            typeof n === "number" && Number.isFinite(n) && n > 0 && n < 1000,
+        )
+      : DEFAULT.rulers,
   };
 }
 
@@ -135,4 +154,9 @@ export function toggleInsertFinalNewline() {
   const next = !_settings.insertFinalNewline;
   setEditorSettings({ insertFinalNewline: next });
   toastInfo(`Insert final newline on save: ${next ? "on" : "off"}`);
+}
+export function toggleFormatOnSave() {
+  const next = !_settings.formatOnSave;
+  setEditorSettings({ formatOnSave: next });
+  toastInfo(`Format on save: ${next ? "on" : "off"}`);
 }

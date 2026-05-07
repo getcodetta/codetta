@@ -245,6 +245,11 @@ export function SettingsModal() {
               value={settings.insertFinalNewline}
               onChange={(v) => setEditorSettings({ insertFinalNewline: v })}
             />
+            <Toggle
+              label="Format on save"
+              value={settings.formatOnSave}
+              onChange={(v) => setEditorSettings({ formatOnSave: v })}
+            />
           </Section>
 
           <Section title="AI Privacy — Exclude paths">

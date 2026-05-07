@@ -16,7 +16,9 @@ import {
   success as toastSuccess,
 } from "./notify";
 import {
+  getEditorSettings,
   toggleAutoSave,
+  toggleFormatOnSave,
   toggleInsertFinalNewline,
   toggleMinimap,
   toggleTrimTrailingWhitespace,
@@ -124,10 +126,31 @@ export const commands: CommandSpec[] = [
     label: "Save",
     category: "File",
     accel: "Ctrl+S",
-    run: () => {
+    run: async () => {
       const wsId = s().activeId;
       const path = activeFilePath(wsId);
-      if (wsId && path) void s().saveFile(wsId, path);
+      if (!wsId || !path) return;
+      // Format-on-save: only fire when the user explicitly saved (this
+      // path), not via auto-save. We also gate on the active editor
+      // actually pointing at the file being saved — saving a buffer
+      // from a non-focused tab would otherwise reformat the focused
+      // tab instead, which is wrong.
+      const settings = getEditorSettings();
+      if (settings.formatOnSave) {
+        const ed = getActiveEditor();
+        const model = ed?.getModel();
+        const edPath = model?.uri.fsPath ?? model?.uri.path ?? "";
+        if (ed && edPath === path) {
+          try {
+            const action = ed.getAction("editor.action.formatDocument");
+            if (action) await action.run();
+          } catch {
+            // No formatter for this language, or the formatter
+            // threw — fall through and save what's in the buffer.
+          }
+        }
+      }
+      void s().saveFile(wsId, path);
     },
   },
   {
@@ -485,6 +508,12 @@ export const commands: CommandSpec[] = [
     label: "Toggle: Insert Final Newline on Save",
     category: "File",
     run: () => toggleInsertFinalNewline(),
+  },
+  {
+    id: "edit.toggle_format_on_save",
+    label: "Toggle: Format on Save",
+    category: "File",
+    run: () => toggleFormatOnSave(),
   },
   {
     id: "edit.goto_symbol",

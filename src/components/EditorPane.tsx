@@ -424,6 +424,7 @@ export function EditorPane({ wsId, path }: Props) {
           cursorBlinking: "smooth",
           cursorSmoothCaretAnimation: "on",
           padding: { top: 8 },
+          rulers: settings.rulers,
         }}
         onMount={(ed: editor.IStandaloneCodeEditor, monaco: Monaco) => {
           editorRef.current = ed;
