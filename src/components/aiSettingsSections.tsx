@@ -28,17 +28,76 @@ import {
   type UsageRecord,
 } from "../aiUsageLog";
 import { confirm as dialogConfirm } from "../dialog";
+import { search } from "../ipc";
 import { useStore } from "../store";
+import { detectFrameworks, type DetectedFramework } from "../projectDetect";
+import { errMsg } from "../notify";
 import { Row, Toggle } from "./settingsBits";
 
 export function AIPrivacyEditor() {
   const [settings, setSettings] = useState(() => loadPrivacySettings());
   const [draft, setDraft] = useState("");
   const [test, setTest] = useState("");
+  const [detected, setDetected] = useState<DetectedFramework[]>([]);
+  const [detectError, setDetectError] = useState<string | null>(null);
+  const activeId = useStore((s) => s.activeId);
+  const activeRoot = useStore((s) =>
+    s.activeId ? s.loaded[s.activeId]?.meta.root ?? null : null,
+  );
 
   const persist = (next: typeof settings) => {
     setSettings(next);
     savePrivacySettings(next);
+  };
+
+  // Scan the active workspace for framework markers so we can suggest
+  // stack-specific privacy patterns. Re-runs when the workspace changes
+  // OR when the user adds/removes patterns (so the suggestion list
+  // hides items as soon as they're applied). Bounded at 600 files —
+  // marker detection only needs the early walker output.
+  useEffect(() => {
+    if (!activeRoot) {
+      setDetected([]);
+      setDetectError(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const files = await search.listFiles(activeRoot, 600);
+        if (cancelled) return;
+        // Strip the workspace root prefix so the detector sees relative
+        // paths — its regexes are anchored at workspace-relative root.
+        const root = activeRoot.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
+        const rel = files.map((f) => {
+          const norm = f.replace(/\\/g, "/");
+          return norm.startsWith(root) ? norm.slice(root.length) : norm;
+        });
+        setDetected(detectFrameworks(rel, settings.patterns));
+        setDetectError(null);
+      } catch (e) {
+        if (cancelled) return;
+        setDetected([]);
+        setDetectError(errMsg(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoot, settings.patterns]);
+
+  const applySuggestion = (fw: DetectedFramework) => {
+    const merged = [...settings.patterns];
+    for (const p of fw.patterns) if (!merged.includes(p)) merged.push(p);
+    persist({ ...settings, patterns: merged });
+  };
+
+  const applyAllSuggestions = () => {
+    const merged = [...settings.patterns];
+    for (const fw of detected) {
+      for (const p of fw.patterns) if (!merged.includes(p)) merged.push(p);
+    }
+    persist({ ...settings, patterns: merged });
   };
 
   const addPattern = () => {
@@ -100,6 +159,62 @@ export function AIPrivacyEditor() {
                   {i < DEFAULT_EXCLUSIONS.length - 1 ? ", " : ""}
                 </span>
               ))}
+            </div>
+          )}
+
+          {activeId && detected.length > 0 && (
+            <>
+              <div className="cc-allow-subhead">
+                Suggested for this project
+                {detected.length > 1 && (
+                  <button
+                    className="privacy-suggest-apply-all"
+                    onClick={applyAllSuggestions}
+                    title="Add every suggested pattern from every detected framework"
+                  >
+                    Add all ({detected.reduce((n, fw) => n + fw.patterns.length, 0)})
+                  </button>
+                )}
+              </div>
+              <div className="settings-row settings-row-note">
+                Detected{" "}
+                {detected.map((fw, i) => (
+                  <span key={fw.id}>
+                    <strong>{fw.label}</strong>
+                    {i < detected.length - 1 ? ", " : ""}
+                  </span>
+                ))}{" "}
+                — these stack-specific patterns aren't in the defaults
+                but tend to leak the same kind of secret data.
+              </div>
+              {detected.map((fw) => (
+                <div key={fw.id} className="privacy-suggest-group">
+                  <div className="privacy-suggest-group-head">
+                    <span className="privacy-suggest-group-name">
+                      {fw.label}
+                    </span>
+                    <button
+                      className="privacy-suggest-add"
+                      onClick={() => applySuggestion(fw)}
+                      title={`Add ${fw.patterns.length} ${fw.label} pattern${fw.patterns.length === 1 ? "" : "s"} to your exclusion list`}
+                    >
+                      + Add {fw.patterns.length}
+                    </button>
+                  </div>
+                  <div className="privacy-suggest-patterns">
+                    {fw.patterns.map((p) => (
+                      <code key={p} className="privacy-suggest-pattern">
+                        {p}
+                      </code>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+          {activeId && detectError && (
+            <div className="settings-row settings-row-note">
+              Couldn't scan workspace for framework hints: {detectError}
             </div>
           )}
 
