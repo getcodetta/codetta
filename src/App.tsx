@@ -98,6 +98,49 @@ function MainApp() {
     });
   }, []);
 
+  // Native OS drag-and-drop into the window. Tauri intercepts HTML
+  // drop events on the webview by default, so we listen via the
+  // window API instead. Each dropped path opens as a tab (files only —
+  // directories drop to nothing for now; the file tree handles those).
+  // We light up a CSS class on the body so the rest of the chrome can
+  // dim during a drag, giving the user a clear "drop here works" cue.
+  const [dropOver, setDropOver] = useState(false);
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    void getCurrentWindow()
+      .onDragDropEvent(async (event) => {
+        const t = event.payload.type;
+        if (t === "enter" || t === "over") {
+          setDropOver(true);
+        } else if (t === "leave") {
+          setDropOver(false);
+        } else if (t === "drop") {
+          setDropOver(false);
+          const wsId = useStore.getState().activeId;
+          if (!wsId) return;
+          const paths = (event.payload as { paths: string[] }).paths ?? [];
+          for (const p of paths) {
+            // openFile handles "already open" (activates the tab) and
+            // unreadable paths (logs + bails) — caller-side filtering
+            // for directories would race with stat IPC. Let openFile
+            // do its thing.
+            try {
+              await useStore.getState().openFile(wsId, p);
+            } catch {
+              /* ignore individual failures so the rest of a multi-drop
+                 still lands */
+            }
+          }
+        }
+      })
+      .then((unlisten) => {
+        off = unlisten;
+      });
+    return () => {
+      off?.();
+    };
+  }, []);
+
   // Pop-out windows announce a redock request via this event (from the
   // popout's Re-dock button OR its own onCloseRequested handler). Main is
   // authoritative: it closes the popout window (popout's self-close is
@@ -362,7 +405,7 @@ function MainApp() {
   }
 
   return (
-    <div className={`app ${zen ? "app-zen" : ""}`}>
+    <div className={`app ${zen ? "app-zen" : ""} ${dropOver ? "app-drop-over" : ""}`}>
       {!zen && <TopBar onOpenPalette={() => setPaletteOpen(true)} />}
       <div
         className="shell-stack"
