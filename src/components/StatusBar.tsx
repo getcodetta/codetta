@@ -3,6 +3,7 @@ import { useEditorState } from "../editorState";
 import { useTheme, type ThemeMode } from "../theme";
 import { runCommand } from "../actions";
 import { useEditorSettings } from "../editorSettings";
+import { basename } from "../pathUtils";
 
 interface Props {
   onOpenPalette: () => void;
@@ -19,12 +20,6 @@ const themeIcon: Record<ThemeMode, string> = {
   dark: "🌙",
   system: "⚙",
 };
-
-function shortPath(p: string): string {
-  const norm = p.replace(/\\/g, "/");
-  const i = norm.lastIndexOf("/");
-  return i >= 0 ? norm.slice(i + 1) : norm;
-}
 
 export function StatusBar({ onOpenPalette }: Props) {
   const editorState = useEditorState();
@@ -57,7 +52,7 @@ export function StatusBar({ onOpenPalette }: Props) {
             className="sb-item sb-file"
             title={editorState.filePath}
           >
-            {shortPath(editorState.filePath)}
+            {basename(editorState.filePath)}
           </span>
         )}
         {dirtyCount > 0 && (

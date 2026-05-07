@@ -1885,6 +1885,25 @@ input {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.toast-count {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  background: var(--bg-hi);
+  color: var(--fg-muted);
+  border-radius: 8px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.toast-error .toast-count {
+  background: var(--danger);
+  color: #fff;
+}
+.toast-warning .toast-count {
+  background: #e2c08d;
+  color: #2a1f0e;
+}
 .toast-close {
   background: transparent;
   border: none;

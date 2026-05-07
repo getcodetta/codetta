@@ -30,6 +30,15 @@ export function Toasts() {
             onMouseLeave={() => resumeToast(t.id)}
           >
             <span className="toast-message">{t.message}</span>
+            {t.count > 1 && (
+              <span
+                className="toast-count"
+                aria-label={`Repeated ${t.count} times`}
+                title={`Repeated ${t.count} times`}
+              >
+                ×{t.count}
+              </span>
+            )}
             <button
               className="toast-close"
               onClick={() => dismissToast(t.id)}
