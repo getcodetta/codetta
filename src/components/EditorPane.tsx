@@ -22,6 +22,10 @@ import { dirname } from "../pathUtils";
 import { Icon } from "./Icon";
 import { EditorBreadcrumbs } from "./EditorBreadcrumbs";
 import { requestAIPrompt } from "../aiBus";
+import {
+  loadViewState,
+  saveViewState,
+} from "../editorViewState";
 
 // Right-click "Ask AI to …" actions registered with Monaco. Each one
 // grabs the current selection (or the whole file when nothing is
@@ -223,6 +227,52 @@ export function EditorPane({ wsId, path }: Props) {
     settings.tabSize,
     settings.minimap,
   ]);
+
+  // Per-file view-state preservation. When the editor's model swaps
+  // (the user clicked a different tab and this pane is re-bound to a
+  // new path), snapshot the old path's scroll + cursor + folding so
+  // returning to it later restores the same view, then load any
+  // stashed state for the new path. Initial restore lives in
+  // onMount below, since editorRef isn't assigned until then.
+  const prevPathRef = useRef<string | null>(null);
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed) {
+      // First render before Monaco has called onMount — nothing to
+      // do yet. onMount handles the initial restore directly.
+      prevPathRef.current = path;
+      return;
+    }
+    const prevPath = prevPathRef.current;
+    if (prevPath && prevPath !== path) {
+      try {
+        saveViewState(prevPath, ed.saveViewState());
+      } catch {
+        /* ignore — stale editor, model already torn down */
+      }
+    }
+    const requested = loadViewState(path);
+    if (requested) {
+      requestAnimationFrame(() => {
+        try {
+          ed.restoreViewState(requested);
+        } catch {
+          /* ignore */
+        }
+      });
+    }
+    prevPathRef.current = path;
+    return () => {
+      const cur = prevPathRef.current;
+      if (cur) {
+        try {
+          saveViewState(cur, ed.saveViewState());
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+  }, [path]);
 
   // Auto-save: debounce-save when contents change while auto-save is on.
   // file?.contents and file?.original already cover every relevant
@@ -440,6 +490,19 @@ export function EditorPane({ wsId, path }: Props) {
           editorRef.current = ed;
           monacoRef.current = monaco;
           setActiveEditor(ed);
+          // Initial view-state restore for this pane's first path.
+          // The path-effect above only handles subsequent path
+          // swaps; the first one needs handling here because
+          // editorRef.current was null when that effect first ran.
+          const initial = loadViewState(path);
+          if (initial) {
+            try {
+              ed.restoreViewState(initial);
+            } catch {
+              /* ignore */
+            }
+          }
+          prevPathRef.current = path;
           ed.onDidFocusEditorWidget(() => setActiveEditor(ed));
           ed.onDidChangeCursorPosition((e) => {
             setEditorState({
