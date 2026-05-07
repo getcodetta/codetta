@@ -27,6 +27,13 @@ import { confirmDiscardUnsaved } from "../actions";
 import { confirm as dialogConfirm } from "../dialog";
 import { errMsg } from "../notify";
 import {
+  getJson as lsGetJson,
+  getString as lsGetString,
+  remove as lsRemove,
+  setJson as lsSetJson,
+  setString as lsSetString,
+} from "../localStore";
+import {
   clearUsage,
   loadHardCap,
   loadLogPrompts,
@@ -393,7 +400,7 @@ const SETTINGS_KEYS = [
 function snapshotSettingsJson(): string {
   const out: Record<string, unknown> = {};
   for (const k of SETTINGS_KEYS) {
-    const raw = localStorage.getItem(k);
+    const raw = lsGetString(k);
     if (raw == null) continue;
     try {
       out[k] = JSON.parse(raw);
@@ -440,7 +447,7 @@ function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
     // using the native browser confirm() which has a different look,
     // can't be styled, and is increasingly throttled in webviews.
     const removed = SETTINGS_KEYS.filter(
-      (k) => localStorage.getItem(k) != null && !(k in next),
+      (k) => lsGetString(k) != null && !(k in next),
     );
     if (removed.length > 0) {
       const ok = await dialogConfirm(
@@ -458,17 +465,11 @@ function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
     for (const k of SETTINGS_KEYS) {
       if (k in next) {
         const v = next[k];
-        try {
-          localStorage.setItem(
-            k,
-            typeof v === "string" ? v : JSON.stringify(v),
-          );
-          count++;
-        } catch {
-          /* full — best-effort */
-        }
-      } else if (localStorage.getItem(k) != null) {
-        localStorage.removeItem(k);
+        const ok =
+          typeof v === "string" ? lsSetString(k, v) : lsSetJson(k, v);
+        if (ok) count++;
+      } else if (lsGetString(k) != null) {
+        lsRemove(k);
       }
     }
     setStatus({ kind: "ok", count });
@@ -714,27 +715,16 @@ const CC_BUDGET_KEY = "lcp.claudeCode.budgetUsd";
 
 function ClaudeCodeBudgetEditor() {
   const [val, setVal] = useState<string>(() => {
-    try {
-      const raw = localStorage.getItem(CC_BUDGET_KEY);
-      const n = raw ? parseFloat(raw) : 0;
-      return Number.isFinite(n) && n > 0 ? n.toString() : "";
-    } catch {
-      return "";
-    }
+    const raw = lsGetString(CC_BUDGET_KEY);
+    const n = raw ? parseFloat(raw) : 0;
+    return Number.isFinite(n) && n > 0 ? n.toString() : "";
   });
 
   const persist = (next: string) => {
     setVal(next);
     const n = parseFloat(next);
-    try {
-      if (Number.isFinite(n) && n > 0) {
-        localStorage.setItem(CC_BUDGET_KEY, n.toString());
-      } else {
-        localStorage.removeItem(CC_BUDGET_KEY);
-      }
-    } catch {
-      /* ignore */
-    }
+    if (Number.isFinite(n) && n > 0) lsSetString(CC_BUDGET_KEY, n.toString());
+    else lsRemove(CC_BUDGET_KEY);
   };
 
   return (
@@ -770,25 +760,14 @@ function ClaudeCodeAlwaysAllowEditor() {
   const [list, setList] = useState<string[]>(() => loadList());
 
   function loadList(): string[] {
-    try {
-      const raw = localStorage.getItem(CC_ALWAYS_ALLOW_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed)
-        ? parsed.filter((s) => typeof s === "string").sort()
-        : [];
-    } catch {
-      return [];
-    }
+    return lsGetJson<unknown[]>(CC_ALWAYS_ALLOW_KEY, [], Array.isArray)
+      .filter((s): s is string => typeof s === "string")
+      .sort();
   }
 
   function persist(next: string[]) {
     setList(next);
-    try {
-      localStorage.setItem(CC_ALWAYS_ALLOW_KEY, JSON.stringify(next));
-    } catch {
-      /* ignore */
-    }
+    lsSetJson(CC_ALWAYS_ALLOW_KEY, next);
   }
 
   // Split entries into the three kinds the permission overlay supports:
@@ -942,32 +921,21 @@ interface SftpProfile {
 }
 
 function loadSftpProfiles(): SftpProfile[] {
-  try {
-    const raw = localStorage.getItem(SFTP_PROFILES_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (p): p is SftpProfile =>
-        p &&
-        typeof p.id === "string" &&
-        typeof p.name === "string" &&
-        typeof p.host === "string" &&
-        typeof p.user === "string" &&
-        typeof p.password === "string" &&
-        typeof p.port === "number",
-    );
-  } catch {
-    return [];
-  }
+  return lsGetJson<unknown[]>(SFTP_PROFILES_KEY, [], Array.isArray).filter(
+    (p): p is SftpProfile =>
+      !!p &&
+      typeof p === "object" &&
+      typeof (p as SftpProfile).id === "string" &&
+      typeof (p as SftpProfile).name === "string" &&
+      typeof (p as SftpProfile).host === "string" &&
+      typeof (p as SftpProfile).user === "string" &&
+      typeof (p as SftpProfile).password === "string" &&
+      typeof (p as SftpProfile).port === "number",
+  );
 }
 
 function saveSftpProfiles(profiles: SftpProfile[]) {
-  try {
-    localStorage.setItem(SFTP_PROFILES_KEY, JSON.stringify(profiles));
-  } catch {
-    /* ignore */
-  }
+  lsSetJson(SFTP_PROFILES_KEY, profiles);
 }
 
 function emptyProfile(): SftpProfile {

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { matchExclusion } from "../aiPrivacy";
 import { error as toastError } from "../notify";
+import { getJson as lsGetJson, setJson as lsSetJson } from "../localStore";
 
 /**
  * Per-user always-allow rules persisted in localStorage. Three kinds:
@@ -51,25 +52,18 @@ function loadAllow(): AllowRules {
     bashPrefixes: new Set(),
     exts: [],
   };
-  try {
-    const raw = localStorage.getItem(ALLOW_ALWAYS_KEY);
-    if (!raw) return out;
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return out;
-    for (const v of arr) {
-      if (typeof v !== "string") continue;
-      if (v.startsWith("Bash:")) out.bashPrefixes.add(v.slice(5));
-      else if (v.startsWith("Ext:")) {
-        const rest = v.slice(4);
-        const colon = rest.indexOf(":");
-        if (colon < 0) continue;
-        const ext = rest.slice(0, colon).toLowerCase();
-        const tool = rest.slice(colon + 1);
-        if (ext && tool) out.exts.push({ ext, tool });
-      } else out.tools.add(v);
-    }
-  } catch {
-    /* localStorage corrupted — start fresh */
+  const arr = lsGetJson<unknown[]>(ALLOW_ALWAYS_KEY, [], Array.isArray);
+  for (const v of arr) {
+    if (typeof v !== "string") continue;
+    if (v.startsWith("Bash:")) out.bashPrefixes.add(v.slice(5));
+    else if (v.startsWith("Ext:")) {
+      const rest = v.slice(4);
+      const colon = rest.indexOf(":");
+      if (colon < 0) continue;
+      const ext = rest.slice(0, colon).toLowerCase();
+      const tool = rest.slice(colon + 1);
+      if (ext && tool) out.exts.push({ ext, tool });
+    } else out.tools.add(v);
   }
   return out;
 }
@@ -80,11 +74,7 @@ function persistAllow(rules: AllowRules): void {
     ...[...rules.bashPrefixes].map((p) => `Bash:${p}`),
     ...rules.exts.map((r) => `Ext:${r.ext}:${r.tool}`),
   ];
-  try {
-    localStorage.setItem(ALLOW_ALWAYS_KEY, JSON.stringify(flat));
-  } catch {
-    /* full — best-effort */
-  }
+  lsSetJson(ALLOW_ALWAYS_KEY, flat);
 }
 
 function pathFromInput(input: Record<string, unknown>): string | null {

@@ -24,6 +24,10 @@ import { openSettings } from "../settingsBus";
 import { useStore, parseKey, findPaneById } from "../store";
 import { useEditorState, getActiveEditor } from "../editorState";
 import { setWorkspaceRoot } from "../wsRoot";
+import {
+  getString as lsGetString,
+  setString as lsSetString,
+} from "../localStore";
 import { matchExclusion, subscribePrivacy } from "../aiPrivacy";
 import { ClaudePermissionOverlay } from "./ClaudePermissionOverlay";
 import { recordUsage, wouldExceedHardCap } from "../aiUsageLog";
@@ -110,14 +114,10 @@ interface Props {
 // from Settings take effect immediately.
 const BUDGET_KEY = "lcp.claudeCode.budgetUsd";
 function readBudgetUsd(): number {
-  try {
-    const raw = localStorage.getItem(BUDGET_KEY);
-    if (!raw) return 0;
-    const n = parseFloat(raw);
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  } catch {
-    return 0;
-  }
+  const raw = lsGetString(BUDGET_KEY);
+  if (!raw) return 0;
+  const n = parseFloat(raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 const OLLAMA_DOWNLOAD = "https://ollama.com/download";
@@ -919,7 +919,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     if (aggregate.length > 0) {
       setStatus("ready");
       // Migrate any unqualified persisted model to ollama:<name>.
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = lsGetString(STORAGE_KEY);
       const isPresent = (q: string) =>
         aggregate.some(
           (m) => makeQualifiedModel(m.providerId, m.modelId) === q,
@@ -1184,7 +1184,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   }, [sessionId]);
 
   useEffect(() => {
-    if (selected) localStorage.setItem(STORAGE_KEY, selected);
+    if (selected) lsSetString(STORAGE_KEY, selected);
     // Mirror the selected model onto the chat descriptor so the AI
     // chats rail can render a per-chat provider badge without each rail
     // row mounting an AIChatPanel itself.

@@ -13,6 +13,12 @@ import {
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { confirm as dialogConfirm, prompt as dialogPrompt } from "../dialog";
 import {
+  getJson as lsGetJson,
+  getString as lsGetString,
+  setJson as lsSetJson,
+  setString as lsSetString,
+} from "../localStore";
+import {
   rememberRemoteLink,
   lookupRemoteLink,
   setActiveSftp,
@@ -59,40 +65,29 @@ interface SftpEntry {
 }
 
 function loadProfiles(): SftpProfile[] {
-  try {
-    const raw = localStorage.getItem(SFTP_PROFILES_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (p): p is SftpProfile =>
-          p &&
-          typeof p.id === "string" &&
-          typeof p.name === "string" &&
-          typeof p.host === "string" &&
-          typeof p.user === "string" &&
-          typeof p.password === "string" &&
-          typeof p.port === "number",
-      )
-      .map((p) => ({
-        ...p,
-        defaultPath:
-          typeof p.defaultPath === "string" ? p.defaultPath : undefined,
-        privateKeyPath:
-          typeof p.privateKeyPath === "string" ? p.privateKeyPath : undefined,
-      }));
-  } catch {
-    return [];
-  }
+  return lsGetJson<unknown[]>(SFTP_PROFILES_KEY, [], Array.isArray)
+    .filter(
+      (p): p is SftpProfile =>
+        !!p &&
+        typeof p === "object" &&
+        typeof (p as SftpProfile).id === "string" &&
+        typeof (p as SftpProfile).name === "string" &&
+        typeof (p as SftpProfile).host === "string" &&
+        typeof (p as SftpProfile).user === "string" &&
+        typeof (p as SftpProfile).password === "string" &&
+        typeof (p as SftpProfile).port === "number",
+    )
+    .map((p) => ({
+      ...p,
+      defaultPath:
+        typeof p.defaultPath === "string" ? p.defaultPath : undefined,
+      privateKeyPath:
+        typeof p.privateKeyPath === "string" ? p.privateKeyPath : undefined,
+    }));
 }
 
 function saveProfiles(profiles: SftpProfile[]) {
-  try {
-    localStorage.setItem(SFTP_PROFILES_KEY, JSON.stringify(profiles));
-  } catch {
-    /* ignore */
-  }
+  lsSetJson(SFTP_PROFILES_KEY, profiles);
 }
 
 function emptyProfile(): SftpProfile {
@@ -154,13 +149,9 @@ interface Props {
 
 export function RemoteSftpPanel({ wsId, root }: Props) {
   const [profiles, setProfiles] = useState<SftpProfile[]>(() => loadProfiles());
-  const [profileId, setProfileId] = useState<string>(() => {
-    try {
-      return localStorage.getItem(SFTP_LAST_PROFILE_KEY(wsId)) ?? "";
-    } catch {
-      return "";
-    }
-  });
+  const [profileId, setProfileId] = useState<string>(
+    () => lsGetString(SFTP_LAST_PROFILE_KEY(wsId)) ?? "",
+  );
   // Inline editor for adding/editing a profile without opening Settings.
   // Null = closed; populated = render the form. Same shape as Settings,
   // shorter since we only need create + connect-immediately flow.
@@ -224,13 +215,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
   // Persist last-picked profile per workspace so reopening the panel
   // reconnects to the right server.
   useEffect(() => {
-    try {
-      if (profileId) {
-        localStorage.setItem(SFTP_LAST_PROFILE_KEY(wsId), profileId);
-      }
-    } catch {
-      /* ignore */
-    }
+    if (profileId) lsSetString(SFTP_LAST_PROFILE_KEY(wsId), profileId);
   }, [profileId, wsId]);
 
   const connect = async () => {
