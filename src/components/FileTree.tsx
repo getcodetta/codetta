@@ -104,6 +104,46 @@ function Node({ wsId, entry, depth, onContext }: NodeProps) {
     else void openFile(wsId, entry.path);
   };
 
+  const renameInPlace = async () => {
+    const next = await dialogPrompt("Rename to", basename(entry.path), {
+      title: "Rename",
+      okLabel: "Rename",
+    });
+    if (!next || next === basename(entry.path)) return;
+    const newPath = joinPath(dirname(entry.path), next);
+    try {
+      await fs.rename(entry.path, newPath);
+      if (!entry.is_dir) {
+        dropRecentFile(wsId, entry.path);
+        renameBookmark(wsId, entry.path, newPath);
+      }
+    } catch (err) {
+      toastError(`Failed to rename: ${errMsg(err)}`);
+    }
+  };
+
+  const deleteInPlace = async () => {
+    const message = entry.is_dir
+      ? `Delete folder ${basename(entry.path)} and ALL its contents?\n\nThis is recursive and cannot be undone.`
+      : `Delete ${basename(entry.path)}?\n\nThis cannot be undone.`;
+    const ok = await dialogConfirm(message, {
+      title: entry.is_dir ? "Delete folder" : "Delete file",
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await fs.delete(entry.path);
+      if (!entry.is_dir) {
+        dropRecentFile(wsId, entry.path);
+        removeBookmark(wsId, entry.path);
+      }
+    } catch (err) {
+      toastError(`Failed to delete: ${errMsg(err)}`);
+    }
+  };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -114,6 +154,17 @@ function Node({ wsId, entry, depth, onContext }: NodeProps) {
     } else if (e.key === "ArrowLeft" && entry.is_dir && expanded) {
       e.preventDefault();
       toggleDir(wsId, entry.path);
+    } else if (e.key === "F2") {
+      // Standard rename shortcut. Same dialog as the context menu —
+      // the keyboard route just skips the right-click.
+      e.preventDefault();
+      void renameInPlace();
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      // Confirm-then-delete via the same path as the context menu.
+      // Backspace is a Mac-friendly alternative since the Mac
+      // delete-key glyph confuses some users.
+      e.preventDefault();
+      void deleteInPlace();
     } else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
       // Synthesize a context-menu event at the row's bounding box so
       // keyboard users can reach the right-click actions.
