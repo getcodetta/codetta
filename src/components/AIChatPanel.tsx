@@ -23,6 +23,7 @@ import {
 import { openSettings } from "../settingsBus";
 import { useStore, parseKey, findPaneById } from "../store";
 import { useEditorState, getActiveEditor } from "../editorState";
+import { setWorkspaceRoot } from "../wsRoot";
 import { matchExclusion, subscribePrivacy } from "../aiPrivacy";
 import { ClaudePermissionOverlay } from "./ClaudePermissionOverlay";
 import { recordUsage, wouldExceedHardCap } from "../aiUsageLog";
@@ -1002,9 +1003,11 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   }, [status, isAnyPulling]);
 
   // Expose workspace root globally so the Claude Code provider can spawn
-  // its CLI subprocess with the right cwd.
+  // its CLI subprocess with the right cwd. Stored via the typed
+  // setWorkspaceRoot helper instead of an inline window cast so the
+  // shape is declared in exactly one place.
   useEffect(() => {
-    (window as unknown as { __LCP_WS_ROOT?: string }).__LCP_WS_ROOT = root;
+    setWorkspaceRoot(root);
   }, [root]);
 
   // Refresh-resume: on mount, ask Rust if there's an in-flight (or

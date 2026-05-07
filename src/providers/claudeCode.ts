@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ChatMessage, ChatStreamEvent, ToolCall } from "../ai";
 import type { ChatProvider, ProviderModel } from "./types";
+import { getWorkspaceRoot } from "../wsRoot";
 
 // "default" passes no --model flag, so Claude Code uses whatever your
 // `claude /login` session is configured for. This is the most reliable
@@ -120,9 +121,7 @@ export const claudeCodeProvider: ChatProvider = {
     const prompt = resumeSessionId
       ? lastUserMessage(messages)
       : flattenMessages(messages);
-    const cwd = (typeof window !== "undefined" &&
-      (window as unknown as { __LCP_WS_ROOT?: string }).__LCP_WS_ROOT) ||
-      undefined;
+    const cwd = getWorkspaceRoot();
 
     let streamId: string;
     try {

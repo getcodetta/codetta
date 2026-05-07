@@ -593,6 +593,45 @@ function sanitizePane(p: unknown): Pane {
   };
 }
 
+// Parse the dozen common fields (visibility flags, sidebar config, AI panel
+// settings, etc.) that BOTH the old-shape migration path and the modern
+// path return identically. Both branches differ only in how they construct
+// editorRoot/bottomRoot/activePaneId; pulling the shared bag out kept the
+// migration path from drifting again every time we add a new field.
+function commonLayoutFields(
+  r: Record<string, unknown>,
+): Omit<WorkspaceLayout, "editorRoot" | "bottomRoot" | "activePaneId"> {
+  const validViews: SidebarView[] = [
+    "files", "git", "tasks", "todos", "ai", "remote",
+  ];
+  const view = validViews.includes(r.sidebarView as SidebarView)
+    ? (r.sidebarView as SidebarView)
+    : "files";
+  return {
+    bottomVisible:
+      typeof r.bottomVisible === "boolean" ? r.bottomVisible : true,
+    sidebarVisible:
+      typeof r.sidebarVisible === "boolean" ? r.sidebarVisible : true,
+    expandedDirs: Array.isArray(r.expandedDirs)
+      ? (r.expandedDirs as string[])
+      : [],
+    sidebarW: typeof r.sidebarW === "number" ? r.sidebarW : 240,
+    termH: typeof r.termH === "number" ? r.termH : 240,
+    sidebarView: view,
+    pinned: Array.isArray(r.pinned)
+      ? r.pinned.filter((x: unknown): x is string => typeof x === "string")
+      : [],
+    sidebarSections: parseSidebarSections(r.sidebarSections, view),
+    sidebarSide: r.sidebarSide === "right" ? "right" : "left",
+    aiPanelVisible: r.aiPanelVisible === true,
+    aiPanelW:
+      typeof r.aiPanelW === "number"
+        ? Math.max(220, Math.min(800, r.aiPanelW))
+        : 380,
+    aiRailExpanded: r.aiRailExpanded === true,
+  };
+}
+
 function normalizeLayout(raw: unknown): WorkspaceLayout {
   if (!raw || typeof raw !== "object") return defaultLayout();
   const r = raw as Record<string, unknown>;
@@ -644,25 +683,7 @@ function normalizeLayout(raw: unknown): WorkspaceLayout {
       editorRoot: editorPane,
       bottomRoot,
       activePaneId: editorPane.id,
-      bottomVisible:
-        typeof r.bottomVisible === "boolean" ? r.bottomVisible : true,
-      sidebarVisible:
-        typeof r.sidebarVisible === "boolean" ? r.sidebarVisible : true,
-      expandedDirs: Array.isArray(r.expandedDirs)
-        ? (r.expandedDirs as string[])
-        : [],
-      sidebarW: typeof r.sidebarW === "number" ? r.sidebarW : 240,
-      termH: typeof r.termH === "number" ? r.termH : 240,
-      sidebarView: (["files","git","tasks","todos","ai","remote"] as SidebarView[]).includes(r.sidebarView as SidebarView) ? (r.sidebarView as SidebarView) : "files",
-      pinned: Array.isArray((r as any).pinned) ? (r as any).pinned.filter((x: unknown) => typeof x === "string") : [],
-      sidebarSections: parseSidebarSections((r as any).sidebarSections, (r.sidebarView as SidebarView) ?? "files"),
-      sidebarSide: (r as any).sidebarSide === "right" ? "right" : "left",
-      aiPanelVisible: (r as any).aiPanelVisible === true,
-      aiPanelW:
-        typeof (r as any).aiPanelW === "number"
-          ? Math.max(220, Math.min(800, (r as any).aiPanelW))
-          : 380,
-      aiRailExpanded: (r as any).aiRailExpanded === true,
+      ...commonLayoutFields(r),
     };
   }
 
@@ -675,25 +696,7 @@ function normalizeLayout(raw: unknown): WorkspaceLayout {
       typeof r.activePaneId === "string"
         ? (r.activePaneId as string)
         : firstLeaf(editorRoot).id,
-    bottomVisible:
-      typeof r.bottomVisible === "boolean" ? r.bottomVisible : true,
-    sidebarVisible:
-      typeof r.sidebarVisible === "boolean" ? r.sidebarVisible : true,
-    expandedDirs: Array.isArray(r.expandedDirs)
-      ? (r.expandedDirs as string[])
-      : [],
-    sidebarW: typeof r.sidebarW === "number" ? r.sidebarW : 240,
-    termH: typeof r.termH === "number" ? r.termH : 240,
-    sidebarView: (["files","git","tasks","todos","ai","remote"] as SidebarView[]).includes(r.sidebarView as SidebarView) ? (r.sidebarView as SidebarView) : "files",
-      pinned: Array.isArray((r as any).pinned) ? (r as any).pinned.filter((x: unknown) => typeof x === "string") : [],
-      sidebarSections: parseSidebarSections((r as any).sidebarSections, (r.sidebarView as SidebarView) ?? "files"),
-      sidebarSide: (r as any).sidebarSide === "right" ? "right" : "left",
-      aiPanelVisible: (r as any).aiPanelVisible === true,
-      aiPanelW:
-        typeof (r as any).aiPanelW === "number"
-          ? Math.max(220, Math.min(800, (r as any).aiPanelW))
-          : 380,
-      aiRailExpanded: (r as any).aiRailExpanded === true,
+    ...commonLayoutFields(r),
   };
 }
 
