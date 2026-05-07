@@ -251,6 +251,13 @@ export const commands: CommandSpec[] = [
     run: () => openPalette("? "),
   },
   {
+    id: "view.goto_symbol",
+    label: "Go to Symbol…",
+    category: "View",
+    accel: "Ctrl+T",
+    run: () => openPalette("@"),
+  },
+  {
     id: "view.quick_open",
     label: "Quick Open File…",
     category: "View",

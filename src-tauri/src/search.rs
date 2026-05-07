@@ -445,6 +445,145 @@ pub async fn scan_todos(
         .map_err(|e| e.to_string())
 }
 
+// ---------- Symbol scan (Go to symbol palette mode) ----------
+
+#[derive(Serialize)]
+pub struct SymbolHit {
+    pub path: String,
+    pub line: usize,
+    /// "function" / "class" / "interface" / "type" / "enum" / "struct"
+    /// / "trait" / "impl" / "const" / "var". The frontend uses this
+    /// to render a per-row category badge so users can scan visually.
+    pub kind: String,
+    pub name: String,
+}
+
+fn extract_symbols(path: &str, text: &str, out: &mut Vec<SymbolHit>, cap: usize) {
+    // Tiny per-language regex set. We compile lazily inside the file
+    // walker — these don't get cached cross-call because the per-file
+    // overhead is dwarfed by the file read itself, but we DO cache
+    // within a single scan via the closure capture.
+    use regex::Regex;
+    let lower = path.to_ascii_lowercase();
+    let is_ts_js = matches!(
+        lower.rsplit('.').next().unwrap_or(""),
+        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs"
+    );
+    let is_rust = lower.ends_with(".rs");
+    let is_python = lower.ends_with(".py") || lower.ends_with(".pyi");
+    let is_go = lower.ends_with(".go");
+
+    // Patterns are anchored at line start (after any whitespace) so
+    // we don't match `// fn foo()` style comments. Matching only the
+    // first capture group keeps the symbol name clean.
+    let patterns: &[(&str, Regex)] = if is_ts_js {
+        &[
+            ("function", Regex::new(r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(\w+)").unwrap()),
+            ("class", Regex::new(r"^\s*(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+(\w+)").unwrap()),
+            ("interface", Regex::new(r"^\s*(?:export\s+)?interface\s+(\w+)").unwrap()),
+            ("type", Regex::new(r"^\s*(?:export\s+)?type\s+(\w+)\s*=").unwrap()),
+            ("enum", Regex::new(r"^\s*(?:export\s+(?:const\s+)?)?enum\s+(\w+)").unwrap()),
+            ("const", Regex::new(r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*[:=]").unwrap()),
+        ][..]
+    } else if is_rust {
+        &[
+            ("fn", Regex::new(r"^\s*(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?fn\s+(\w+)").unwrap()),
+            ("struct", Regex::new(r"^\s*(?:pub(?:\([^)]+\))?\s+)?struct\s+(\w+)").unwrap()),
+            ("enum", Regex::new(r"^\s*(?:pub(?:\([^)]+\))?\s+)?enum\s+(\w+)").unwrap()),
+            ("trait", Regex::new(r"^\s*(?:pub(?:\([^)]+\))?\s+)?(?:unsafe\s+)?trait\s+(\w+)").unwrap()),
+            ("impl", Regex::new(r"^\s*impl(?:<[^>]+>)?\s+(?:[^{]*?\s+for\s+)?(\w+)").unwrap()),
+            ("const", Regex::new(r"^\s*(?:pub(?:\([^)]+\))?\s+)?(?:const|static)\s+(\w+)\s*:").unwrap()),
+            ("type", Regex::new(r"^\s*(?:pub(?:\([^)]+\))?\s+)?type\s+(\w+)\s*=").unwrap()),
+        ][..]
+    } else if is_python {
+        &[
+            ("def", Regex::new(r"^\s*(?:async\s+)?def\s+(\w+)").unwrap()),
+            ("class", Regex::new(r"^\s*class\s+(\w+)").unwrap()),
+        ][..]
+    } else if is_go {
+        &[
+            ("func", Regex::new(r"^\s*func\s+(?:\([^)]+\)\s+)?(\w+)").unwrap()),
+            ("type", Regex::new(r"^\s*type\s+(\w+)").unwrap()),
+            ("var", Regex::new(r"^\s*(?:var|const)\s+(\w+)").unwrap()),
+        ][..]
+    } else {
+        return;
+    };
+
+    for (i, line) in text.lines().enumerate() {
+        for (kind, re) in patterns {
+            if let Some(caps) = re.captures(line) {
+                if let Some(name) = caps.get(1) {
+                    out.push(SymbolHit {
+                        path: path.to_string(),
+                        line: i + 1,
+                        kind: (*kind).to_string(),
+                        name: name.as_str().to_string(),
+                    });
+                    if out.len() >= cap {
+                        return;
+                    }
+                    // First-match-wins per line so we don't double-count
+                    // e.g. "export const Foo: Bar = …" against multiple
+                    // patterns.
+                    break;
+                }
+            }
+        }
+    }
+}
+
+const MAX_SYMBOL_FILE_BYTES: u64 = 1024 * 1024;
+
+fn find_symbols_blocking(root: String, cap: usize) -> Vec<SymbolHit> {
+    let mut paths: Vec<String> = Vec::new();
+    walk_files(Path::new(&root), &mut paths, 50_000, |p| {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let lower = name.to_ascii_lowercase();
+        // Only the four languages the symbol extractor knows about.
+        // Lockfiles / test fixtures are covered by HEAVY_DIRS.
+        lower.ends_with(".ts")
+            || lower.ends_with(".tsx")
+            || lower.ends_with(".js")
+            || lower.ends_with(".jsx")
+            || lower.ends_with(".mjs")
+            || lower.ends_with(".cjs")
+            || lower.ends_with(".rs")
+            || lower.ends_with(".py")
+            || lower.ends_with(".pyi")
+            || lower.ends_with(".go")
+    });
+
+    let mut hits: Vec<SymbolHit> = Vec::with_capacity(cap.min(1024));
+    for p in paths {
+        if hits.len() >= cap {
+            break;
+        }
+        let pp = Path::new(&p);
+        let bytes = match read_text_file_capped(pp, MAX_SYMBOL_FILE_BYTES) {
+            Some(b) => b,
+            None => continue,
+        };
+        let text = match std::str::from_utf8(&bytes) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        extract_symbols(&p, text, &mut hits, cap);
+    }
+    hits
+}
+
+#[tauri::command]
+pub async fn find_symbols(
+    root: String,
+    max_results: Option<usize>,
+) -> Result<Vec<SymbolHit>, String> {
+    let cap = max_results.unwrap_or(3000);
+    tauri::async_runtime::spawn_blocking(move || find_symbols_blocking(root, cap))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[derive(Serialize)]
 pub struct PackageScript {
     pub name: String,

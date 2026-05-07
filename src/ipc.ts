@@ -73,6 +73,14 @@ export interface TodoHit {
   kind: string;
   text: string;
 }
+export interface SymbolHit {
+  path: string;
+  line: number;
+  /** "function" / "class" / "interface" / "type" / "enum" / "struct"
+   *  / "trait" / "impl" / "fn" / "def" / "func" / "const" / "var". */
+  kind: string;
+  name: string;
+}
 export interface PackageScript {
   name: string;
   command: string;
@@ -107,6 +115,8 @@ export const search = {
     }),
   scanTodos: (root: string, maxResults = 1000) =>
     invoke<TodoHit[]>("scan_todos", { root, maxResults }),
+  findSymbols: (root: string, maxResults = 3000) =>
+    invoke<SymbolHit[]>("find_symbols", { root, maxResults }),
   readPackageScripts: (root: string) =>
     invoke<PackageScript[]>("read_package_scripts", { root }),
 };

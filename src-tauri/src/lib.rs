@@ -75,6 +75,7 @@ pub fn run() {
             search::search_text,
             search::search_regex,
             search::scan_todos,
+            search::find_symbols,
             search::read_package_scripts,
             git::git_diff,
             git::git_diff_staged,

@@ -243,6 +243,9 @@ function MainApp() {
       } else if (lower === "t" && e.shiftKey) {
         e.preventDefault();
         runCommand("view.todos");
+      } else if (lower === "t" && !e.shiftKey) {
+        e.preventDefault();
+        runCommand("view.goto_symbol");
       } else if (lower === "r" && !e.shiftKey) {
         e.preventDefault();
         runCommand("view.reload");

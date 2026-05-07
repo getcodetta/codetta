@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { commands, type CommandSpec } from "../actions";
 import { useStore } from "../store";
-import { search } from "../ipc";
+import { search, type SymbolHit } from "../ipc";
 import { setEditorGoto } from "../editorState";
 import { relPath } from "../pathUtils";
 
@@ -55,27 +55,33 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
   const [textHits, setTextHits] = useState<
     { path: string; line: number; col: number; text: string }[]
   >([]);
+  const [symbols, setSymbols] = useState<SymbolHit[]>([]);
   const [searching, setSearching] = useState(false);
 
   const trimmed = query.trimStart();
-  const mode: "search" | "commands" | "default" =
+  const mode: "search" | "commands" | "symbols" | "default" =
     trimmed.startsWith("?")
       ? "search"
       : trimmed.startsWith(">")
         ? "commands"
-        : "default";
+        : trimmed.startsWith("@")
+          ? "symbols"
+          : "default";
   const subQuery =
-    mode === "search"
+    mode === "search" || mode === "commands" || mode === "symbols"
       ? trimmed.slice(1).trim()
-      : mode === "commands"
-        ? trimmed.slice(1).trim()
-        : trimmed;
+      : trimmed;
 
   // On open: reset, focus, lazy-fetch files for current workspace.
+  // Symbols are NOT fetched here — they're heavier (regex per file)
+  // so we wait until the user actually types `@`. Once fetched they
+  // stay in state until the palette closes, so subsequent edits to
+  // the @ query filter the cached list instead of refetching.
   useEffect(() => {
     if (!open) return;
     setQuery(initialQuery ?? "");
     setIndex(0);
+    setSymbols([]);
     requestAnimationFrame(() => inputRef.current?.focus());
     if (ws) {
       void search
@@ -84,6 +90,27 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
         .catch(() => setFiles([]));
     }
   }, [open, initialQuery, ws]);
+
+  // Symbol scan triggered the first time the user enters @ mode in
+  // this palette session. We deliberately don't refresh on every @
+  // keystroke — symbol lists barely change between palette opens, and
+  // the scan is the slowest IPC the palette makes.
+  useEffect(() => {
+    if (!open || mode !== "symbols" || !ws) return;
+    if (symbols.length > 0) return;
+    let cancelled = false;
+    void search
+      .findSymbols(ws.meta.root, 5000)
+      .then((s) => {
+        if (!cancelled) setSymbols(s);
+      })
+      .catch(() => {
+        if (!cancelled) setSymbols([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, mode, ws, symbols.length]);
 
   // Debounced text search.
   useEffect(() => {
@@ -128,6 +155,24 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
             if (activeId) {
               await useStore.getState().openFile(activeId, h.path);
               setEditorGoto(h.line, h.col);
+            }
+          },
+        });
+      }
+      return out;
+    }
+
+    if (mode === "symbols") {
+      for (const s of symbols) {
+        out.push({
+          key: `sym:${s.path}:${s.line}:${s.name}`,
+          label: s.name,
+          hint: `${s.kind} · ${wsRoot ? relPath(s.path, wsRoot) : s.path}:${s.line}`,
+          category: "Symbol",
+          run: async () => {
+            if (activeId) {
+              await useStore.getState().openFile(activeId, s.path);
+              setEditorGoto(s.line, 1);
             }
           },
         });
@@ -185,6 +230,7 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
     open,
     mode,
     textHits,
+    symbols,
     files,
     openIds,
     recent,
@@ -237,7 +283,9 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
       ? "Search file contents…"
       : mode === "commands"
         ? "Run a command…"
-        : "Type ? to search content,  > for commands,  or just a file/command name…";
+        : mode === "symbols"
+          ? "Go to symbol — function / class / interface / type…"
+          : "Type ? content,  > commands,  @ symbols,  or just a file/command name…";
 
   return (
     <>
@@ -246,7 +294,11 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
         <div className="palette-input-row">
           {mode !== "default" && (
             <span className={`palette-mode mode-${mode}`}>
-              {mode === "search" ? "Search" : "Command"}
+              {mode === "search"
+                ? "Search"
+                : mode === "symbols"
+                  ? "Symbol"
+                  : "Command"}
             </span>
           )}
           <input
