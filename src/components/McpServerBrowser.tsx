@@ -3,6 +3,7 @@ import { claudeMcp, type McpServer } from "../ipc";
 import { useStore } from "../store";
 import { error as toastError, errMsg, success as toastSuccess } from "../notify";
 import { confirm as dialogConfirm, prompt as dialogPrompt } from "../dialog";
+import { Icon } from "./Icon";
 
 /**
  * Curated catalog of well-known MCP servers worth one-click installing.
@@ -349,7 +350,7 @@ export function McpServerBrowser() {
       {installed &&
         hasShadowing(installed) && (
           <div className="settings-row settings-row-note mcp-warning">
-            ⚠ A project-scope server is shadowing a user-scope one of
+            <Icon name="alert-triangle" size={12} /> A project-scope server is shadowing a user-scope one of
             the same name. Per{" "}
             <a
               href="https://github.com/anthropics/claude-code/issues/16728"
@@ -412,7 +413,7 @@ export function McpServerBrowser() {
                     className={`mcp-card-status mcp-card-status-${status.cls}`}
                     title={status.title}
                   >
-                    ✓ {status.label}
+                    <Icon name="check" size={11} /> {status.label}
                   </span>
                 )}
               </div>
@@ -423,7 +424,7 @@ export function McpServerBrowser() {
                 <div className="mcp-card-meta">
                   {needsConfig && (
                     <span className="mcp-card-meta-chip">
-                      ⚙ asks for{" "}
+                      <Icon name="settings" size={10} /> asks for{" "}
                       {(entry.placeholders ?? [])
                         .map((p) => p.label.split(/[\s(,]/)[0].toLowerCase())
                         .join(" + ")}
@@ -431,7 +432,7 @@ export function McpServerBrowser() {
                   )}
                   {entry.postInstallNote && (
                     <span className="mcp-card-meta-chip mcp-card-meta-warn">
-                      ⓘ {entry.postInstallNote}
+                      <Icon name="alert-triangle" size={10} /> {entry.postInstallNote}
                     </span>
                   )}
                 </div>
@@ -449,7 +450,7 @@ export function McpServerBrowser() {
                   }
                 >
                   <span className="mcp-card-btn-icon">
-                    {inUser ? "↻" : "+"}
+                    <Icon name={inUser ? "rotate-ccw" : "plus"} size={11} />
                   </span>
                   User
                 </button>
@@ -464,7 +465,7 @@ export function McpServerBrowser() {
                   }
                 >
                   <span className="mcp-card-btn-icon">
-                    {inProject ? "↻" : "+"}
+                    <Icon name={inProject ? "rotate-ccw" : "plus"} size={11} />
                   </span>
                   Project
                 </button>

@@ -424,7 +424,9 @@ function OllamaCard({
             <span className="model-card-tag tag-tools">tools</span>
           )}
           {installed && (
-            <span className="model-card-tag tag-installed">✓ installed</span>
+            <span className="model-card-tag tag-installed">
+              <Icon name="check" size={10} /> installed
+            </span>
           )}
           {selected && <span className="model-card-tag tag-selected">in use</span>}
         </div>

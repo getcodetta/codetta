@@ -7,6 +7,7 @@ import {
 } from "../actions";
 import { useTheme, type ThemeMode } from "../theme";
 import { getActiveEditor } from "../editorState";
+import { Icon } from "./Icon";
 
 // Edit-menu actions delegate to the active Monaco editor when one is
 // focused (its built-in commands handle the editor's undo stack +
@@ -309,7 +310,9 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
         title="Command palette (Ctrl+P)"
         data-tauri-drag-region={false}
       >
-        <span className="topbar-search-icon">⌖</span>
+        <span className="topbar-search-icon">
+          <Icon name="command" size={12} />
+        </span>
         <span className="topbar-search-text">
           Search commands & workspaces
         </span>

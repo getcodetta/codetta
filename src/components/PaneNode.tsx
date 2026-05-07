@@ -22,6 +22,7 @@ import { popOutTerminal, redockTerminal } from "../terminalPopout";
 import { AIIcon } from "./AIIcon";
 import { lookupRemoteLink } from "../sftpLinks";
 import { basename } from "../pathUtils";
+import { Icon } from "./Icon";
 
 function tabLabel(
   ws: WorkspaceData,
@@ -539,13 +540,16 @@ function TabsPaneView(
             >
               <span className="tab-icon">
                 {isPinned ? (
+                  // Keep the pin glyph as a literal pin emoji — screen
+                  // readers + sighted users both understand it; no SVG
+                  // analogue in the registry.
                   "📌"
                 ) : info.isTerminal ? (
-                  "›_"
+                  <Icon name="terminal" size={12} />
                 ) : info.isAI ? (
                   <AIIcon size={12} />
                 ) : (
-                  "📄"
+                  <Icon name="file-text" size={12} />
                 )}
               </span>
               <span className="tab-name">
@@ -584,13 +588,14 @@ function TabsPaneView(
                 <button
                   className="tab-close"
                   title="Close"
+                  aria-label={`Close ${info.label}`}
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
                     closeTab(wsId, k);
                   }}
                 >
-                  ×
+                  <Icon name="x" size={11} />
                 </button>
               )}
             </div>
@@ -627,35 +632,42 @@ function EmptyPane() {
   return (
     <div className="pane-empty">
       <div className="pane-empty-card">
-        <div className="pane-empty-icon">⌘</div>
+        <div className="pane-empty-icon">
+          <Icon name="command" size={28} />
+        </div>
         <div className="pane-empty-title">Nothing open here</div>
         <div className="pane-empty-actions">
           <button onClick={() => openPalette("")} title="Ctrl+P">
-            <span>⌖</span> Quick open file
+            <Icon name="command" size={14} />
+            <span>Quick open file</span>
           </button>
           <button
             onClick={() => openPalette("? ")}
             title="Ctrl+Shift+F"
           >
-            <span>🔍</span> Search content
+            <Icon name="search" size={14} />
+            <span>Search content</span>
           </button>
           <button
             onClick={() => runCommand("file.open_folder")}
             title="Ctrl+O"
           >
-            <span>📂</span> Open folder
+            <Icon name="folder-open" size={14} />
+            <span>Open folder</span>
           </button>
           <button
             onClick={() => runCommand("terminal.new_bottom")}
             title="Ctrl+`"
           >
-            <span>›_</span> New terminal
+            <Icon name="terminal" size={14} />
+            <span>New terminal</span>
           </button>
           <button
             onClick={() => runCommand("ai.new_chat")}
             title="Open a new AI chat tab"
           >
-            <AIIcon size={14} /> New AI chat
+            <AIIcon size={14} />
+            <span>New AI chat</span>
           </button>
         </div>
         <ul className="pane-empty-tips">

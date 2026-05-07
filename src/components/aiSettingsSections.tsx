@@ -33,6 +33,7 @@ import { useStore } from "../store";
 import { detectFrameworks, type DetectedFramework } from "../projectDetect";
 import { errMsg } from "../notify";
 import { Row, Toggle } from "./settingsBits";
+import { Icon } from "./Icon";
 
 export function AIPrivacyEditor() {
   const [settings, setSettings] = useState(() => loadPrivacySettings());
@@ -277,9 +278,10 @@ export function AIPrivacyEditor() {
                 testMatch ? "sftp-profile-test-fail" : "sftp-profile-test-ok"
               }`}
             >
+              <Icon name={testMatch ? "x" : "check"} size={12} />{" "}
               {testMatch
-                ? `✗ Blocked — matches pattern: ${testMatch}`
-                : `✓ Not excluded — would be sent to AI`}
+                ? `Blocked — matches pattern: ${testMatch}`
+                : "Not excluded — would be sent to AI"}
             </div>
           )}
 
