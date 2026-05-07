@@ -560,8 +560,7 @@ function TabsPaneView(
                     className="tab-popped-mark"
                     title="In a separate window"
                   >
-                    {" "}
-                    ↗
+                    <Icon name="external-link" size={10} />
                   </span>
                 ) : null}
                 {(() => {
@@ -578,8 +577,7 @@ function TabsPaneView(
                       className="tab-autopush-mark"
                       title={`Auto-push on save → ${link.remotePath}`}
                     >
-                      {" "}
-                      ↥
+                      <Icon name="upload-cloud" size={10} />
                     </span>
                   );
                 })()}

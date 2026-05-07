@@ -92,7 +92,8 @@ export function PermissionCard({
           onClick={() => onResolve("deny")}
           title="Reject this call — the model will see a denial message"
         >
-          ✕ Deny
+          <Icon name="x" size={12} />
+          <span>Deny</span>
         </button>
       </div>
     </div>

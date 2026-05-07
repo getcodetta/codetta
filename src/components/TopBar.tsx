@@ -144,10 +144,14 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
       />
     ));
 
-  const themes: { mode: ThemeMode; label: string; icon: string }[] = [
-    { mode: "light", label: "Light", icon: "☀" },
-    { mode: "dark", label: "Dark", icon: "🌙" },
-    { mode: "system", label: "System", icon: "⚙" },
+  const themes: {
+    mode: ThemeMode;
+    label: string;
+    icon: "sun" | "moon" | "monitor";
+  }[] = [
+    { mode: "light", label: "Light", icon: "sun" },
+    { mode: "dark", label: "Dark", icon: "moon" },
+    { mode: "system", label: "System", icon: "monitor" },
   ];
 
   const minimize = async () => {
@@ -272,14 +276,25 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
           <MenuSeparator />
           <div className="menu-section-title">Theme</div>
           {themes.map((t) => (
-            <MenuItem
+            <button
               key={t.mode}
-              label={`${t.icon}  ${t.label}${theme === t.mode ? "  ✓" : ""}`}
+              className="menu-item topbar-theme-item"
+              role="menuitem"
               onClick={() => {
                 closeMenu();
                 setTheme(t.mode);
               }}
-            />
+            >
+              <span className="menu-item-label topbar-theme-label">
+                <Icon name={t.icon} size={12} />
+                {t.label}
+              </span>
+              {theme === t.mode && (
+                <span className="menu-item-accel">
+                  <Icon name="check" size={11} />
+                </span>
+              )}
+            </button>
           ))}
         </MenuButton>
 

@@ -17,6 +17,7 @@ import {
 } from "../store";
 import { pty, type ShellOption } from "../ipc";
 import { redockTerminal } from "../terminalPopout";
+import { Icon } from "./Icon";
 
 interface Props {
   wsId: string;
@@ -527,7 +528,9 @@ function PoppedPlaceholder({
       style={{ display: visible ? "flex" : "none" }}
     >
       <div className="popped-placeholder-card">
-        <div className="popped-placeholder-icon">⤴</div>
+        <div className="popped-placeholder-icon">
+          <Icon name="external-link" size={28} />
+        </div>
         <div className="popped-placeholder-title">
           {title} is in a separate window
         </div>
@@ -535,7 +538,8 @@ function PoppedPlaceholder({
           Closing the pop-out window or clicking re-dock brings it back here.
         </div>
         <button className="popped-placeholder-btn" onClick={onRedock}>
-          ↩ Re-dock now
+          <Icon name="rotate-ccw" size={12} />
+          <span>Re-dock now</span>
         </button>
       </div>
     </div>,

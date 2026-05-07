@@ -667,6 +667,11 @@ input {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.topbar-theme-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .menu-item-accel {
   font-size: 11px;
   color: var(--fg-muted);

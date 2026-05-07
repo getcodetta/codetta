@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TerminalCore } from "./TerminalCore";
 import { bootstrapTheme } from "../theme";
 import { pty } from "../ipc";
+import { Icon } from "./Icon";
 
 // Apply theme as early as possible — before React renders the popout —
 // so the window doesn't flash light when the user is in dark mode. The
@@ -175,7 +176,8 @@ export function TerminalPopoutWindow() {
           title="Send this terminal back to the main window"
           aria-label="Re-dock terminal to main window"
         >
-          ↩ Re-dock
+          <Icon name="rotate-ccw" size={12} />
+          <span>Re-dock</span>
         </button>
       </div>
       <div ref={setHostRef} className="popout-term-host">

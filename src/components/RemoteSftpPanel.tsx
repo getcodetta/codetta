@@ -429,7 +429,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       });
       await useStore.getState().openFile(wsId, localPath);
       toastInfo(
-        `Opened ${name} — edit and use Push (↥) in the panel header to send changes back.`,
+        `Opened ${name} — edit and use the Push button in the panel header to send changes back.`,
       );
     } catch (e) {
       toastError(`Open failed: ${errMsg(e)}`);
