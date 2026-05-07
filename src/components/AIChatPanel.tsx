@@ -1677,7 +1677,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     setMessages(s.messages);
     setInput("");
     setHistoryOpen(false);
-    if (s.model) setSelected((cur) => cur || s.model);
+    if (s.model) {
+      const model = s.model;
+      setSelected((cur) => cur || model);
+    }
   };
 
   const runInActiveTerminal = async (text: string) => {

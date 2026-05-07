@@ -5,7 +5,11 @@ export interface ChatSession {
   id: string;
   title: string;
   messages: ChatMessage[];
-  model: string;
+  /** Qualified provider:model id used for the last turn, or a bare
+   *  Ollama model id from older sessions. Optional because sessions
+   *  saved before the model field was added carry it as undefined,
+   *  and consumers already gate on `if (session.model)`. */
+  model?: string;
   updatedAt: number;
   /**
    * Provider-side session id (currently only set by the Claude Code
