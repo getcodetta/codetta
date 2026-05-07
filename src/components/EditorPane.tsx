@@ -19,6 +19,7 @@ import { confirm as dialogConfirm } from "../dialog";
 import { langOf } from "../langDetect";
 import { dirname } from "../pathUtils";
 import { Icon } from "./Icon";
+import { EditorBreadcrumbs } from "./EditorBreadcrumbs";
 
 interface GitChangeRange {
   kind: "added" | "modified" | "deleted";
@@ -142,6 +143,7 @@ export function EditorPane({ wsId, path }: Props) {
   const update = useStore((s) => s.updateFileContents);
   const resolvedTheme = useResolvedTheme();
   const settings = useEditorSettings();
+  const wsRoot = useStore((s) => s.loaded[wsId]?.meta.root ?? "");
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const decorationsRef = useRef<editor.IEditorDecorationsCollection | null>(
@@ -339,6 +341,7 @@ export function EditorPane({ wsId, path }: Props) {
         isMarkdown && previewOpen ? "editor-host-split" : ""
       }`}
     >
+      <EditorBreadcrumbs wsId={wsId} root={wsRoot} path={path} />
       {isMarkdown && (
         <button
           className={`editor-preview-toggle ${previewOpen ? "active" : ""}`}

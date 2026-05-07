@@ -6920,6 +6920,74 @@ input {
   flex-direction: column;
   width: 100%;
   position: relative;
+  padding-top: 24px;
+}
+
+/* Breadcrumb bar — sits at the very top of the editor-host, overlaying
+   the padding-top reserved above. Absolute positioning lets it span the
+   full width even when editor-host-split flips the flex direction to row. */
+.editor-breadcrumbs {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  padding-right: 110px;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.editor-breadcrumbs::-webkit-scrollbar {
+  height: 3px;
+}
+.editor-breadcrumbs::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.editor-breadcrumb-ws {
+  color: var(--fg-muted);
+  font-style: italic;
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+.editor-breadcrumb-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.editor-breadcrumb-sep {
+  color: var(--fg-muted);
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.editor-breadcrumb-seg {
+  color: var(--fg-dim);
+}
+.editor-breadcrumb-leaf {
+  color: var(--fg);
+  font-weight: 500;
+}
+.editor-breadcrumb-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--border);
+  margin: 0 8px;
+  flex-shrink: 0;
+}
+.editor-breadcrumb-symbol {
+  color: var(--accent);
+  cursor: default;
 }
 .editor-host > section,
 .editor-half > section {
