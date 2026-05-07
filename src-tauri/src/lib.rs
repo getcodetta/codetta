@@ -83,6 +83,8 @@ pub fn run() {
             git::git_discard,
             git::git_branches,
             git::git_checkout_branch,
+            git::git_log,
+            git::git_show_commit,
             claude_code::claude_code_check,
             claude_code::claude_code_chat,
             claude_code::claude_code_kill,

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { fsBus } from "../fsBus";
-import { fs, git as gitApi, type GitFile, type GitStatus } from "../ipc";
+import {
+  fs,
+  git as gitApi,
+  type GitCommit,
+  type GitFile,
+  type GitStatus,
+} from "../ipc";
 import { requestDiff } from "../editorState";
 import { error as toastError, errMsg, success as toastSuccess } from "../notify";
 import { confirm as dialogConfirm } from "../dialog";
@@ -9,6 +15,24 @@ import { langOf } from "../langDetect";
 import { joinPath } from "../pathUtils";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { Icon } from "./Icon";
+
+function authorInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function formatRelative(unixSec: number): string {
+  const now = Date.now() / 1000;
+  const ago = now - unixSec;
+  if (ago < 60) return "just now";
+  if (ago < 3600) return `${Math.floor(ago / 60)}m ago`;
+  if (ago < 86400) return `${Math.floor(ago / 3600)}h ago`;
+  if (ago < 86400 * 7) return `${Math.floor(ago / 86400)}d ago`;
+  if (ago < 86400 * 30) return `${Math.floor(ago / (86400 * 7))}w ago`;
+  return new Date(unixSec * 1000).toLocaleDateString();
+}
 
 interface Props {
   wsId: string;
@@ -43,6 +67,11 @@ export function SourceControlPanel({ wsId, root }: Props) {
   );
   const [branches, setBranches] = useState<string[]>([]);
   const [branchOpen, setBranchOpen] = useState(false);
+  const [commits, setCommits] = useState<GitCommit[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [openCommit, setOpenCommit] = useState<GitCommit | null>(null);
+  const [commitDiff, setCommitDiff] = useState<string>("");
+  const [commitDiffLoading, setCommitDiffLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -167,6 +196,56 @@ export function SourceControlPanel({ wsId, root }: Props) {
   useEffect(() => {
     void loadBranches();
   }, [loadBranches, status?.branch]);
+
+  // Load recent commits whenever the History section is expanded OR
+  // any local-state change suggests history may have moved (commit /
+  // pull / branch switch). Status.branch is in the deps because
+  // switching branches changes which commits we list.
+  const loadHistory = useCallback(async () => {
+    if (!status?.is_repo) return;
+    try {
+      const list = await gitApi.log(root, 50);
+      setCommits(list);
+    } catch (e) {
+      setCommits([]);
+      console.warn("[git_log]", errMsg(e));
+    }
+  }, [root, status?.is_repo]);
+
+  useEffect(() => {
+    if (!historyOpen) return;
+    void loadHistory();
+  }, [historyOpen, loadHistory, status?.branch, status?.ahead, status?.behind]);
+
+  const openCommitDetail = useCallback(
+    async (c: GitCommit) => {
+      setOpenCommit(c);
+      setCommitDiff("");
+      setCommitDiffLoading(true);
+      try {
+        const out = await gitApi.showCommit(root, c.full_hash);
+        setCommitDiff(out);
+      } catch (e) {
+        setCommitDiff(`Failed to load diff: ${errMsg(e)}`);
+      } finally {
+        setCommitDiffLoading(false);
+      }
+    },
+    [root],
+  );
+
+  // Esc closes the commit modal. Scoped to when it's actually open.
+  useEffect(() => {
+    if (!openCommit) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpenCommit(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openCommit]);
 
   const switchBranch = useCallback(
     async (b: string) => {
@@ -464,6 +543,88 @@ export function SourceControlPanel({ wsId, root }: Props) {
           </li>
         ))}
       </ul>
+
+      <button
+        className="git-history-toggle"
+        onClick={() => setHistoryOpen((v) => !v)}
+        aria-expanded={historyOpen}
+      >
+        <Icon name={historyOpen ? "chevron-down" : "chevron-right"} size={11} />
+        <span>History</span>
+        {historyOpen && commits.length > 0 && (
+          <span className="git-history-count">· last {commits.length}</span>
+        )}
+      </button>
+      {historyOpen && (
+        <div className="git-history-list">
+          {commits.length === 0 && (
+            <div className="git-history-empty">
+              {status?.is_repo
+                ? "Loading…"
+                : "Not a git repository."}
+            </div>
+          )}
+          {commits.map((c) => (
+            <button
+              key={c.full_hash}
+              className="git-history-row"
+              onClick={() => void openCommitDetail(c)}
+              title={`${c.subject}\n\n${c.author_name} <${c.author_email}>\n${c.full_hash}`}
+            >
+              <span
+                className="git-history-avatar"
+                aria-hidden="true"
+                title={c.author_name}
+              >
+                {authorInitials(c.author_name)}
+              </span>
+              <span className="git-history-meta">
+                <span className="git-history-subject">{c.subject}</span>
+                <span className="git-history-sub">
+                  <span className="git-history-hash">{c.hash}</span>
+                  <span className="git-history-author">{c.author_name}</span>
+                  <span className="git-history-time">
+                    {formatRelative(c.timestamp)}
+                  </span>
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {openCommit && (
+        <div className="git-commit-modal" onMouseDown={() => setOpenCommit(null)}>
+          <div
+            className="git-commit-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="git-commit-title"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="git-commit-card-head">
+              <span className="git-commit-title" id="git-commit-title">
+                <span className="git-commit-hash">{openCommit.hash}</span>
+                {openCommit.subject}
+              </span>
+              <button
+                className="git-commit-close"
+                onClick={() => setOpenCommit(null)}
+                aria-label="Close commit detail"
+                title="Close (Esc)"
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+            <div className="git-commit-card-meta">
+              {openCommit.author_name} &lt;{openCommit.author_email}&gt; ·{" "}
+              {new Date(openCommit.timestamp * 1000).toLocaleString()}
+            </div>
+            <pre className="git-commit-diff">
+              {commitDiffLoading ? "Loading diff…" : commitDiff}
+            </pre>
+          </div>
+        </div>
+      )}
 
       {busy && <div className="git-busy">{busy}…</div>}
       {log && <pre className="git-log">{log}</pre>}

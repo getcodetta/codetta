@@ -7333,3 +7333,178 @@ input {
   max-height: 200px;
   overflow-y: auto;
 }
+
+/* ---------- Git history (recent commits) ---------- */
+.git-history-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-muted);
+  outline: none;
+}
+.git-history-toggle:hover,
+.git-history-toggle:focus-visible {
+  color: var(--fg);
+}
+.git-history-count {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10px;
+  margin-left: auto;
+}
+.git-history-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  max-height: 280px;
+  overflow-y: auto;
+}
+.git-history-empty {
+  padding: 12px 10px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-style: italic;
+}
+.git-history-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+  color: var(--fg);
+  outline: none;
+}
+.git-history-row:hover,
+.git-history-row:focus-visible {
+  background: var(--bg-hi);
+}
+.git-history-avatar {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.git-history-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.git-history-subject {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-history-sub {
+  display: flex;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  font-family: "Cascadia Mono", Consolas, monospace;
+}
+.git-history-hash {
+  color: var(--accent);
+}
+.git-history-author {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.git-history-time {
+  flex-shrink: 0;
+}
+
+.git-commit-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: grid;
+  place-items: center;
+  z-index: 9000;
+}
+.git-commit-card {
+  width: 80vw;
+  max-width: 920px;
+  height: 78vh;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+.git-commit-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.git-commit-title {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.git-commit-hash {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.git-commit-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 4px;
+}
+.git-commit-close:hover {
+  color: var(--fg);
+}
+.git-commit-card-meta {
+  padding: 6px 14px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+}
+.git-commit-diff {
+  flex: 1;
+  margin: 0;
+  padding: 12px 14px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg);
+  overflow: auto;
+  white-space: pre;
+  word-break: normal;
+}

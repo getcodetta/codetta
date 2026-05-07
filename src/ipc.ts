@@ -217,6 +217,16 @@ export interface GitStatus {
   files: GitFile[];
 }
 
+export interface GitCommit {
+  hash: string;
+  full_hash: string;
+  subject: string;
+  author_name: string;
+  author_email: string;
+  timestamp: number;
+  parents: string;
+}
+
 export const git = {
   status: (path: string) => invoke<GitStatus>("git_status", { path }),
   diff: (path: string, file?: string) =>
@@ -230,6 +240,10 @@ export const git = {
   branches: (path: string) => invoke<string[]>("git_branches", { path }),
   checkoutBranch: (path: string, branch: string) =>
     invoke<string>("git_checkout_branch", { path, branch }),
+  log: (path: string, limit = 50) =>
+    invoke<GitCommit[]>("git_log", { path, limit }),
+  showCommit: (path: string, refspec: string) =>
+    invoke<string>("git_show_commit", { path, refspec }),
 };
 
 export interface WorkspaceMeta {

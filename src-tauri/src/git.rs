@@ -264,3 +264,88 @@ pub fn git_branches(path: String) -> Result<Vec<String>, String> {
 pub fn git_checkout_branch(path: String, branch: String) -> Result<String, String> {
     run_git(&path, &["checkout", &branch])
 }
+
+#[derive(Serialize)]
+pub struct GitCommit {
+    /// Short hash (7 chars) suitable for display + git-show resolution.
+    pub hash: String,
+    /// Full hash, for stable refs across UI sessions.
+    pub full_hash: String,
+    /// First line of the commit message.
+    pub subject: String,
+    pub author_name: String,
+    pub author_email: String,
+    /// Commit time as Unix seconds. Frontend formats this — different
+    /// surfaces want different representations ("2h ago" vs ISO).
+    pub timestamp: i64,
+    /// Comma-joined parent short-hashes. Useful for the merge-graph
+    /// hint in the UI; empty for the very first commit.
+    pub parents: String,
+}
+
+#[tauri::command]
+pub fn git_log(path: String, limit: Option<u32>) -> Result<Vec<GitCommit>, String> {
+    if !git_is_repo(path.clone()) {
+        return Ok(vec![]);
+    }
+    let n = limit.unwrap_or(50).min(500);
+    // Use ASCII unit separator (\x1f) between fields and record separator
+    // (\x1e) between commits. Avoids the "what if a commit subject
+    // contains a tab" bug git's --format docs warn about.
+    let format = "%h\x1f%H\x1f%an\x1f%ae\x1f%ct\x1f%P\x1f%s\x1e";
+    let limit_arg = format!("-n{}", n);
+    let out = run_git(
+        &path,
+        &[
+            "log",
+            "--no-decorate",
+            "--no-color",
+            &limit_arg,
+            &format!("--format={}", format),
+        ],
+    )?;
+
+    let mut commits = Vec::new();
+    for raw in out.split('\x1e') {
+        let trimmed = raw.trim_start_matches('\n').trim_end_matches('\n');
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split('\x1f').collect();
+        if parts.len() < 7 {
+            continue;
+        }
+        let timestamp = parts[4].parse::<i64>().unwrap_or(0);
+        commits.push(GitCommit {
+            hash: parts[0].to_string(),
+            full_hash: parts[1].to_string(),
+            author_name: parts[2].to_string(),
+            author_email: parts[3].to_string(),
+            timestamp,
+            parents: parts[5].to_string(),
+            subject: parts[6].to_string(),
+        });
+    }
+
+    Ok(commits)
+}
+
+#[tauri::command]
+pub fn git_show_commit(path: String, refspec: String) -> Result<String, String> {
+    // git show with full diff. We use --stat for a header summary line
+    // followed by --patch to get the full unified diff. Limits diff
+    // size implicitly via run_git's stdout buffering — git itself caps
+    // at no fixed size, but Rust's String::from_utf8_lossy will grow
+    // happily for typical commits.
+    run_git(
+        &path,
+        &[
+            "show",
+            "--stat",
+            "--patch",
+            "--no-color",
+            "--no-decorate",
+            &refspec,
+        ],
+    )
+}
