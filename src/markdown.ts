@@ -151,6 +151,22 @@ function tokenize(md: string): Block[] {
       blocks.push({ kind: "quote", text: buf.join("\n") });
       continue;
     }
+    // Task list: bullet followed by [ ] / [x]. AI assistants emit these
+    // constantly (TODO planning, checklists). Parsed before the plain-ul
+    // path so the marker syntax doesn't leak into the rendered text.
+    const TASK_RE = /^\s*[-*+]\s+\[([ xX])\]\s+/;
+    if (TASK_RE.test(line)) {
+      const items: string[] = [];
+      const checked: boolean[] = [];
+      while (i < lines.length && TASK_RE.test(lines[i])) {
+        const m = lines[i].match(TASK_RE)!;
+        checked.push(m[1] === "x" || m[1] === "X");
+        items.push(lines[i].replace(TASK_RE, ""));
+        i++;
+      }
+      blocks.push({ kind: "tasklist", items, checked });
+      continue;
+    }
     // Unordered list
     if (/^\s*[-*+]\s+/.test(line)) {
       const items: string[] = [];
@@ -187,6 +203,7 @@ function tokenize(md: string): Block[] {
       !/^#{1,6}\s+/.test(lines[i]) &&
       !/^```/.test(lines[i]) &&
       !/^>\s?/.test(lines[i]) &&
+      !/^\s*[-*+]\s+\[[ xX]\]\s+/.test(lines[i]) &&
       !/^\s*[-*+]\s+/.test(lines[i]) &&
       !/^\s*\d+\.\s+/.test(lines[i]) &&
       !/^(?:-{3,}|_{3,}|\*{3,})\s*$/.test(lines[i])
@@ -232,6 +249,22 @@ export function renderMarkdown(md: string): string {
           `<ol>${(b.items ?? [])
             .map((it) => `<li>${inlineMd(it)}</li>`)
             .join("")}</ol>`,
+        );
+        break;
+      }
+      case "tasklist": {
+        const items = b.items ?? [];
+        const checked = b.checked ?? [];
+        parts.push(
+          `<ul class="md-tasklist">${items
+            .map((it, idx) => {
+              const isChecked = !!checked[idx];
+              const box = isChecked
+                ? `<input type="checkbox" checked disabled>`
+                : `<input type="checkbox" disabled>`;
+              return `<li class="md-task${isChecked ? " md-task-done" : ""}">${box} ${inlineMd(it)}</li>`;
+            })
+            .join("")}</ul>`,
         );
         break;
       }

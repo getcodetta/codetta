@@ -6440,6 +6440,25 @@ input {
 .md-preview li {
   margin: 2px 0;
 }
+/* Task lists: drop the bullet, line up the checkbox with the text. */
+.md-preview .md-tasklist {
+  list-style: none;
+  padding-left: 4px;
+}
+.md-preview .md-task {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.md-preview .md-task input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.md-preview .md-task-done {
+  color: var(--fg-dim);
+  text-decoration: line-through;
+}
 .md-preview blockquote {
   margin: 0 0 12px;
   padding: 4px 14px;
