@@ -100,7 +100,13 @@ export function TasksPanel({ wsId, root }: Props) {
             </span>
           )}
         </span>
-        <button onClick={() => void refresh()}>⟳</button>
+        <button
+          onClick={() => void refresh()}
+          title="Re-scan package.json"
+          aria-label="Re-scan package.json"
+        >
+          ⟳
+        </button>
       </div>
       {error && <div className="tasks-empty">{error}</div>}
       {!error && !loading && scripts.length === 0 && (

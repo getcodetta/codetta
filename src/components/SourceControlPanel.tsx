@@ -268,7 +268,11 @@ export function SourceControlPanel({ wsId, root }: Props) {
         <div className="git-branch-row">
           <button
             className="git-branch"
-            title={status.upstream ?? ""}
+            title={
+              status.upstream
+                ? `Tracking ${status.upstream} — click to switch branch`
+                : "No upstream — click to switch branch"
+            }
             onClick={() => setBranchOpen((v) => !v)}
           >
             ⎇ {status.branch ?? "(detached)"}
@@ -314,7 +318,11 @@ export function SourceControlPanel({ wsId, root }: Props) {
           )}
         </div>
         <div className="git-actions">
-          <button onClick={() => void refresh()} title="Refresh">
+          <button
+            onClick={() => void refresh()}
+            title="Refresh"
+            aria-label="Refresh git status"
+          >
             ⟳
           </button>
           <button
