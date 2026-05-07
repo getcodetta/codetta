@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { info as toastInfo } from "./notify";
 
 export interface EditorSettings {
   fontSize: number;
@@ -110,22 +111,32 @@ export function zoomOut() {
 export function zoomReset() {
   setEditorSettings({ fontSize: DEFAULT.fontSize });
 }
+// Toggles fire silently otherwise — Alt+Z (word wrap) and the various
+// File-menu "Toggle" entries gave the user no feedback that anything
+// changed. A short toast confirms the new state ("Word wrap: on") so
+// the keystroke doesn't feel like it landed in a void.
 export function toggleWordWrap() {
-  setEditorSettings({
-    wordWrap: _settings.wordWrap === "on" ? "off" : "on",
-  });
+  const next = _settings.wordWrap === "on" ? "off" : "on";
+  setEditorSettings({ wordWrap: next });
+  toastInfo(`Word wrap: ${next}`);
 }
 export function toggleAutoSave() {
-  setEditorSettings({ autoSave: !_settings.autoSave });
+  const next = !_settings.autoSave;
+  setEditorSettings({ autoSave: next });
+  toastInfo(`Auto-save: ${next ? "on" : "off"}`);
 }
 export function toggleMinimap() {
-  setEditorSettings({ minimap: !_settings.minimap });
+  const next = !_settings.minimap;
+  setEditorSettings({ minimap: next });
+  toastInfo(`Minimap: ${next ? "on" : "off"}`);
 }
 export function toggleTrimTrailingWhitespace() {
-  setEditorSettings({
-    trimTrailingWhitespace: !_settings.trimTrailingWhitespace,
-  });
+  const next = !_settings.trimTrailingWhitespace;
+  setEditorSettings({ trimTrailingWhitespace: next });
+  toastInfo(`Trim trailing whitespace on save: ${next ? "on" : "off"}`);
 }
 export function toggleInsertFinalNewline() {
-  setEditorSettings({ insertFinalNewline: !_settings.insertFinalNewline });
+  const next = !_settings.insertFinalNewline;
+  setEditorSettings({ insertFinalNewline: next });
+  toastInfo(`Insert final newline on save: ${next ? "on" : "off"}`);
 }
