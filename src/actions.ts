@@ -1,12 +1,12 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
 // Injected by vite from package.json — same hook the Splash uses.
 declare const __APP_VERSION__: string;
 import { findPaneById, parseKey, useStore } from "./store";
 import { openPalette } from "./paletteBus";
 import { openSettings } from "./settingsBus";
-import { getActiveEditor } from "./editorState";
+import { getActiveEditor, requestDiff } from "./editorState";
 import { alert as dialogAlert, confirm as dialogConfirm } from "./dialog";
 import { fs } from "./ipc";
 import {
@@ -318,6 +318,104 @@ export const commands: CommandSpec[] = [
     category: "Edit",
     accel: "Ctrl+Shift+I",
     run: () => runEditorAction("editor.action.formatDocument"),
+  },
+  {
+    id: "file.reveal_in_explorer",
+    label:
+      // Match the platform's actual file-manager wording so users
+      // searching the palette for "Finder" or "Explorer" find it.
+      navigator.userAgent.includes("Mac")
+        ? "Reveal Active File in Finder"
+        : "Reveal Active File in File Explorer",
+    category: "File",
+    run: async () => {
+      const ed = getActiveEditor();
+      const model = ed?.getModel();
+      if (!ed || !model) {
+        toastError("Open a file first");
+        return;
+      }
+      const fsPath = model.uri.fsPath ?? model.uri.path;
+      try {
+        await revealItemInDir(fsPath);
+      } catch (e) {
+        toastError(`Couldn't reveal: ${errMsg(e)}`);
+      }
+    },
+  },
+  {
+    id: "edit.compare_with_clipboard",
+    label: "Compare Active File with Clipboard",
+    category: "Edit",
+    run: async () => {
+      const ed = getActiveEditor();
+      const model = ed?.getModel();
+      if (!ed || !model) {
+        toastError("Open a file first");
+        return;
+      }
+      let clip = "";
+      try {
+        clip = await navigator.clipboard.readText();
+      } catch (e) {
+        toastError(`Couldn't read clipboard: ${errMsg(e)}`);
+        return;
+      }
+      const fsPath = model.uri.fsPath ?? model.uri.path;
+      const filename = fsPath.split(/[\\/]/).pop() || fsPath;
+      requestDiff({
+        path: filename,
+        refspec: "clipboard",
+        // Convention from SourceControlPanel: original = the side
+        // we're "comparing against," modified = the editor buffer.
+        // Putting the clipboard on the original side lets the user
+        // read the diff as "what would change if I pasted this in."
+        originalContent: clip,
+        modifiedContent: model.getValue(),
+        language: model.getLanguageId() || "plaintext",
+      });
+    },
+  },
+  {
+    id: "edit.compare_with_file",
+    label: "Compare Active File with…",
+    category: "Edit",
+    run: async () => {
+      const ed = getActiveEditor();
+      const model = ed?.getModel();
+      if (!ed || !model) {
+        toastError("Open a file first");
+        return;
+      }
+      let picked: string | string[] | null = null;
+      try {
+        picked = await openDialog({
+          multiple: false,
+          directory: false,
+          title: "Pick a file to compare with",
+        });
+      } catch (e) {
+        toastError(`Couldn't open file picker: ${errMsg(e)}`);
+        return;
+      }
+      if (!picked || Array.isArray(picked)) return;
+      let other: string;
+      try {
+        other = await fs.readFile(picked);
+      } catch (e) {
+        toastError(`Couldn't read ${picked}: ${errMsg(e)}`);
+        return;
+      }
+      const fsPath = model.uri.fsPath ?? model.uri.path;
+      const filename = fsPath.split(/[\\/]/).pop() || fsPath;
+      requestDiff({
+        path: filename,
+        refspec: picked,
+        originalContent: other,
+        modifiedContent: model.getValue(),
+        language: model.getLanguageId() || "plaintext",
+      });
+    },
   },
   {
     id: "edit.goto_line",
