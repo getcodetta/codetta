@@ -674,6 +674,15 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     setInput("");
     const list = loadSessions(wsId);
     setSessions(list);
+    // Per-switch resets shared by every branch below. Previous code had
+    // the lastUsage + todos clears only in the empty-list else branch,
+    // so switching workspaces while either was populated left the
+    // PREVIOUS workspace's usage card and TodoWrite checklist stuck
+    // on the screen of the new chat.
+    setLastUsage(null);
+    setTodos(null);
+    setBudgetWarned(false);
+    setScrubIndex(null);
 
     if (aiChatId) {
       const desc = useStore.getState().loaded[wsId]?.aiChats[aiChatId];
@@ -685,8 +694,6 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       // empty / non-CC, this stays undefined.
       setClaudeSessionId(found?.claudeSessionId);
       setChatTotalCost(found?.totalCostUsd ?? 0);
-      setBudgetWarned(false);
-      setScrubIndex(null);
       if (found) {
         setMessages(cleanStaleToolMessages(found.messages));
         if (found.model) {
@@ -705,8 +712,6 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       setSessionId(list[0].id);
       setClaudeSessionId(list[0].claudeSessionId);
       setChatTotalCost(list[0].totalCostUsd ?? 0);
-      setBudgetWarned(false);
-      setScrubIndex(null);
       // Filter out stale "Unknown tool: X" result messages from older
       // sessions where we incorrectly tried to execute the agentic
       // provider's tool calls on our side. They're meaningless garbage.
@@ -720,11 +725,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     } else {
       setSessionId(newSessionId());
       setClaudeSessionId(undefined);
-    setLastUsage(null);
-    setTodos(null);
-    setChatTotalCost(0);
-    setBudgetWarned(false);
-    setScrubIndex(null);
+      setChatTotalCost(0);
       setMessages([]);
     }
   }, [wsId, aiChatId]);
