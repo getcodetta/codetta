@@ -176,8 +176,27 @@ export const claudeMcp = {
     invoke<void>("claude_mcp_remove", { cwd, name, scope }),
 };
 
+export interface GitFile {
+  path: string;
+  /** First char of porcelain "XY" — staged side. " " = unchanged. */
+  index_status: string;
+  /** Second char of porcelain "XY" — worktree side. " " = unchanged. */
+  worktree_status: string;
+  staged: boolean;
+  modified: boolean;
+}
+
+export interface GitStatus {
+  is_repo: boolean;
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  files: GitFile[];
+}
+
 export const git = {
-  status: (path: string) => invoke<unknown>("git_status", { path }),
+  status: (path: string) => invoke<GitStatus>("git_status", { path }),
   diff: (path: string, file?: string) =>
     invoke<string>("git_diff", { path, file: file ?? null }),
   diffStaged: (path: string, file?: string) =>

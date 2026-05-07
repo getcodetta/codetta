@@ -1,30 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { fsBus } from "../fsBus";
-import { fs, git as gitApi } from "../ipc";
+import { fs, git as gitApi, type GitFile, type GitStatus } from "../ipc";
 import { requestDiff } from "../editorState";
 import { error as toastError, errMsg, success as toastSuccess } from "../notify";
 import { confirm as dialogConfirm } from "../dialog";
 import { langOf } from "../langDetect";
 import { joinPath } from "../pathUtils";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
-
-interface GitFile {
-  path: string;
-  index_status: string;
-  worktree_status: string;
-  staged: boolean;
-  modified: boolean;
-}
-
-interface GitStatus {
-  is_repo: boolean;
-  branch: string | null;
-  upstream: string | null;
-  ahead: number;
-  behind: number;
-  files: GitFile[];
-}
 
 interface Props {
   wsId: string;
@@ -62,7 +45,7 @@ export function SourceControlPanel({ wsId, root }: Props) {
 
   const refresh = useCallback(async () => {
     try {
-      const s = await invoke<GitStatus>("git_status", { path: root });
+      const s = await gitApi.status(root);
       setStatus(s);
     } catch (e) {
       setStatus({
