@@ -94,24 +94,32 @@ export const search = {
     query: string,
     caseSensitive = false,
     maxResults = 500,
+    includeGlobs?: string[],
+    excludeGlobs?: string[],
   ) =>
     invoke<SearchHit[]>("search_text", {
       root,
       query,
       caseSensitive,
       maxResults,
+      includeGlobs: includeGlobs ?? null,
+      excludeGlobs: excludeGlobs ?? null,
     }),
   searchRegex: (
     root: string,
     pattern: string,
     caseSensitive = false,
     maxResults = 500,
+    includeGlobs?: string[],
+    excludeGlobs?: string[],
   ) =>
     invoke<SearchHit[]>("search_regex", {
       root,
       pattern,
       caseSensitive,
       maxResults,
+      includeGlobs: includeGlobs ?? null,
+      excludeGlobs: excludeGlobs ?? null,
     }),
   scanTodos: (root: string, maxResults = 1000) =>
     invoke<TodoHit[]>("scan_todos", { root, maxResults }),

@@ -49,6 +49,84 @@ pub const HEAVY_DIRS: &[&str] = &[
 const MAX_FILE_BYTES_FOR_SEARCH: u64 = 2 * 1024 * 1024;
 const BINARY_PROBE: usize = 8 * 1024;
 
+/// Convert a git-style glob pattern to a regex. Same subset as the
+/// frontend aiPrivacy globToRegex — `*`, `**`, `?`, `/`, literal text.
+/// Used by the include/exclude filter on search_text / search_regex.
+fn glob_to_regex(pattern: &str) -> Option<regex::Regex> {
+    let p = pattern.trim();
+    if p.is_empty() {
+        return None;
+    }
+    let mut re = String::from("^");
+    let bytes = p.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if c == '*' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            re.push_str(".*");
+            i += 2;
+            if i < bytes.len() && bytes[i] == b'/' {
+                i += 1;
+            }
+        } else if c == '*' {
+            re.push_str("[^/]*");
+            i += 1;
+        } else if c == '?' {
+            re.push_str("[^/]");
+            i += 1;
+        } else if c == '/' {
+            re.push('/');
+            i += 1;
+        } else if "[]{}().+^$|\\".contains(c) {
+            re.push('\\');
+            re.push(c);
+            i += 1;
+        } else {
+            re.push(c);
+            i += 1;
+        }
+    }
+    re.push('$');
+    regex::Regex::new(&re).ok()
+}
+
+/// Compile a list of glob patterns to a list of regexes. Drops empty
+/// entries + bad patterns silently — the frontend already validates
+/// shape; the search loops would rather skip an iffy pattern than die.
+fn compile_glob_list(globs: &[String]) -> Vec<regex::Regex> {
+    globs
+        .iter()
+        .filter_map(|g| glob_to_regex(g))
+        .collect()
+}
+
+/// True when a workspace-relative path should be considered "in scope"
+/// given an include and exclude pattern set:
+///   - if includes is non-empty, the path must match at least one
+///   - the path must NOT match any exclude
+fn path_in_scope(rel: &str, includes: &[regex::Regex], excludes: &[regex::Regex]) -> bool {
+    if !includes.is_empty() && !includes.iter().any(|re| re.is_match(rel)) {
+        return false;
+    }
+    if excludes.iter().any(|re| re.is_match(rel)) {
+        return false;
+    }
+    true
+}
+
+/// Compute a workspace-relative path with forward slashes from an
+/// absolute path + workspace root. Returns the original if the path
+/// doesn't live under the root (different drive, network share, etc).
+fn workspace_rel(root: &str, abs: &str) -> String {
+    let r = root.replace('\\', "/").trim_end_matches('/').to_string() + "/";
+    let p = abs.replace('\\', "/");
+    if p.starts_with(&r) {
+        p[r.len()..].to_string()
+    } else {
+        p
+    }
+}
+
 fn is_heavy_dir(name: &str) -> bool {
     HEAVY_DIRS.iter().any(|h| h.eq_ignore_ascii_case(name))
 }
@@ -147,6 +225,8 @@ pub fn search_text(
     query: String,
     case_sensitive: Option<bool>,
     max_results: Option<usize>,
+    include_globs: Option<Vec<String>>,
+    exclude_globs: Option<Vec<String>>,
 ) -> Result<Vec<SearchHit>, String> {
     if query.is_empty() {
         return Ok(vec![]);
@@ -154,6 +234,8 @@ pub fn search_text(
     let cs = case_sensitive.unwrap_or(false);
     let needle = if cs { query.clone() } else { query.to_lowercase() };
     let cap = max_results.unwrap_or(2000);
+    let includes = compile_glob_list(&include_globs.unwrap_or_default());
+    let excludes = compile_glob_list(&exclude_globs.unwrap_or_default());
 
     let mut paths: Vec<String> = Vec::new();
     walk_files(Path::new(&root), &mut paths, 50_000, |_p| true);
@@ -164,6 +246,15 @@ pub fn search_text(
             break;
         }
         let pp = Path::new(&p);
+        // Filter by include/exclude on the workspace-relative path so
+        // patterns like "src/**/*.ts" or "**/*.test.tsx" behave the way
+        // the user wrote them.
+        if !includes.is_empty() || !excludes.is_empty() {
+            let rel = workspace_rel(&root, &p);
+            if !path_in_scope(&rel, &includes, &excludes) {
+                continue;
+            }
+        }
         let bytes = match read_text_file_capped(pp, MAX_FILE_BYTES_FOR_SEARCH) {
             Some(b) => b,
             None => continue,
@@ -210,6 +301,8 @@ pub fn search_regex(
     pattern: String,
     case_sensitive: Option<bool>,
     max_results: Option<usize>,
+    include_globs: Option<Vec<String>>,
+    exclude_globs: Option<Vec<String>>,
 ) -> Result<Vec<SearchHit>, String> {
     if pattern.is_empty() {
         return Ok(vec![]);
@@ -220,6 +313,8 @@ pub fn search_regex(
         .case_insensitive(!cs)
         .build()
         .map_err(|e| format!("Invalid regex: {e}"))?;
+    let includes = compile_glob_list(&include_globs.unwrap_or_default());
+    let excludes = compile_glob_list(&exclude_globs.unwrap_or_default());
 
     let mut paths: Vec<String> = Vec::new();
     walk_files(Path::new(&root), &mut paths, 50_000, |_p| true);
@@ -230,6 +325,12 @@ pub fn search_regex(
             break;
         }
         let pp = Path::new(&p);
+        if !includes.is_empty() || !excludes.is_empty() {
+            let rel = workspace_rel(&root, &p);
+            if !path_in_scope(&rel, &includes, &excludes) {
+                continue;
+            }
+        }
         let bytes = match read_text_file_capped(pp, MAX_FILE_BYTES_FOR_SEARCH) {
             Some(b) => b,
             None => continue,

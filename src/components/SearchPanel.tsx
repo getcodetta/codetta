@@ -35,6 +35,8 @@ interface CacheEntry {
   query: string;
   caseSensitive: boolean;
   regex: boolean;
+  includeGlobs: string;
+  excludeGlobs: string;
   hits: SearchHit[];
   ranAt: number;
 }
@@ -55,6 +57,21 @@ export function SearchPanel({ wsId, root }: Props) {
     cached?.caseSensitive ?? false,
   );
   const [regex, setRegex] = useState(cached?.regex ?? false);
+  // File-pattern filters: shown only when filesOpen is on. Stored as
+  // newline-separated strings for multi-line input UX, split into a
+  // string[] when sent to Rust.
+  const [filesOpen, setFilesOpen] = useState(
+    !!(cached?.includeGlobs || cached?.excludeGlobs),
+  );
+  const [includeGlobs, setIncludeGlobs] = useState(cached?.includeGlobs ?? "");
+  const [excludeGlobs, setExcludeGlobs] = useState(cached?.excludeGlobs ?? "");
+
+  function splitGlobs(raw: string): string[] {
+    return raw
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
   const [hits, setHits] = useState<SearchHit[]>(cached?.hits ?? []);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +105,9 @@ export function SearchPanel({ wsId, root }: Props) {
     setQuery(c?.query ?? "");
     setCaseSensitive(c?.caseSensitive ?? false);
     setRegex(c?.regex ?? false);
+    setIncludeGlobs(c?.includeGlobs ?? "");
+    setExcludeGlobs(c?.excludeGlobs ?? "");
+    setFilesOpen(!!(c?.includeGlobs || c?.excludeGlobs));
     setHits(c?.hits ?? []);
     setError(null);
   }, [root]);
@@ -103,16 +123,34 @@ export function SearchPanel({ wsId, root }: Props) {
       const id = ++scanIdRef.current;
       setSearching(true);
       setError(null);
+      const inc = splitGlobs(includeGlobs);
+      const exc = splitGlobs(excludeGlobs);
       try {
         const out = useRegex
-          ? await search.searchRegex(root, q, cs, MAX_HITS)
-          : await search.searchText(root, q, cs, MAX_HITS);
+          ? await search.searchRegex(
+              root,
+              q,
+              cs,
+              MAX_HITS,
+              inc.length > 0 ? inc : undefined,
+              exc.length > 0 ? exc : undefined,
+            )
+          : await search.searchText(
+              root,
+              q,
+              cs,
+              MAX_HITS,
+              inc.length > 0 ? inc : undefined,
+              exc.length > 0 ? exc : undefined,
+            );
         if (!mountedRef.current || scanIdRef.current !== id) return;
         setHits(out);
         lastResultByRoot.set(root, {
           query: q,
           caseSensitive: cs,
           regex: useRegex,
+          includeGlobs,
+          excludeGlobs,
           hits: out,
           ranAt: Date.now(),
         });
@@ -126,7 +164,7 @@ export function SearchPanel({ wsId, root }: Props) {
         }
       }
     },
-    [root],
+    [root, includeGlobs, excludeGlobs],
   );
 
   // Debounced search-on-type. Bails early for empty / single-char
@@ -143,7 +181,7 @@ export function SearchPanel({ wsId, root }: Props) {
       void runSearch(q, caseSensitive, regex);
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [query, caseSensitive, regex, runSearch]);
+  }, [query, caseSensitive, regex, includeGlobs, excludeGlobs, runSearch]);
 
   // Group hits by file, preserving the order Rust returned (which is
   // already sort-by-path inside the walker).
@@ -426,7 +464,36 @@ export function SearchPanel({ wsId, root }: Props) {
         >
           .*
         </button>
+        <button
+          className={`search-panel-toggle ${filesOpen || includeGlobs || excludeGlobs ? "active" : ""}`}
+          onClick={() => setFilesOpen((v) => !v)}
+          title="Include / exclude file patterns"
+          aria-label={`File patterns: ${filesOpen ? "shown" : "hidden"}`}
+          aria-pressed={filesOpen}
+        >
+          {"{}"}
+        </button>
       </div>
+      {filesOpen && (
+        <div className="search-panel-globs">
+          <input
+            type="text"
+            className="search-panel-input"
+            placeholder="Include — e.g. src/**, **/*.ts (comma or newline)"
+            value={includeGlobs}
+            onChange={(e) => setIncludeGlobs(e.target.value)}
+            aria-label="Include file patterns"
+          />
+          <input
+            type="text"
+            className="search-panel-input"
+            placeholder="Exclude — e.g. **/*.test.ts, dist/**"
+            value={excludeGlobs}
+            onChange={(e) => setExcludeGlobs(e.target.value)}
+            aria-label="Exclude file patterns"
+          />
+        </div>
+      )}
       {canReplace && (
         <div className="search-panel-replace-actions">
           <button
