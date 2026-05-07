@@ -8,19 +8,9 @@ pub struct DirEntry {
     pub is_dir: bool,
 }
 
-const HEAVY_DIRS: &[&str] = &[
-    "node_modules",
-    ".git",
-    "target",
-    "dist",
-    "build",
-    ".next",
-    ".turbo",
-    ".cache",
-    "out",
-    ".venv",
-    "__pycache__",
-];
+// HEAVY_DIRS lives in search.rs (and is the authoritative list of paths to
+// skip during walks). list_dir below intentionally does NOT skip them —
+// the file-tree shows every direct child, and the user expands manually.
 
 const MAX_READ_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB
 const BINARY_PROBE_BYTES: usize = 8 * 1024;
@@ -37,10 +27,6 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
         };
         let name = entry.file_name().to_string_lossy().into_owned();
         let is_dir = meta.is_dir();
-        if is_dir && HEAVY_DIRS.iter().any(|h| h.eq_ignore_ascii_case(&name)) {
-            // Still show the dir but it won't be auto-traversed; users can expand it manually.
-            // We still include it so users who *want* to look inside can.
-        }
         out.push(DirEntry {
             name,
             path: entry.path().to_string_lossy().into_owned(),
