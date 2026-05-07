@@ -7,6 +7,7 @@ import { findTabsPaneByTab, useStore } from "../store";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import {
   error as toastError,
+  errMsg,
   success as toastSuccess,
 } from "../notify";
 import {
@@ -206,7 +207,7 @@ export function FileTree({ wsId, root }: Props) {
           await fs.createFile(p);
           await useStore.getState().openFile(wsId, p);
         } catch (e) {
-          toastError(`Failed to create file: ${e}`);
+          toastError(`Failed to create file: ${errMsg(e)}`);
         }
       },
     });
@@ -222,7 +223,7 @@ export function FileTree({ wsId, root }: Props) {
         try {
           await fs.createDir(p);
         } catch (e) {
-          toastError(`Failed to create folder: ${e}`);
+          toastError(`Failed to create folder: ${errMsg(e)}`);
         }
       },
     });
@@ -241,7 +242,7 @@ export function FileTree({ wsId, root }: Props) {
           try {
             await fs.rename(target.path, newPath);
           } catch (e) {
-            toastError(`Failed to rename: ${e}`);
+            toastError(`Failed to rename: ${errMsg(e)}`);
           }
         },
       });
@@ -266,7 +267,7 @@ export function FileTree({ wsId, root }: Props) {
           try {
             await fs.delete(target.path);
           } catch (e) {
-            toastError(`Failed to delete: ${e}`);
+            toastError(`Failed to delete: ${errMsg(e)}`);
           }
         },
       });
@@ -370,7 +371,7 @@ export function FileTree({ wsId, root }: Props) {
                 }
               } catch (e) {
                 toastError(
-                  `Upload failed: ${e instanceof Error ? e.message : String(e)}`,
+                  `Upload failed: ${errMsg(e)}`,
                 );
               }
             },
@@ -420,7 +421,7 @@ export function FileTree({ wsId, root }: Props) {
                 toastSuccess(`Pushed → ${link.remotePath}`);
               } catch (e) {
                 toastError(
-                  `Push failed: ${e instanceof Error ? e.message : String(e)}`,
+                  `Push failed: ${errMsg(e)}`,
                 );
               }
             },
@@ -450,7 +451,7 @@ export function FileTree({ wsId, root }: Props) {
                 toastSuccess(`Uploaded → ${remotePath}`);
               } catch (e) {
                 toastError(
-                  `Upload failed: ${e instanceof Error ? e.message : String(e)}`,
+                  `Upload failed: ${errMsg(e)}`,
                 );
               }
             },

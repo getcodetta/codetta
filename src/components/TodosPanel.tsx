@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../store";
 import { setEditorGoto } from "../editorState";
+import { errMsg } from "../notify";
 
 interface TodoHit {
   path: string;
@@ -76,7 +77,7 @@ export function TodosPanel({ wsId, root }: Props) {
       setScannedAt(Date.now());
     } catch (e) {
       if (!mountedRef.current || scanIdRef.current !== id) return;
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
       setHits([]);
     } finally {
       if (mountedRef.current && scanIdRef.current === id) {

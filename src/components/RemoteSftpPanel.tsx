@@ -6,6 +6,7 @@ import { useEditorState } from "../editorState";
 import { fs } from "../ipc";
 import {
   error as toastError,
+  errMsg,
   info as toastInfo,
   success as toastSuccess,
 } from "../notify";
@@ -284,7 +285,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
     } catch (e) {
       setTestMsg({
         kind: "fail",
-        text: e instanceof Error ? e.message : String(e),
+        text: errMsg(e),
       });
     }
   };
@@ -341,7 +342,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
     } catch (e) {
       setStatus({
         kind: "error",
-        message: e instanceof Error ? e.message : String(e),
+        message: errMsg(e),
       });
     }
   };
@@ -365,7 +366,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       treeRef.set(path, node);
       bump();
     } catch (e) {
-      toastError(`Failed to list ${path}: ${e instanceof Error ? e.message : e}`);
+      toastError(`Failed to list ${path}: ${errMsg(e)}`);
       const node = treeRef.get(path) ?? emptyDirNode();
       node.entries = [];
       treeRef.set(path, node);
@@ -421,7 +422,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       toastSuccess(`Downloaded ${suggestedName}`);
     } catch (e) {
       toastError(
-        `Download failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Download failed: ${errMsg(e)}`,
       );
     }
   };
@@ -450,7 +451,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
         `Opened ${name} — edit and use Push (↥) in the panel header to send changes back.`,
       );
     } catch (e) {
-      toastError(`Open failed: ${e instanceof Error ? e.message : String(e)}`);
+      toastError(`Open failed: ${errMsg(e)}`);
     }
   };
 
@@ -466,7 +467,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       await uploadLocalFile(parentPath, localPath);
     } catch (e) {
       toastError(
-        `Upload failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Upload failed: ${errMsg(e)}`,
       );
     }
   };
@@ -528,7 +529,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
         okCount++;
       } catch (e) {
         failures.push(
-          `${c.path.split(/[\\/]/).pop()}: ${e instanceof Error ? e.message : String(e)}`,
+          `${c.path.split(/[\\/]/).pop()}: ${errMsg(e)}`,
         );
       }
     }
@@ -577,7 +578,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       });
       toastSuccess(`Pushed → ${remotePath}`);
     } catch (e) {
-      toastError(`Push failed: ${e instanceof Error ? e.message : String(e)}`);
+      toastError(`Push failed: ${errMsg(e)}`);
     }
   };
 
@@ -594,7 +595,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       await uploadLocalFile(parentPath, activeFilePath);
     } catch (e) {
       toastError(
-        `Upload failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Upload failed: ${errMsg(e)}`,
       );
     }
   };
@@ -636,7 +637,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       const parent = remotePath.replace(/\/[^/]+$/, "") || "/";
       await loadDir(parent, profile, tree);
     } catch (e) {
-      toastError(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+      toastError(`Delete failed: ${errMsg(e)}`);
     }
   };
 
@@ -679,7 +680,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       }
     } catch (e) {
       toastError(
-        `Recursive download failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Recursive download failed: ${errMsg(e)}`,
       );
     }
   };
@@ -726,7 +727,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       await loadDir(folderPath, profile, tree);
     } catch (e) {
       toastError(
-        `Recursive upload failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Recursive upload failed: ${errMsg(e)}`,
       );
     }
   };

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fsBus } from "../fsBus";
 import { fs, git as gitApi } from "../ipc";
 import { requestDiff } from "../editorState";
-import { error as toastError, success as toastSuccess } from "../notify";
+import { error as toastError, errMsg, success as toastSuccess } from "../notify";
 import { confirm as dialogConfirm } from "../dialog";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 
@@ -106,7 +106,7 @@ export function SourceControlPanel({ wsId, root }: Props) {
         behind: 0,
         files: [],
       });
-      setLog(String(e));
+      setLog(errMsg(e));
     }
   }, [root]);
 
@@ -138,7 +138,7 @@ export function SourceControlPanel({ wsId, root }: Props) {
         setLog(out);
         await refresh();
       } catch (e) {
-        setLog(String(e));
+        setLog(errMsg(e));
       } finally {
         setBusy(null);
       }
@@ -180,7 +180,7 @@ export function SourceControlPanel({ wsId, root }: Props) {
           language: langOf(f.path),
         });
       } catch (e) {
-        toastError(`Diff failed: ${e}`);
+        toastError(`Diff failed: ${errMsg(e)}`);
       }
     },
     [root],
@@ -207,7 +207,7 @@ export function SourceControlPanel({ wsId, root }: Props) {
         toastSuccess(`Switched to ${b}`);
         await refresh();
       } catch (e) {
-        toastError(`Checkout failed: ${e}`);
+        toastError(`Checkout failed: ${errMsg(e)}`);
       }
     },
     [root, refresh],
@@ -230,7 +230,7 @@ export function SourceControlPanel({ wsId, root }: Props) {
         toastSuccess(`Discarded changes to ${f.path}`);
         await refresh();
       } catch (e) {
-        toastError(`Discard failed: ${e}`);
+        toastError(`Discard failed: ${errMsg(e)}`);
       }
     },
     [root, refresh],

@@ -33,6 +33,7 @@ import {
 } from "../composeSnapshots";
 import {
   error as toastError,
+  errMsg,
   info as toastInfo,
   success as toastSuccess,
 } from "../notify";
@@ -2056,7 +2057,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       }
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
-        toastError(`Chat failed: ${e}`);
+        toastError(`Chat failed: ${errMsg(e)}`);
       }
     } finally {
       setStreaming(null);
@@ -2258,7 +2259,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       }
       toastSuccess(`Sent to terminal "${t.title ?? "Terminal"}"`);
     } catch (e) {
-      toastError(`Failed to send to terminal: ${e}`);
+      toastError(`Failed to send to terminal: ${errMsg(e)}`);
     }
   };
 
@@ -2352,7 +2353,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       toastSuccess(`Pulled ${name}`);
       await refresh();
     } catch (e) {
-      toastError(`Pull failed: ${e}`);
+      toastError(`Pull failed: ${errMsg(e)}`);
     } finally {
       setPullProgressMap((m) => {
         const { [name]: _drop, ...rest } = m;
@@ -2629,7 +2630,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   // Recheck shortly after.
                   setTimeout(() => void refresh(), 2500);
                 } catch (e) {
-                  toastError(`Could not start Ollama: ${e}`);
+                  toastError(`Could not start Ollama: ${errMsg(e)}`);
                 }
               }}
             >
@@ -4307,7 +4308,7 @@ function ComposeRevertButton({
         okCount++;
       } catch (e) {
         failures.push(
-          `${path.split(/[\\/]/).pop()}: ${e instanceof Error ? e.message : String(e)}`,
+          `${path.split(/[\\/]/).pop()}: ${errMsg(e)}`,
         );
       }
     }

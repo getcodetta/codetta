@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useStore } from "../store";
 import { openPalette } from "../paletteBus";
 import { pty } from "../ipc";
-import { error as toastError, info as toastInfo } from "../notify";
+import { error as toastError, errMsg, info as toastInfo } from "../notify";
 import { prompt as dialogPrompt } from "../dialog";
 
 interface Tip {
@@ -57,7 +57,7 @@ export function WorkspacePicker() {
       await pty.write(ptyId, cmd);
       toastInfo("Cloning… check the new terminal for progress.");
     } catch (e) {
-      toastError(`Clone failed: ${e}`);
+      toastError(`Clone failed: ${errMsg(e)}`);
     }
   }
 

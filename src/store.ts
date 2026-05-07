@@ -8,6 +8,7 @@ import {
 import { clearEditorState } from "./editorState";
 import {
   error as toastError,
+  errMsg,
   success as toastSuccess,
 } from "./notify";
 import {
@@ -1403,7 +1404,7 @@ export const useStore = create<AppState>((set, get) => {
             .catch((e) => {
               toastError(
                 `Auto-push failed for ${path.split(/[\\/]/).pop()}: ${
-                  e instanceof Error ? e.message : String(e)
+                  errMsg(e)
                 }`,
               );
             });

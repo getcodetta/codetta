@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../store";
 import { fs, pty } from "../ipc";
+import { errMsg } from "../notify";
 
 interface PackageScript {
   name: string;
@@ -58,7 +59,7 @@ export function TasksPanel({ wsId, root }: Props) {
       setScripts(out);
       setPm(detected);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errMsg(e));
       setScripts([]);
     } finally {
       setLoading(false);

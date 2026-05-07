@@ -118,3 +118,26 @@ export function useToasts(): Toast[] {
   }, []);
   return t;
 }
+
+/**
+ * Normalize whatever was thrown into a human-readable string for a toast.
+ * Tauri invoke rejections come back as plain strings (the Rust side does
+ * .map_err(|e| e.to_string())); JS code may throw real Error instances;
+ * library code occasionally rejects with non-Error values. Without a
+ * single helper we end up with a mix of "Error: foo" / raw "foo" /
+ * "[object Object]" depending on the call site. errMsg flattens to the
+ * inner message string everywhere.
+ */
+export function errMsg(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === "object" && "message" in e) {
+    const m = (e as { message: unknown }).message;
+    if (typeof m === "string") return m;
+  }
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}

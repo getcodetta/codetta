@@ -11,6 +11,7 @@ import { alert as dialogAlert, confirm as dialogConfirm } from "./dialog";
 import { fs } from "./ipc";
 import {
   error as toastError,
+  errMsg,
   success as toastSuccess,
 } from "./notify";
 import {
@@ -570,7 +571,7 @@ async function userClaudeMdPath(): Promise<string | null> {
     const home = await homeDir();
     return await join(home, ".claude", "CLAUDE.md");
   } catch (e) {
-    toastError(`Cannot resolve home directory: ${e}`);
+    toastError(`Cannot resolve home directory: ${errMsg(e)}`);
     return null;
   }
 }
@@ -588,7 +589,7 @@ async function openProjectClaudeMd(): Promise<void> {
     await ensureClaudeMd(path, null);
     await openInActiveWorkspace(path);
   } catch (e) {
-    toastError(`Failed to open CLAUDE.md: ${e}`);
+    toastError(`Failed to open CLAUDE.md: ${errMsg(e)}`);
   }
 }
 
@@ -619,7 +620,7 @@ async function initProjectClaudeMd(): Promise<void> {
     await openInActiveWorkspace(path);
     toastSuccess("CLAUDE.md scaffolded — edit and save to use it on the next Claude Code turn.");
   } catch (e) {
-    toastError(`Failed to write CLAUDE.md: ${e}`);
+    toastError(`Failed to write CLAUDE.md: ${errMsg(e)}`);
   }
 }
 
@@ -634,7 +635,7 @@ async function openUserClaudeMd(): Promise<void> {
     await ensureClaudeMd(path, null);
     await openInActiveWorkspace(path);
   } catch (e) {
-    toastError(`Failed to open ~/.claude/CLAUDE.md: ${e}`);
+    toastError(`Failed to open ~/.claude/CLAUDE.md: ${errMsg(e)}`);
   }
 }
 

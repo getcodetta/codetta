@@ -25,6 +25,7 @@ import {
 } from "../aiPrivacy";
 import { confirmDiscardUnsaved } from "../actions";
 import { confirm as dialogConfirm } from "../dialog";
+import { errMsg } from "../notify";
 import {
   clearUsage,
   loadHardCap,
@@ -423,7 +424,7 @@ function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
     } catch (e) {
       setStatus({
         kind: "error",
-        message: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
+        message: `Invalid JSON: ${errMsg(e)}`,
       });
       return;
     }
@@ -1060,7 +1061,7 @@ function SftpProfilesEditor() {
       setTestState({
         profileId: key,
         status: "fail",
-        msg: e instanceof Error ? e.message : String(e),
+        msg: errMsg(e),
       });
     }
   };

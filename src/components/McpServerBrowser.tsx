@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { claudeMcp, type McpServer } from "../ipc";
 import { useStore } from "../store";
-import { error as toastError, success as toastSuccess } from "../notify";
+import { error as toastError, errMsg, success as toastSuccess } from "../notify";
 import { confirm as dialogConfirm, prompt as dialogPrompt } from "../dialog";
 
 /**
@@ -206,7 +206,7 @@ export function McpServerBrowser() {
       const list = await claudeMcp.list(cwd);
       setInstalled(list);
     } catch (e) {
-      toastError(`Failed to load MCP servers: ${e}`);
+      toastError(`Failed to load MCP servers: ${errMsg(e)}`);
       setInstalled([]);
     }
   };
@@ -285,7 +285,7 @@ export function McpServerBrowser() {
       );
       await refresh();
     } catch (e) {
-      toastError(`Install failed: ${e}`);
+      toastError(`Install failed: ${errMsg(e)}`);
     } finally {
       setBusy(false);
     }
@@ -307,7 +307,7 @@ export function McpServerBrowser() {
       toastSuccess(`Removed ${s.name} (${s.scope})`);
       await refresh();
     } catch (e) {
-      toastError(`Remove failed: ${e}`);
+      toastError(`Remove failed: ${errMsg(e)}`);
     }
   };
 
