@@ -1800,9 +1800,14 @@ input {
   padding: 6px 14px;
   font-size: 12px;
   color: var(--fg);
+  outline: none;
 }
-.ctx-item:hover:not(:disabled) {
+.ctx-item:hover:not(:disabled),
+.ctx-item:focus-visible:not(:disabled) {
   background: var(--bg-hi);
+}
+.ctx-item:focus-visible:not(:disabled) {
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .ctx-item.danger {
   color: var(--danger);

@@ -27,13 +27,71 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
     };
   });
 
+  // Indices of focusable (non-separator, non-disabled) items, used by
+  // the keyboard navigation block below to skip over separators and
+  // greyed-out entries cleanly.
+  const enabledIndexes = items
+    .map((it, i) => (it !== "separator" && !it.disabled ? i : -1))
+    .filter((i) => i >= 0);
+
+  const focusItem = (idx: number) => {
+    const el = menuRef.current?.querySelector<HTMLButtonElement>(
+      `button[data-ctx-idx="${idx}"]`,
+    );
+    el?.focus();
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (enabledIndexes.length === 0) return;
+      // Find which enabled item currently has focus to compute the next
+      // one. document.activeElement is the focused button when the menu
+      // is keyboard-driven; falls back to "first item" when nothing in
+      // the menu has focus yet (e.g. menu opened via right-click).
+      const active = document.activeElement as HTMLElement | null;
+      const activeIdx = active?.dataset.ctxIdx
+        ? Number(active.dataset.ctxIdx)
+        : -1;
+      const cur = enabledIndexes.indexOf(activeIdx);
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = cur < 0 ? 0 : (cur + 1) % enabledIndexes.length;
+        focusItem(enabledIndexes[next]);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const next =
+          cur < 0
+            ? enabledIndexes.length - 1
+            : (cur - 1 + enabledIndexes.length) % enabledIndexes.length;
+        focusItem(enabledIndexes[next]);
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        focusItem(enabledIndexes[0]);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        focusItem(enabledIndexes[enabledIndexes.length - 1]);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, enabledIndexes]);
+
+  // Move focus to the first enabled item on open so arrow keys work
+  // immediately. Wait one frame so the layout pass has placed the menu;
+  // .focus() before that occasionally scrolls the menu into a weird
+  // initial position on Chromium.
+  useEffect(() => {
+    if (enabledIndexes.length === 0) return;
+    const id = window.requestAnimationFrame(() => {
+      focusItem(enabledIndexes[0]);
+    });
+    return () => window.cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Measure once after mount and reposition so the menu always fits in the
   // viewport. If it would overflow the bottom, anchor it ABOVE the click
@@ -75,6 +133,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       <div
         ref={menuRef}
         className="ctx-menu"
+        role="menu"
         style={{
           left: pos.left,
           top: pos.top,
@@ -84,10 +143,12 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       >
         {items.map((it, i) =>
           it === "separator" ? (
-            <div key={i} className="ctx-sep" />
+            <div key={i} className="ctx-sep" role="separator" />
           ) : (
             <button
               key={i}
+              data-ctx-idx={i}
+              role="menuitem"
               className={`ctx-item ${it.danger ? "danger" : ""}`}
               disabled={it.disabled}
               onClick={async () => {

@@ -44,13 +44,18 @@ function MenuButton({ label, open, onToggle, onClose, children }: DropdownProps)
       <button
         className={`menu-button ${open ? "open" : ""}`}
         onClick={onToggle}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`${label} menu`}
       >
         {label}
       </button>
       {open && (
         <>
           <div className="menu-overlay" onClick={onClose} />
-          <div className="menu-dropdown">{children}</div>
+          <div className="menu-dropdown" role="menu">
+            {children}
+          </div>
         </>
       )}
     </div>
@@ -67,7 +72,7 @@ function MenuItem({
   onClick: () => void;
 }) {
   return (
-    <button className="menu-item" onClick={onClick}>
+    <button className="menu-item" role="menuitem" onClick={onClick}>
       <span className="menu-item-label">{label}</span>
       {accel && <span className="menu-item-accel">{accel}</span>}
     </button>
@@ -75,7 +80,7 @@ function MenuItem({
 }
 
 function MenuSeparator() {
-  return <div className="menu-separator" />;
+  return <div className="menu-separator" role="separator" />;
 }
 
 interface TopBarProps {

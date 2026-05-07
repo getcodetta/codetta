@@ -36,9 +36,7 @@ export function Dialog() {
 
   if (!req) return null;
 
-  const okLabel =
-    req.okLabel ??
-    (req.kind === "alert" ? "OK" : req.kind === "confirm" ? "OK" : "OK");
+  const okLabel = req.okLabel ?? "OK";
   const cancelLabel = req.cancelLabel ?? "Cancel";
   const title =
     req.title ??
@@ -63,12 +61,14 @@ export function Dialog() {
     <div className="dialog-backdrop" onMouseDown={cancel}>
       <div
         className="dialog-card"
-        role="dialog"
+        role={req.kind === "alert" ? "alertdialog" : "dialog"}
         aria-modal="true"
+        aria-labelledby="dialog-title"
+        aria-describedby="dialog-body"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="dialog-title">{title}</div>
-        <div className="dialog-body">{req.message}</div>
+        <div className="dialog-title" id="dialog-title">{title}</div>
+        <div className="dialog-body" id="dialog-body">{req.message}</div>
         {req.kind === "prompt" && (
           <input
             ref={inputRef}
