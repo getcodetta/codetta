@@ -364,9 +364,14 @@ input {
   font-weight: 600;
   user-select: none;
   padding: 0;
+  outline: none;
 }
-.ws-icon:hover {
+.ws-icon:hover,
+.ws-icon:focus-visible {
   background: var(--bg-hi);
+}
+.ws-icon:focus-visible {
+  border-color: var(--accent);
 }
 .ws-icon.active {
   background: var(--accent);

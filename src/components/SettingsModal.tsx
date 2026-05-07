@@ -103,9 +103,10 @@ export function SettingsModal() {
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="settings-modal-title"
       >
         <div className="settings-header">
-          <span>Settings</span>
+          <span id="settings-modal-title">Settings</span>
           <div className="settings-view-tabs" role="tablist" aria-label="Settings view">
             <button
               role="tab"
@@ -129,6 +130,7 @@ export function SettingsModal() {
             className="settings-close"
             onClick={() => setOpen(false)}
             title="Close (Esc)"
+            aria-label="Close settings"
           >
             ×
           </button>

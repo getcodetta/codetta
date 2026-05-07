@@ -118,13 +118,17 @@ export function ModelBrowser({
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="model-browser-title"
       >
         <div className="model-browser-head">
-          <span className="model-browser-title">Choose a model</span>
+          <span className="model-browser-title" id="model-browser-title">
+            Choose a model
+          </span>
           <button
             className="settings-close"
             onClick={onClose}
             title="Close (Esc)"
+            aria-label="Close model browser"
           >
             ×
           </button>

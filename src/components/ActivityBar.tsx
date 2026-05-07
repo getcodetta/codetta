@@ -77,7 +77,17 @@ export function ActivityBar() {
               key={id}
               className={`ws-icon ${isActive ? "active" : ""}`}
               title={`${meta.name}\n${meta.root}`}
+              role="button"
+              tabIndex={0}
+              aria-label={`Switch to workspace ${meta.name}`}
+              aria-pressed={isActive}
               onClick={() => void setActive(id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  void setActive(id);
+                }
+              }}
               onMouseDown={(e) => {
                 if (e.button === 1) {
                   e.preventDefault();
