@@ -5,37 +5,9 @@ import { fs, git as gitApi } from "../ipc";
 import { requestDiff } from "../editorState";
 import { error as toastError, errMsg, success as toastSuccess } from "../notify";
 import { confirm as dialogConfirm } from "../dialog";
+import { langOf } from "../langDetect";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 
-const langByExt: Record<string, string> = {
-  ts: "typescript",
-  tsx: "typescript",
-  js: "javascript",
-  jsx: "javascript",
-  json: "json",
-  md: "markdown",
-  rs: "rust",
-  py: "python",
-  html: "html",
-  css: "css",
-  scss: "scss",
-  go: "go",
-  java: "java",
-  c: "c",
-  cpp: "cpp",
-  cs: "csharp",
-  yaml: "yaml",
-  yml: "yaml",
-  toml: "ini",
-  sh: "shell",
-  ps1: "powershell",
-  sql: "sql",
-  xml: "xml",
-};
-function langOf(p: string): string {
-  const m = p.toLowerCase().match(/\.([a-z0-9]+)$/);
-  return (m && langByExt[m[1]]) || "plaintext";
-}
 function joinPath(root: string, rel: string): string {
   const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
   const x = rel.replace(/\\/g, "/").replace(/^\/+/, "");

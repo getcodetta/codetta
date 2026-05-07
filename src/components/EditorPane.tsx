@@ -16,6 +16,7 @@ import { fsBus, pathsEqual } from "../fsBus";
 import { warning } from "../notify";
 import { pushRecentFile } from "../recentFiles";
 import { confirm as dialogConfirm } from "../dialog";
+import { langOf } from "../langDetect";
 
 interface GitChangeRange {
   kind: "added" | "modified" | "deleted";
@@ -101,41 +102,38 @@ function parseDiffHunks(diff: string): GitChangeRange[] {
   return out;
 }
 
-const extToLang: Record<string, string> = {
-  ts: "typescript",
-  tsx: "typescript",
-  js: "javascript",
-  jsx: "javascript",
-  json: "json",
-  md: "markdown",
-  rs: "rust",
-  py: "python",
-  html: "html",
-  css: "css",
-  scss: "scss",
-  go: "go",
-  java: "java",
-  c: "c",
-  cpp: "cpp",
-  cs: "csharp",
-  yaml: "yaml",
-  yml: "yaml",
-  toml: "ini",
-  sh: "shell",
-  ps1: "powershell",
-  sql: "sql",
-  xml: "xml",
-};
-
-function langOf(path: string): string {
-  const m = path.toLowerCase().match(/\.([a-z0-9]+)$/);
-  return (m && extToLang[m[1]]) || "plaintext";
-}
-
 function dirname(p: string): string {
   const norm = p.replace(/\\/g, "/").replace(/\/+$/, "");
   const i = norm.lastIndexOf("/");
   return i > 0 ? norm.slice(0, i) : norm;
+}
+
+// Replace both `contents` and `original` for an open file with the given
+// disk content, atomically. Used after a confirmed reload-from-disk so
+// the editor view AND the dirty-tracker both move in lockstep — setting
+// only one would either leave the buffer "dirty" against itself or
+// silently flag the on-disk content as unsaved.
+function replaceFileFromDisk(wsId: string, path: string, onDisk: string) {
+  useStore.setState((s) => {
+    const w = s.loaded[wsId];
+    if (!w || !w.files[path]) return s;
+    return {
+      loaded: {
+        ...s.loaded,
+        [wsId]: {
+          ...w,
+          files: {
+            ...w.files,
+            [path]: {
+              ...w.files[path],
+              contents: onDisk,
+              original: onDisk,
+            },
+          },
+        },
+      },
+    };
+  });
 }
 
 interface Props {
@@ -225,33 +223,10 @@ export function EditorPane({ wsId, path }: Props) {
           if (onDisk === cur.contents) return;
           if (cur.contents === cur.original) {
             // Not dirty — silently reload from disk.
-            useStore.getState().updateFileContents(wsId, path, onDisk);
-            useStore
-              .getState()
-              .loaded[wsId]?.files[path] &&
-              (useStore.setState((s) => {
-                const w = s.loaded[wsId];
-                if (!w || !w.files[path]) return s;
-                return {
-                  loaded: {
-                    ...s.loaded,
-                    [wsId]: {
-                      ...w,
-                      files: {
-                        ...w.files,
-                        [path]: {
-                          ...w.files[path],
-                          contents: onDisk,
-                          original: onDisk,
-                        },
-                      },
-                    },
-                  },
-                };
-              }));
+            replaceFileFromDisk(wsId, path, onDisk);
             return;
           }
-          // Dirty — prompt.
+          // Dirty — prompt before clobbering the user's edits.
           const ok = await dialogConfirm(
             `${path}\n\nThis file changed on disk while you have unsaved edits. Reload from disk and discard your changes?`,
             {
@@ -262,26 +237,7 @@ export function EditorPane({ wsId, path }: Props) {
             },
           );
           if (ok && !canceled) {
-            useStore.setState((s) => {
-              const w = s.loaded[wsId];
-              if (!w || !w.files[path]) return s;
-              return {
-                loaded: {
-                  ...s.loaded,
-                  [wsId]: {
-                    ...w,
-                    files: {
-                      ...w.files,
-                      [path]: {
-                        ...w.files[path],
-                        contents: onDisk,
-                        original: onDisk,
-                      },
-                    },
-                  },
-                },
-              };
-            });
+            replaceFileFromDisk(wsId, path, onDisk);
           }
         } catch {
           warning(`File no longer accessible: ${path}`);
@@ -383,6 +339,8 @@ export function EditorPane({ wsId, path }: Props) {
           className={`editor-preview-toggle ${previewOpen ? "active" : ""}`}
           onClick={() => setPreviewOpen((v) => !v)}
           title="Toggle Markdown preview"
+          aria-label="Toggle Markdown preview"
+          aria-pressed={previewOpen}
         >
           {previewOpen ? "✎ Edit only" : "👁 Preview"}
         </button>
