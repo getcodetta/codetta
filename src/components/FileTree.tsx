@@ -249,15 +249,19 @@ export function FileTree({ wsId, root }: Props) {
         label: "Delete",
         danger: true,
         onClick: async () => {
-          const ok = await dialogConfirm(
-            `Delete ${basename(target.path)}?\n\nThis cannot be undone.`,
-            {
-              title: "Delete",
-              okLabel: "Delete",
-              cancelLabel: "Cancel",
-              danger: true,
-            },
-          );
+          // The Rust delete_path does remove_dir_all for directories,
+          // which is a recursive nuke — surface that explicitly so a
+          // stray right-click on a folder can't silently take out a
+          // big subtree.
+          const message = target.is_dir
+            ? `Delete folder ${basename(target.path)} and ALL its contents?\n\nThis is recursive and cannot be undone.`
+            : `Delete ${basename(target.path)}?\n\nThis cannot be undone.`;
+          const ok = await dialogConfirm(message, {
+            title: target.is_dir ? "Delete folder" : "Delete file",
+            okLabel: "Delete",
+            cancelLabel: "Cancel",
+            danger: true,
+          });
           if (!ok) return;
           try {
             await fs.delete(target.path);
