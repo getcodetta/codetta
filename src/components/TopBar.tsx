@@ -6,6 +6,29 @@ import {
   type CommandSpec,
 } from "../actions";
 import { useTheme, type ThemeMode } from "../theme";
+import { getActiveEditor } from "../editorState";
+
+// Edit-menu actions delegate to the active Monaco editor when one is
+// focused (its built-in commands handle the editor's undo stack +
+// multi-cursor selections correctly). Falls back to document.execCommand
+// for plain inputs/textareas, which still works there even though it's
+// deprecated for contentEditable. The previous version called execCommand
+// unconditionally, which silently no-op'd inside Monaco.
+function runEditAction(
+  monacoCmd: string,
+  fallback: () => void,
+): void {
+  const ed = getActiveEditor();
+  if (ed && ed.hasTextFocus && ed.hasTextFocus()) {
+    try {
+      ed.trigger("topbar-menu", monacoCmd, null);
+      return;
+    } catch {
+      /* fall through to fallback below */
+    }
+  }
+  fallback();
+}
 
 interface DropdownProps {
   label: string;
@@ -176,7 +199,7 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
             accel="Ctrl+Z"
             onClick={() => {
               closeMenu();
-              document.execCommand("undo");
+              runEditAction("undo", () => document.execCommand("undo"));
             }}
           />
           <MenuItem
@@ -184,7 +207,7 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
             accel="Ctrl+Y"
             onClick={() => {
               closeMenu();
-              document.execCommand("redo");
+              runEditAction("redo", () => document.execCommand("redo"));
             }}
           />
           <MenuSeparator />
@@ -193,7 +216,12 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
             accel="Ctrl+X"
             onClick={() => {
               closeMenu();
-              document.execCommand("cut");
+              // Monaco emits the platform-native cut path via the
+              // editor.action.clipboardCutAction id; falls back to
+              // execCommand for plain inputs/textareas.
+              runEditAction("editor.action.clipboardCutAction", () =>
+                document.execCommand("cut"),
+              );
             }}
           />
           <MenuItem
@@ -201,7 +229,9 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
             accel="Ctrl+C"
             onClick={() => {
               closeMenu();
-              document.execCommand("copy");
+              runEditAction("editor.action.clipboardCopyAction", () =>
+                document.execCommand("copy"),
+              );
             }}
           />
           <MenuItem
@@ -209,7 +239,9 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
             accel="Ctrl+V"
             onClick={() => {
               closeMenu();
-              document.execCommand("paste");
+              runEditAction("editor.action.clipboardPasteAction", () =>
+                document.execCommand("paste"),
+              );
             }}
           />
           <MenuItem
@@ -217,7 +249,9 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
             accel="Ctrl+A"
             onClick={() => {
               closeMenu();
-              document.execCommand("selectAll");
+              runEditAction("editor.action.selectAll", () =>
+                document.execCommand("selectAll"),
+              );
             }}
           />
         </MenuButton>
