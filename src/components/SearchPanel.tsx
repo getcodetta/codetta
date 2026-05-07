@@ -199,9 +199,20 @@ export function SearchPanel({ wsId, root }: Props) {
     }
     if (idx < 0) return text;
     const matchSlice = text.slice(idx, idx + matchLen);
-    // Replace preview only honours literal mode for now — regex replace
-    // would need backreference handling, which V1 leaves disabled.
-    const showReplaceMark = replaceOpen && replacement && !regex;
+    const showReplaceMark = replaceOpen && replacement;
+    // For regex mode, expand $1..$n backrefs against this specific
+    // match by running .replace() on the matched substring. Wrap in a
+    // try because a malformed replacement string can throw — fall
+    // back to the literal replacement text if so.
+    let previewReplacement = replacement;
+    if (showReplaceMark && regex) {
+      try {
+        const re = new RegExp(q, caseSensitive ? "" : "i");
+        previewReplacement = matchSlice.replace(re, replacement);
+      } catch {
+        previewReplacement = replacement;
+      }
+    }
     return (
       <>
         {text.slice(0, idx)}
@@ -213,7 +224,9 @@ export function SearchPanel({ wsId, root }: Props) {
           {matchSlice}
         </mark>
         {showReplaceMark && (
-          <mark className="search-hit-mark-replacement">{replacement}</mark>
+          <mark className="search-hit-mark-replacement">
+            {previewReplacement}
+          </mark>
         )}
         {text.slice(idx + matchLen)}
       </>
@@ -221,12 +234,47 @@ export function SearchPanel({ wsId, root }: Props) {
   };
 
   // Replace `query` with `replacement` in `content`, honouring the
-  // current case-sensitivity toggle. Returns the new content + the
-  // number of matches replaced. Pure — used both for the per-file
-  // executor below and for the preview count rendered in the header.
+  // current case-sensitivity + regex toggles. Returns the new content
+  // + the number of matches replaced. Pure — used both for the per-
+  // file executor below and for preview rendering.
+  //
+  // In regex mode the replacement string follows JS RegExp.replace
+  // semantics — $1..$9 backreferences, $& whole match, $$ literal
+  // dollar sign. The pattern is compiled with the global flag so a
+  // single .replace() call rewrites every match in the file. Bad
+  // patterns return a zero-count result; the caller's UI flow already
+  // surfaces compile errors via the search status row, so the replace
+  // path doesn't need to throw here.
+  //
+  // Caveat: the search side compiles patterns with Rust's regex crate,
+  // the replace side uses the JavaScript RegExp engine. They overlap on
+  // the common subset (anchors, character classes, quantifiers, \d \w
+  // \s) but a few edge cases differ — JS supports lookahead/backref
+  // and Rust doesn't, Rust supports \A/\z and JS doesn't. For the
+  // patterns most users actually write (no lookbehind or named groups)
+  // both engines agree. A pattern that searches with one but fails to
+  // compile with the other would be visible immediately as zero
+  // replaced.
   const applyReplaceToContent = useCallback(
     (content: string, q: string, repl: string) => {
       if (!q) return { next: content, count: 0 };
+      if (regex) {
+        try {
+          const re = new RegExp(q, caseSensitive ? "g" : "gi");
+          // Two-pass: count first, then replace. We pass `repl` as a
+          // STRING (not a function) so JS expands $1..$9 / $& / $$
+          // backreferences natively — String.replace's function
+          // replacer doesn't perform that expansion. Cost is one extra
+          // O(n) pass over the file content, which is fine on the file-
+          // size cap we already enforce upstream.
+          const matches = content.match(re);
+          const count = matches ? matches.length : 0;
+          const next = count > 0 ? content.replace(re, repl) : content;
+          return { next, count };
+        } catch {
+          return { next: content, count: 0 };
+        }
+      }
       let count = 0;
       let next = "";
       let cursor = 0;
@@ -244,7 +292,7 @@ export function SearchPanel({ wsId, root }: Props) {
       }
       return { next, count };
     },
-    [caseSensitive],
+    [caseSensitive, regex],
   );
 
   const replaceInFiles = useCallback(
@@ -291,9 +339,9 @@ export function SearchPanel({ wsId, root }: Props) {
         }
         // Re-run the search so the (now-empty) hits clear from the UI
         // and any remaining matches in still-unprocessed files appear.
-        // Replace is literal-only so pass regex=false here regardless
-        // of the toggle state (canReplace already gated this).
-        void runSearch(q, caseSensitive, false);
+        // Use the current toggle state since both literal and regex
+        // replace are supported now.
+        void runSearch(q, caseSensitive, regex);
       } finally {
         setReplacing(false);
       }
@@ -302,6 +350,7 @@ export function SearchPanel({ wsId, root }: Props) {
       applyReplaceToContent,
       caseSensitive,
       query,
+      regex,
       replacement,
       replacing,
       root,
@@ -312,16 +361,15 @@ export function SearchPanel({ wsId, root }: Props) {
   const totalHits = hits.length;
   const fileCount = groups.length;
   const trimmed = query.trim();
-  // Replace is intentionally literal-only — regex replace needs
-  // backreference handling ($1, $2, …) which V1 punts on. The button
-  // disables itself in regex mode with a tooltip explaining why.
+  // Regex replace honours JS-style $1/$2/$& backreferences. Equality
+  // check skipped in regex mode because "(.+)" / "$1" is a perfectly
+  // valid no-op-ish replacement that we still want to allow.
   const canReplace =
     replaceOpen &&
     !replacing &&
     trimmed.length > 0 &&
-    replacement !== trimmed &&
-    totalHits > 0 &&
-    !regex;
+    (regex || replacement !== trimmed) &&
+    totalHits > 0;
 
   return (
     <div className="search-panel">
