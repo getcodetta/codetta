@@ -1,7 +1,11 @@
 use serde::Serialize;
 use std::path::Path;
 
-const HEAVY_DIRS: &[&str] = &[
+/// Directory names that file walkers should skip — package caches, build
+/// outputs, framework state, virtual envs, IDE state. Public so other
+/// modules (sftp upload, future indexers) can reuse the same list
+/// instead of inlining their own drift-prone copy.
+pub const HEAVY_DIRS: &[&str] = &[
     // Package managers
     "node_modules",
     ".pnpm-store",

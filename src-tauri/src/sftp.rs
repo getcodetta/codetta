@@ -487,14 +487,16 @@ fn walk_local_dir(root: &std::path::Path) -> std::io::Result<Vec<(std::path::Pat
             };
             // Skip the same heavy dirs the file-walker uses; spamming
             // node_modules over SFTP is almost never what the user wants.
+            // The list lives in search.rs as the authoritative copy. We
+            // also skip our own remote-cache directory (.codetta-remote-cache)
+            // which is sftp-specific and not in the shared list.
             if meta.is_dir() {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                if matches!(
-                    name.as_str(),
-                    ".git" | "node_modules" | "target" | "dist" | "build"
-                        | ".next" | ".turbo" | ".cache" | "out" | ".venv"
-                        | "__pycache__" | ".codetta-remote-cache"
-                ) {
+                if name == ".codetta-remote-cache"
+                    || crate::search::HEAVY_DIRS
+                        .iter()
+                        .any(|h| h.eq_ignore_ascii_case(&name))
+                {
                     continue;
                 }
                 out.push((path.clone(), true));
