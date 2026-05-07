@@ -85,6 +85,7 @@ import {
 import { MarkdownPreview } from "./MarkdownPreview";
 import { ModelBrowser } from "./ModelBrowser";
 import { permissionFor } from "../toolPermissions";
+import { onAIPromptRequest } from "../aiBus";
 
 interface Props {
   wsId: string;
@@ -877,6 +878,36 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     }
     await sendUserText(text);
   };
+
+  // Editor right-click "Ask AI to …" actions land here. The bus
+  // delivers a pre-composed prompt; we drop it into the composer,
+  // focus, and optionally fire it. Held in a ref so the subscription
+  // sees the latest sendUserText / queue state on every event without
+  // having to re-subscribe each render.
+  const handleExternalPromptRef = useRef<(text: string, immediate: boolean) => void>(() => {});
+  handleExternalPromptRef.current = (text: string, immediate: boolean) => {
+    if (!immediate) {
+      setInput(text);
+      // Wait a frame so React has rendered the textarea before we focus.
+      requestAnimationFrame(() => inputRef.current?.focus());
+      return;
+    }
+    setInput("");
+    if (streaming !== null || runningTools) {
+      queueRef.current.push(text);
+      setQueueLen(queueRef.current.length);
+      toastInfo(`Queued (${queueRef.current.length} pending)`);
+      return;
+    }
+    void sendUserText(text);
+  };
+
+  useEffect(() => {
+    return onAIPromptRequest((req) => {
+      if (req.wsId !== wsId) return;
+      handleExternalPromptRef.current(req.text, req.send);
+    });
+  }, [wsId]);
 
   const sendUserText = async (
     text: string,

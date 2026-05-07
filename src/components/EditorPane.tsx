@@ -20,6 +20,50 @@ import { langOf } from "../langDetect";
 import { dirname } from "../pathUtils";
 import { Icon } from "./Icon";
 import { EditorBreadcrumbs } from "./EditorBreadcrumbs";
+import { requestAIPrompt } from "../aiBus";
+
+// Right-click "Ask AI to …" actions registered with Monaco. Each one
+// grabs the current selection (or the whole file when nothing is
+// selected) and ships a pre-composed prompt to the active AI chat
+// panel via the aiBus. They're cheap, lazily registered, and only
+// active for the focused editor — matching the way users already think
+// about per-pane chrome.
+interface AIAction {
+  id: string;
+  label: string;
+  prompt: string;
+}
+const AI_ACTIONS: AIAction[] = [
+  {
+    id: "askAI.explain",
+    label: "Ask AI to explain",
+    prompt: "Explain what this code does, step by step.",
+  },
+  {
+    id: "askAI.refactor",
+    label: "Ask AI to refactor",
+    prompt:
+      "Suggest a refactor that improves readability or correctness. Show the proposed change as a diff.",
+  },
+  {
+    id: "askAI.fix",
+    label: "Ask AI to find bugs",
+    prompt:
+      "Review this code for bugs, edge cases, and likely failure modes. Propose concrete fixes.",
+  },
+  {
+    id: "askAI.test",
+    label: "Ask AI to write tests",
+    prompt:
+      "Write tests for this code. Cover the golden path plus the obvious edge cases.",
+  },
+  {
+    id: "askAI.docs",
+    label: "Ask AI to add docs",
+    prompt:
+      "Add concise documentation comments to this code. Keep them grounded in what the code does, not aspirational descriptions.",
+  },
+];
 
 interface GitChangeRange {
   kind: "added" | "modified" | "deleted";
@@ -413,8 +457,52 @@ export function EditorPane({ wsId, path }: Props) {
               /* ignore */
             }
           });
+          // Register right-click "Ask AI to …" actions. They live in
+          // their own context-menu group so they're visually grouped
+          // under one section header, separated from Monaco's
+          // built-ins. We also bind Cmd/Ctrl+I to "explain" since it's
+          // the highest-frequency action.
+          const disposables = AI_ACTIONS.map((action, idx) =>
+            ed.addAction({
+              id: action.id,
+              label: action.label,
+              contextMenuGroupId: "askai",
+              contextMenuOrder: idx,
+              keybindings:
+                action.id === "askAI.explain"
+                  ? [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyI]
+                  : undefined,
+              run: (editor) => {
+                const model = editor.getModel();
+                if (!model) return;
+                const sel = editor.getSelection();
+                let snippet: string;
+                if (sel && !sel.isEmpty()) {
+                  snippet = model.getValueInRange(sel);
+                } else {
+                  snippet = model.getValue();
+                }
+                if (!snippet.trim()) return;
+                const lang = model.getLanguageId() || "";
+                const filename = path.split(/[\\/]/).pop() || path;
+                const text = `${action.prompt}\n\n\`\`\`${lang} ${filename}\n${snippet}\n\`\`\``;
+                // Make sure the chat panel is mounted (it ignores bus
+                // events if hidden because it isn't listening). Toggle
+                // visibility then schedule the dispatch a frame later
+                // so the panel has a chance to subscribe.
+                const store = useStore.getState();
+                if (!store.loaded[wsId]?.layout?.aiPanelVisible) {
+                  store.setAIPanelVisible(wsId, true);
+                }
+                requestAnimationFrame(() => {
+                  requestAIPrompt({ wsId, text, send: true });
+                });
+              },
+            }),
+          );
           ed.onDidDispose(() => {
             off();
+            for (const d of disposables) d.dispose();
             setActiveEditor(null);
           });
         }}
