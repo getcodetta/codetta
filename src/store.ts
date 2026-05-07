@@ -93,7 +93,14 @@ export interface AIChatDescriptor {
   model?: string;
 }
 
-export type SidebarView = "files" | "git" | "tasks" | "todos" | "ai" | "remote";
+export type SidebarView =
+  | "files"
+  | "search"
+  | "git"
+  | "tasks"
+  | "todos"
+  | "ai"
+  | "remote";
 
 export interface SidebarSection {
   view: SidebarView;
@@ -597,7 +604,7 @@ function commonLayoutFields(
   r: Record<string, unknown>,
 ): Omit<WorkspaceLayout, "editorRoot" | "bottomRoot" | "activePaneId"> {
   const validViews: SidebarView[] = [
-    "files", "git", "tasks", "todos", "ai", "remote",
+    "files", "search", "git", "tasks", "todos", "ai", "remote",
   ];
   const view = validViews.includes(r.sidebarView as SidebarView)
     ? (r.sidebarView as SidebarView)

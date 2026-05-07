@@ -5,6 +5,7 @@ import {
   type WorkspaceData,
 } from "../store";
 import { FileTree } from "./FileTree";
+import { SearchPanel } from "./SearchPanel";
 import { SourceControlPanel } from "./SourceControlPanel";
 import { TasksPanel } from "./TasksPanel";
 import { TodosPanel } from "./TodosPanel";
@@ -13,6 +14,7 @@ import { RemoteSftpPanel } from "./RemoteSftpPanel";
 
 const VIEW_LABEL: Record<SidebarView, string> = {
   files: "Explorer",
+  search: "Search",
   git: "Source Control",
   tasks: "Tasks",
   todos: "TODO / FIXME",
@@ -115,6 +117,8 @@ export function SidebarStack({ wsId, ws }: Props) {
     switch (view) {
       case "files":
         return <FileTree wsId={wsId} root={ws.meta.root} />;
+      case "search":
+        return <SearchPanel wsId={wsId} root={ws.meta.root} />;
       case "git":
         return <SourceControlPanel wsId={wsId} root={ws.meta.root} />;
       case "tasks":

@@ -5,7 +5,7 @@ import { useStore } from "./store";
 import { startFsBusOnce } from "./fsBus";
 import { runCommand } from "./actions";
 import { bootstrapTheme } from "./theme";
-import { onPaletteOpen, openPalette } from "./paletteBus";
+import { onPaletteOpen } from "./paletteBus";
 import { basename } from "./pathUtils";
 import { WorkspacePicker } from "./components/WorkspacePicker";
 import { WorkspaceShell } from "./components/WorkspaceShell";
@@ -234,9 +234,12 @@ function MainApp() {
       } else if (lower === "g" && e.shiftKey) {
         e.preventDefault();
         runCommand("view.source_control");
-      } else if (lower === "f" && e.shiftKey) {
+      } else if (lower === "f" && e.shiftKey && !e.altKey) {
         e.preventDefault();
-        openPalette("? ");
+        runCommand("view.search");
+      } else if (lower === "f" && e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        runCommand("view.search_palette");
       } else if (lower === "t" && e.shiftKey) {
         e.preventDefault();
         runCommand("view.todos");

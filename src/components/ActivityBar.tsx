@@ -137,6 +137,16 @@ export function ActivityBar() {
           📁
         </button>
         <button
+          className={`activity-icon ${sectionActive("search") ? "active" : ""}`}
+          title="Search (Ctrl+Shift+F) — full text search across the workspace"
+          aria-label="Search"
+          aria-pressed={sectionActive("search")}
+          onClick={() => switchView("search")}
+          disabled={!activeId}
+        >
+          🔍
+        </button>
+        <button
           className={`activity-icon ${sectionActive("git") ? "active" : ""}`}
           title="Source Control (Ctrl+Shift+G) — click to toggle section"
           aria-label="Source Control"

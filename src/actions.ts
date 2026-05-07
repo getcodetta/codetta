@@ -205,6 +205,49 @@ export const commands: CommandSpec[] = [
     label: "Search Files…",
     category: "View",
     accel: "Ctrl+Shift+F",
+    run: () => {
+      // Open the sidebar Search panel section (creating it if missing,
+      // un-collapsing if collapsed) and focus its input. Falls back to
+      // the command-palette text-search when there's no active
+      // workspace — the panel needs a root to search against.
+      const st = useStore.getState();
+      const wsId = st.activeId;
+      if (!wsId) {
+        openPalette("? ");
+        return;
+      }
+      const ws = st.loaded[wsId];
+      if (!ws) {
+        openPalette("? ");
+        return;
+      }
+      const existing = ws.layout.sidebarSections.find(
+        (s) => s.view === "search",
+      );
+      if (!existing) {
+        st.toggleSidebarSection(wsId, "search"); // adds it, uncollapsed
+      } else if (existing.collapsed) {
+        st.collapseSidebarSection(wsId, "search", false);
+      }
+      // Make sure the sidebar itself is visible — it auto-hides when
+      // every section is removed, and the user may have toggled it
+      // off via Ctrl+B.
+      if (!ws.layout.sidebarVisible) st.setSidebarVisible(wsId, true);
+      // Focus the input on the next frame so the section has mounted.
+      requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLInputElement>(
+          ".search-panel-input",
+        );
+        el?.focus();
+        el?.select();
+      });
+    },
+  },
+  {
+    id: "view.search_palette",
+    label: "Quick Search (palette)…",
+    category: "View",
+    accel: "Ctrl+Alt+F",
     run: () => openPalette("? "),
   },
   {

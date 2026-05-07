@@ -1940,74 +1940,146 @@ input {
   }
 }
 
-/* ---------- Global search panel ---------- */
-.global-search {
+/* ---------- Search panel (sidebar) ---------- */
+.search-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   font-size: 12px;
 }
-.gs-input {
-  margin: 8px 10px;
+.search-panel-toolbar {
+  display: flex;
+  gap: 6px;
   padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  font-size: 12px;
+  border-bottom: 1px solid var(--border);
 }
-.gs-meta {
-  padding: 0 10px 6px;
+.search-panel-input {
+  flex: 1;
+  padding: 4px 8px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  outline: none;
+  min-width: 0;
+}
+.search-panel-input:focus {
+  border-color: var(--accent);
+}
+.search-panel-toggle {
+  flex-shrink: 0;
+  padding: 0 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  cursor: pointer;
+  outline: none;
+}
+.search-panel-toggle:hover,
+.search-panel-toggle:focus-visible {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.search-panel-toggle.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.search-panel-status {
+  padding: 6px 10px;
   font-size: 11px;
   color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
 }
-.gs-group {
-  margin-bottom: 6px;
+.search-panel-error {
+  color: #ff8a8a;
 }
-.gs-group-header {
+.search-panel-results {
+  flex: 1;
+  overflow-y: auto;
+}
+.search-panel-group {
+  border-bottom: 1px solid var(--border);
+}
+.search-panel-group-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 4px 10px;
   background: var(--bg-alt);
   font-size: 11px;
-  cursor: pointer;
-  user-select: none;
+  font-weight: 500;
 }
-.gs-group-path {
+.search-panel-group-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   margin-right: 8px;
+  font-family: "Cascadia Mono", Consolas, monospace;
 }
-.gs-group-count {
+.search-panel-group-count {
   flex-shrink: 0;
   color: var(--fg-muted);
+  font-size: 10px;
 }
-.gs-hit {
+.search-panel-hit {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 2px 12px;
+  width: 100%;
+  padding: 3px 10px 3px 14px;
+  background: transparent;
+  border: none;
+  text-align: left;
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
   font-size: 11px;
+  color: var(--fg);
+  outline: none;
 }
-.gs-hit:hover {
+.search-panel-hit:hover,
+.search-panel-hit:focus-visible {
   background: var(--bg-hi);
 }
-.gs-line-no {
+.search-panel-hit-line {
   color: var(--fg-muted);
   font-family: "Cascadia Mono", Consolas, monospace;
   flex-shrink: 0;
-  min-width: 32px;
+  min-width: 28px;
   text-align: right;
+  font-size: 10px;
 }
-.gs-text {
+.search-panel-hit-text {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: "Cascadia Mono", Consolas, monospace;
+}
+.search-hit-mark {
+  background: rgba(255, 200, 0, 0.35);
+  color: var(--fg);
+  padding: 0 1px;
+  border-radius: 2px;
+}
+.search-panel-show-more {
+  margin: 8px 10px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  width: calc(100% - 20px);
+}
+.search-panel-show-more:hover {
+  background: var(--bg-hi);
+  color: var(--fg);
 }
 
 /* ---------- Tasks panel ---------- */
