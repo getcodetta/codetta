@@ -1,6 +1,6 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { renderMarkdown } from "../markdown";
-import { setEditorGoto } from "../editorState";
+import { onMdPreviewScroll, setEditorGoto } from "../editorState";
 
 interface Props {
   content: string;
@@ -15,6 +15,48 @@ interface Props {
 export function MarkdownPreview({ content, interactive = false }: Props) {
   const html = useMemo(() => renderMarkdown(content), [content]);
   const ref = useRef<HTMLDivElement>(null);
+
+  // Editor-driven scroll-sync. Only meaningful in interactive (split)
+  // mode; chat-side previews don't have an editor pointing at them.
+  // The scrollable ancestor is the .preview-half wrapper from
+  // EditorPane (overflow-y: auto), not .md-preview itself, so we walk
+  // up looking for the first scrollable parent. Behaviour: jump
+  // (not smooth) — scroll-sync should track the editor 1:1 without
+  // a lagging animation that breaks the "shared scroll" illusion.
+  useEffect(() => {
+    if (!interactive) return;
+    return onMdPreviewScroll((line) => {
+      const root = ref.current;
+      if (!root) return;
+      const blocks = root.querySelectorAll<HTMLElement>("[data-source-line]");
+      if (blocks.length === 0) return;
+      let target: HTMLElement | null = null;
+      for (const b of blocks) {
+        const bl = parseInt(b.dataset.sourceLine ?? "0", 10);
+        if (bl > line) break;
+        target = b;
+      }
+      if (!target) return;
+      // Find the scrollable ancestor — usually .preview-half.
+      let scroller: HTMLElement | null = root.parentElement;
+      while (scroller && scroller !== document.body) {
+        const overflowY = getComputedStyle(scroller).overflowY;
+        if (overflowY === "auto" || overflowY === "scroll") break;
+        scroller = scroller.parentElement;
+      }
+      if (!scroller || scroller === document.body) return;
+      // offsetTop of the target is relative to its offsetParent;
+      // getBoundingClientRect gives us the absolute screen position
+      // which we can convert to a scrollTop on the scroller.
+      const targetRect = target.getBoundingClientRect();
+      const scrollerRect = scroller.getBoundingClientRect();
+      const delta = targetRect.top - scrollerRect.top;
+      scroller.scrollTo({
+        top: scroller.scrollTop + delta - 8,
+        behavior: "auto",
+      });
+    });
+  }, [interactive]);
 
   // Headings are flagged with .md-anchor as the primary jump targets;
   // every block carries data-source-line so users can also click into

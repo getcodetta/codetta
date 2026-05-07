@@ -91,6 +91,22 @@ export function onEditorGoto(cb: GotoListener): () => void {
   return () => gotoListeners.delete(cb);
 }
 
+// Pub/sub for "scroll the markdown preview to a source line" — fires
+// when the user scrolls the editor side of a markdown split view.
+// Lives here (not its own module) because it's the same kind of
+// editor↔preview bridge as setEditorGoto. The preview pane subscribes;
+// only the most recent active subscriber matters since each visible
+// preview is the live target.
+type MdPreviewListener = (line: number) => void;
+const mdPreviewListeners = new Set<MdPreviewListener>();
+export function requestMdPreviewScroll(line: number): void {
+  for (const l of mdPreviewListeners) l(line);
+}
+export function onMdPreviewScroll(cb: MdPreviewListener): () => void {
+  mdPreviewListeners.add(cb);
+  return () => mdPreviewListeners.delete(cb);
+}
+
 // Lightweight pub/sub for "open a diff view" requests originating outside
 // the editor area (e.g., the source-control panel).
 export interface DiffRequest {

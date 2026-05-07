@@ -8,6 +8,7 @@ import {
   setEditorState,
   clearEditorState,
   onEditorGoto,
+  requestMdPreviewScroll,
   setActiveEditor,
 } from "../editorState";
 import { useEditorSettings } from "../editorSettings";
@@ -194,9 +195,18 @@ export function EditorPane({ wsId, path }: Props) {
     null,
   );
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Mirror of "the markdown split preview is currently active" so the
+  // editor's scroll listener (registered once in onMount) can read
+  // the current value without re-registering on every state change.
+  const mdSplitActiveRef = useRef(false);
 
   const language = file ? langOf(path) : null;
   const isMarkdown = language === "markdown";
+  // Keep the scroll-sync mirror updated so the onMount listener sees
+  // the current state without needing to re-register.
+  useEffect(() => {
+    mdSplitActiveRef.current = isMarkdown && previewOpen;
+  }, [isMarkdown, previewOpen]);
 
   // Apply runtime settings changes (font size, word wrap) without remounting.
   useEffect(() => {
@@ -458,6 +468,24 @@ export function EditorPane({ wsId, path }: Props) {
               /* ignore */
             }
           });
+          // Editor → preview scroll-sync: when the user scrolls the
+          // markdown editor in split mode, push the topmost visible
+          // source line to the preview so it follows along. We only
+          // dispatch when the split preview is currently active —
+          // editing a markdown file with the preview hidden produces
+          // a noisy stream of bus events otherwise. mdSplitActiveRef
+          // gives us the up-to-date flag without rebinding the
+          // listener every time the state changes.
+          const offScroll = ed.onDidScrollChange(() => {
+            if (!mdSplitActiveRef.current) return;
+            try {
+              const ranges = ed.getVisibleRanges();
+              const top = ranges[0]?.startLineNumber ?? 1;
+              requestMdPreviewScroll(top);
+            } catch {
+              /* ignore */
+            }
+          });
           // Register right-click "Ask AI to …" actions. They live in
           // their own context-menu group so they're visually grouped
           // under one section header, separated from Monaco's
@@ -503,6 +531,7 @@ export function EditorPane({ wsId, path }: Props) {
           );
           ed.onDidDispose(() => {
             off();
+            offScroll.dispose();
             for (const d of disposables) d.dispose();
             setActiveEditor(null);
           });
