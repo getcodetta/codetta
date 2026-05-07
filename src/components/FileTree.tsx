@@ -21,6 +21,7 @@ import {
   subscribeActiveSftp,
 } from "../sftpLinks";
 import { basename, dirname, joinPath } from "../pathUtils";
+import { dropRecentFile } from "../recentFiles";
 
 interface MenuTarget {
   x: number;
@@ -249,6 +250,11 @@ export function FileTree({ wsId, root }: Props) {
           const newPath = joinPath(dirname(target.path), next);
           try {
             await fs.rename(target.path, newPath);
+            // Drop the old path from the per-workspace recent-files
+            // stack so Ctrl+Tab doesn't try to reopen a path that no
+            // longer exists. The Monaco editor for the open buffer
+            // will follow the rename via its own buffer-key change.
+            if (!target.is_dir) dropRecentFile(wsId, target.path);
           } catch (e) {
             toastError(`Failed to rename: ${errMsg(e)}`);
           }
@@ -274,6 +280,13 @@ export function FileTree({ wsId, root }: Props) {
           if (!ok) return;
           try {
             await fs.delete(target.path);
+            // Drop from per-workspace recent-files stack so Ctrl+Tab
+            // doesn't surface a deleted path. For folders we'd need to
+            // crawl the watched scrollback to find children that were
+            // recents — skipping that since the Ctrl+Tab opener will
+            // fall through with a "file not found" toast for any
+            // child that's gone, which is acceptable degraded behavior.
+            if (!target.is_dir) dropRecentFile(wsId, target.path);
           } catch (e) {
             toastError(`Failed to delete: ${errMsg(e)}`);
           }

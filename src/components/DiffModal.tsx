@@ -24,10 +24,13 @@ export function DiffModal() {
     <div className="diff-modal" onMouseDown={() => setReq(null)}>
       <div
         className="diff-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="diff-modal-title"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="diff-modal-header">
-          <span className="diff-modal-title">
+          <span className="diff-modal-title" id="diff-modal-title">
             {req.path}
             <span className="diff-modal-ref">vs {req.refspec}</span>
           </span>
@@ -35,6 +38,7 @@ export function DiffModal() {
             className="diff-modal-close"
             onClick={() => setReq(null)}
             title="Close (Esc)"
+            aria-label="Close diff view"
           >
             ×
           </button>
@@ -44,7 +48,6 @@ export function DiffModal() {
             originalContent={req.originalContent}
             modifiedContent={req.modifiedContent}
             language={req.language}
-            path={req.path}
           />
         </div>
       </div>

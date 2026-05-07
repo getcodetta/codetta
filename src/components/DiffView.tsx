@@ -5,14 +5,12 @@ interface Props {
   originalContent: string;
   modifiedContent: string;
   language?: string;
-  path?: string;
 }
 
 export function DiffView({
   originalContent,
   modifiedContent,
   language,
-  path: _path,
 }: Props) {
   const t = useResolvedTheme();
   return (

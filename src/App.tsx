@@ -6,6 +6,7 @@ import { startFsBusOnce } from "./fsBus";
 import { runCommand } from "./actions";
 import { bootstrapTheme } from "./theme";
 import { onPaletteOpen, openPalette } from "./paletteBus";
+import { basename } from "./pathUtils";
 import { WorkspacePicker } from "./components/WorkspacePicker";
 import { WorkspaceShell } from "./components/WorkspaceShell";
 import { TopBar } from "./components/TopBar";
@@ -71,8 +72,7 @@ function MainApp() {
     const file = editorState.filePath;
     let title = "Codetta";
     if (activeWsName && file) {
-      const base = file.replace(/\\/g, "/").split("/").pop() ?? file;
-      title = `${base} — ${activeWsName} — Codetta`;
+      title = `${basename(file)} — ${activeWsName} — Codetta`;
     } else if (activeWsName) {
       title = `${activeWsName} — Codetta`;
     }
