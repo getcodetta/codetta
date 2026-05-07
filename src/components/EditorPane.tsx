@@ -168,6 +168,9 @@ export function EditorPane({ wsId, path }: Props) {
   ]);
 
   // Auto-save: debounce-save when contents change while auto-save is on.
+  // file?.contents and file?.original already cover every relevant
+  // change — the bare `file` was a redundant duplicate (Zustand spreads
+  // a new file object on every contents update).
   useEffect(() => {
     if (!settings.autoSave || !file) return;
     if (file.contents === file.original) return;
@@ -182,7 +185,6 @@ export function EditorPane({ wsId, path }: Props) {
     file?.original,
     wsId,
     path,
-    file,
   ]);
 
   useEffect(() => {
@@ -196,8 +198,15 @@ export function EditorPane({ wsId, path }: Props) {
   // External-file-change detection: when the watcher reports the parent
   // directory changed, check if our file is dirty in memory and ALSO has
   // a different on-disk content. Prompt to reload.
+  //
+  // Dependency note: we deliberately omit `file` from the deps array.
+  // Including it caused this effect to tear down + re-register the dir
+  // listener on every keystroke (file.contents mutates on each
+  // updateFileContents). Reads inside the handler go through
+  // useStore.getState(), so there's no stale-closure risk. The component
+  // returns null at the bottom when file is undefined, which natural-
+  // unmount-cleans the effect via React's normal lifecycle.
   useEffect(() => {
-    if (!file) return;
     let canceled = false;
     let pendingTimer: number | null = null;
 
@@ -245,7 +254,7 @@ export function EditorPane({ wsId, path }: Props) {
       fsBus.removeEventListener("dir", handler);
       if (pendingTimer) window.clearTimeout(pendingTimer);
     };
-  }, [wsId, path, file]);
+  }, [wsId, path]);
 
   // Inline git gutter: poll git diff and apply line decorations.
   useEffect(() => {
