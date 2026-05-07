@@ -197,6 +197,8 @@ function TabsPaneView(
   const drag = useDrag();
   const setTabPinned = useStore((s) => s.setTabPinned);
   const pinnedSet = new Set(ws.layout.pinned ?? []);
+  const [tabListOpen, setTabListOpen] = useState(false);
+  const tabListBtnRef = useRef<HTMLButtonElement>(null);
   const orderedTabs = (() => {
     const pinned = pane.tabs.filter((k) => pinnedSet.has(k));
     const rest = pane.tabs.filter((k) => !pinnedSet.has(k));
@@ -604,8 +606,47 @@ function TabsPaneView(
           <div className="tab-insert-line" />
         )}
         <div className="tab-bar-spacer" />
+        {/* Tab list dropdown — shown only when there's enough overflow
+            potential (4+ tabs in this pane) to make a flat list useful.
+            Below that threshold the tabs all fit on screen, and an
+            extra button just adds noise. */}
+        {pane.tabs.length >= 4 && (
+          <button
+            ref={tabListBtnRef}
+            className="tab-list-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              setTabListOpen((v) => !v);
+            }}
+            title={`Show all ${pane.tabs.length} tabs`}
+            aria-label="Show all tabs"
+            aria-haspopup="menu"
+            aria-expanded={tabListOpen}
+          >
+            <Icon name="chevron-down" size={12} />
+            <span className="tab-list-count">{pane.tabs.length}</span>
+          </button>
+        )}
         {rootPaneId === pane.id ? rightSlotForRoot : null}
       </div>
+      {tabListOpen && (
+        <TabListDropdown
+          anchor={tabListBtnRef.current}
+          tabs={orderedTabs}
+          ws={ws}
+          activeKey={pane.active}
+          pinnedSet={pinnedSet}
+          onPick={(k) => {
+            setActiveTab(wsId, pane.id, k);
+            setActivePane(wsId, pane.id);
+            setTabListOpen(false);
+          }}
+          onClose={(k) => {
+            void closeTab(wsId, k);
+          }}
+          onDismiss={() => setTabListOpen(false)}
+        />
+      )}
       <div
         ref={onContentRef}
         className="pane-content"
@@ -622,6 +663,137 @@ function TabsPaneView(
           onClose={() => setTabMenu(null)}
         />
       )}
+    </div>
+  );
+}
+
+interface TabListDropdownProps {
+  anchor: HTMLElement | null;
+  tabs: string[];
+  ws: WorkspaceData;
+  activeKey: string | null;
+  pinnedSet: Set<string>;
+  onPick: (key: string) => void;
+  onClose: (key: string) => void;
+  onDismiss: () => void;
+}
+
+function TabListDropdown({
+  anchor,
+  tabs,
+  ws,
+  activeKey,
+  pinnedSet,
+  onPick,
+  onClose,
+  onDismiss,
+}: TabListDropdownProps) {
+  const [filter, setFilter] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Open beneath the anchor button. Layout fallback ("0,0") if anchor
+  // got unmounted between click and render.
+  const rect = anchor?.getBoundingClientRect();
+  const top = rect ? rect.bottom + 4 : 0;
+  const right = rect ? Math.max(8, window.innerWidth - rect.right) : 8;
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // Dismiss on outside click + Escape; let the parent toggle handle
+  // re-clicks on the anchor button itself.
+  useEffect(() => {
+    const onClickAway = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      const card = (e.target as HTMLElement)?.closest(
+        ".tab-list-dropdown",
+      );
+      if (card) return;
+      if (anchor && anchor.contains(t)) return;
+      onDismiss();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onDismiss();
+    };
+    window.addEventListener("mousedown", onClickAway);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onClickAway);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [anchor, onDismiss]);
+
+  const fq = filter.toLowerCase();
+  const visible = tabs.filter((k) => {
+    if (!fq) return true;
+    const info = tabLabel(ws, k);
+    return info.label.toLowerCase().includes(fq);
+  });
+
+  return (
+    <div
+      className="tab-list-dropdown"
+      style={{ top, right }}
+      role="menu"
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <input
+        ref={inputRef}
+        className="tab-list-filter"
+        type="text"
+        value={filter}
+        placeholder="Filter tabs…"
+        onChange={(e) => setFilter(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && visible.length > 0) {
+            onPick(visible[0]);
+          }
+        }}
+      />
+      <div className="tab-list-rows">
+        {visible.length === 0 && (
+          <div className="tab-list-empty">No matching tabs</div>
+        )}
+        {visible.map((k) => {
+          const info = tabLabel(ws, k);
+          const isActive = k === activeKey;
+          const isPinned = pinnedSet.has(k);
+          return (
+            <div
+              key={k}
+              className={`tab-list-row ${isActive ? "active" : ""}`}
+              onClick={() => onPick(k)}
+              role="menuitem"
+              tabIndex={0}
+            >
+              {isPinned && (
+                <Icon
+                  name="star-filled"
+                  size={10}
+                  className="tab-list-pin"
+                />
+              )}
+              <span className="tab-list-label">
+                {info.dirty && <span className="tab-list-dirty">●</span>}
+                {info.label}
+              </span>
+              <button
+                className="tab-list-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose(k);
+                }}
+                title="Close tab"
+                aria-label={`Close ${info.label}`}
+              >
+                <Icon name="x" size={11} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
