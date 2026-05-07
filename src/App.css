@@ -4105,6 +4105,26 @@ input {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.ai-rules-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+  padding: 3px 8px;
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 10px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  cursor: pointer;
+  outline: none;
+}
+.ai-rules-indicator:hover,
+.ai-rules-indicator:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .ai-header-menu-wrap {
   position: relative;
   flex-shrink: 0;

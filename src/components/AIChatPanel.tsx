@@ -57,6 +57,7 @@ import {
   UsageChip,
 } from "./chatPanelChrome";
 import { matchExclusion } from "../aiPrivacy";
+import { loadWorkspaceRules } from "../workspaceRules";
 import { ClaudePermissionOverlay } from "./ClaudePermissionOverlay";
 import { recordUsage, wouldExceedHardCap } from "../aiUsageLog";
 import { captureSnapshot } from "../composeSnapshots";
@@ -157,6 +158,11 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   // users can discover what's available before setting up a key.
   const [allCloudCatalog, setAllCloudCatalog] = useState<ProviderModel[]>([]);
   const [claudeCodeAvailable, setClaudeCodeAvailable] = useState(false);
+  // Rules-file hint shown in the header. Loaded once per workspace
+  // mount + refreshed whenever fs events suggest the file may have
+  // changed. Null when no rules file exists.
+  const [rulesSource, setRulesSource] = useState<string | null>(null);
+  const [rulesPath, setRulesPath] = useState<string | null>(null);
   const [selected, setSelected] = useState<string>("");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -313,6 +319,34 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   useEffect(() => {
     setExpandedMsgIdx(new Set());
   }, [sessionId]);
+
+  // Probe for a workspace rules file on mount + on workspace change so
+  // the header indicator reflects whether one is in play. We re-probe
+  // after every send completes (in the streaming finally block) by
+  // bumping a tick — that way users editing CLAUDE.md mid-session see
+  // the indicator come/go without restarting.
+  useEffect(() => {
+    if (!root) {
+      setRulesSource(null);
+      setRulesPath(null);
+      return;
+    }
+    let cancelled = false;
+    void loadWorkspaceRules(root)
+      .then((r) => {
+        if (cancelled) return;
+        setRulesSource(r?.source ?? null);
+        setRulesPath(r?.absolutePath ?? null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRulesSource(null);
+        setRulesPath(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [root]);
 
   // Auto-grow the prompt textarea up to ~8 lines so multi-paragraph
   // questions don't get cropped behind a tiny scrollbar. Falls back to
@@ -972,6 +1006,24 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // can fetch any file in the workspace far more efficiently than
     // shoving file contents through the prompt.
     const skipAllInlining = selectedProvider === "claude-code";
+
+    // Workspace AI rules. Claude Code natively loads CLAUDE.md so we
+    // skip the inline injection for that provider — duplicating the
+    // rules in the system prompt would waste tokens on cache-miss
+    // turns. Every other provider gets the rules text prepended here
+    // so the conversation respects the project's conventions.
+    if (!skipAllInlining) {
+      try {
+        const rules = await loadWorkspaceRules(root);
+        if (rules) {
+          sysParts.push(
+            `Project rules from ${rules.source}:\n\n${rules.text}`,
+          );
+        }
+      } catch {
+        // Non-fatal — chat still works without rules.
+      }
+    }
     if (skipAllInlining) {
       // Hint to the user's request which file they're focused on —
       // unless the active file is on the AI privacy exclusion list,
@@ -1848,6 +1900,24 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           <Icon name="plus" size={14} />
           <span>New chat</span>
         </button>
+        {rulesSource && rulesPath && (
+          <button
+            className="ai-rules-indicator"
+            onClick={() => {
+              if (rulesPath) {
+                void useStore.getState().openFile(wsId, rulesPath);
+              }
+            }}
+            title={
+              parsed?.providerId === "claude-code"
+                ? `${rulesSource} loaded by Claude Code natively. Click to open.`
+                : `Loaded ${rulesSource} into the system prompt for this provider. Click to open.`
+            }
+          >
+            <Icon name="file-text" size={11} />
+            <span>{rulesSource}</span>
+          </button>
+        )}
         <div className="ai-header-spacer" />
         {parsed?.providerId === "claude-code" && (
           <ClaudeSessionsButton
