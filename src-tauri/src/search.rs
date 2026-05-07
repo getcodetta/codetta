@@ -2,17 +2,43 @@ use serde::Serialize;
 use std::path::Path;
 
 const HEAVY_DIRS: &[&str] = &[
+    // Package managers
     "node_modules",
+    ".pnpm-store",
+    "vendor", // PHP Composer, Go vendor
+    // VCS / system
     ".git",
-    "target",
+    ".hg",
+    ".svn",
+    // Build outputs
+    "target", // Rust, Java/Maven
     "dist",
     "build",
+    "out",
+    "coverage",
+    ".nyc_output",
+    // Framework caches
     ".next",
+    ".nuxt",
     ".turbo",
     ".cache",
-    "out",
+    ".vercel",
+    ".svelte-kit",
+    ".angular",
+    ".astro",
+    ".docusaurus",
+    ".parcel-cache",
+    ".gradle",
+    // Python
     ".venv",
+    "venv",
     "__pycache__",
+    ".tox",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    // IDE state
+    ".idea",
 ];
 
 const MAX_FILE_BYTES_FOR_SEARCH: u64 = 2 * 1024 * 1024;
