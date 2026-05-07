@@ -98,9 +98,18 @@ export const anthropicProvider: ChatProvider = {
       throw new Error("Anthropic API key not configured. Add it in Settings → AI Providers.");
     }
     const { system, turns } = toAnthropicMessages(messages);
+    // Anthropic requires max_tokens. The previous 4096 cap caused
+    // premature truncation on any moderate refactor — Claude 4.x
+    // models support 32K+ output without a beta header. We pick a
+    // model-aware ceiling: 8192 for haiku (faster, cheaper, and the
+    // user is unlikely to want enormous output), 16384 for sonnet /
+    // opus where the larger context windows imply larger output too.
+    // Anything we don't recognise falls back to 8192, which all
+    // currently-available Claude models accept.
+    const maxTokens = /claude-(sonnet|opus)-4/.test(model) ? 16384 : 8192;
     const body: Record<string, unknown> = {
       model,
-      max_tokens: 4096,
+      max_tokens: maxTokens,
       stream: true,
       messages: turns,
     };
