@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../store";
 import { fs, pty } from "../ipc";
 import { errMsg } from "../notify";
+import { Icon } from "./Icon";
 
 interface PackageScript {
   name: string;
@@ -122,7 +123,7 @@ export function TasksPanel({ wsId, root }: Props) {
           title="Re-scan package.json"
           aria-label="Re-scan package.json"
         >
-          ⟳
+          <Icon name="refresh" size={14} />
         </button>
       </div>
       {error && <div className="tasks-empty">{error}</div>}
@@ -146,7 +147,8 @@ export function TasksPanel({ wsId, root }: Props) {
                 title={`Run "${pm} run ${s.name}" in a new bottom-panel terminal`}
                 aria-label={`Run ${s.name} script`}
               >
-                ▷ Run
+                <Icon name="play" size={12} />
+                <span>Run</span>
               </button>
             </div>
           ))}

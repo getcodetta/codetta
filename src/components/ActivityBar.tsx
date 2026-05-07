@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useStore, type SidebarView } from "../store";
 import { AIIcon } from "./AIIcon";
+import { Icon } from "./Icon";
 
 function initials(name: string): string {
   const parts = name.split(/[\s\-_.]+/).filter(Boolean);
@@ -134,7 +135,7 @@ export function ActivityBar() {
           onClick={() => switchView("files")}
           disabled={!activeId}
         >
-          📁
+          <Icon name="folder" size={20} />
         </button>
         <button
           className={`activity-icon ${sectionActive("search") ? "active" : ""}`}
@@ -144,7 +145,7 @@ export function ActivityBar() {
           onClick={() => switchView("search")}
           disabled={!activeId}
         >
-          🔍
+          <Icon name="search" size={20} />
         </button>
         <button
           className={`activity-icon ${sectionActive("git") ? "active" : ""}`}
@@ -154,7 +155,7 @@ export function ActivityBar() {
           onClick={() => switchView("git")}
           disabled={!activeId}
         >
-          ⎇
+          <Icon name="git-branch" size={20} />
         </button>
         <button
           className={`activity-icon ${sectionActive("tasks") ? "active" : ""}`}
@@ -164,7 +165,7 @@ export function ActivityBar() {
           onClick={() => switchView("tasks")}
           disabled={!activeId}
         >
-          ▷
+          <Icon name="play" size={20} />
         </button>
         <button
           className={`activity-icon ${sectionActive("todos") ? "active" : ""}`}
@@ -174,7 +175,7 @@ export function ActivityBar() {
           onClick={() => switchView("todos")}
           disabled={!activeId}
         >
-          ✎
+          <Icon name="check-square" size={20} />
         </button>
         <button
           className={`activity-icon ${sectionActive("remote") ? "active" : ""}`}
@@ -184,7 +185,7 @@ export function ActivityBar() {
           onClick={() => switchView("remote")}
           disabled={!activeId}
         >
-          ☁
+          <Icon name="cloud" size={20} />
         </button>
         <button
           className={`activity-icon ${aiPanelVisible ? "active" : ""}`}

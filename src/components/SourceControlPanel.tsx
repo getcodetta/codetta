@@ -8,6 +8,7 @@ import { confirm as dialogConfirm } from "../dialog";
 import { langOf } from "../langDetect";
 import { joinPath } from "../pathUtils";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { Icon } from "./Icon";
 
 interface Props {
   wsId: string;
@@ -243,14 +244,17 @@ export function SourceControlPanel({ wsId, root }: Props) {
             }
             onClick={() => setBranchOpen((v) => !v)}
           >
-            ⎇ {status.branch ?? "(detached)"}
+            <Icon name="git-branch" size={12} />
+            <span className="git-branch-name">
+              {status.branch ?? "(detached)"}
+            </span>
             {status.ahead > 0 ? (
               <span className="git-ahead"> ↑{status.ahead}</span>
             ) : null}
             {status.behind > 0 ? (
               <span className="git-behind"> ↓{status.behind}</span>
             ) : null}
-            <span className="git-branch-caret">▾</span>
+            <Icon name="chevron-down" size={12} className="git-branch-caret" />
           </button>
           {branchOpen && (
             <>
@@ -291,7 +295,7 @@ export function SourceControlPanel({ wsId, root }: Props) {
             title="Refresh"
             aria-label="Refresh git status"
           >
-            ⟳
+            <Icon name="refresh" size={14} />
           </button>
           <button
             onClick={() => void fetch_()}

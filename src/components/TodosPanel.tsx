@@ -4,6 +4,7 @@ import { useStore } from "../store";
 import { setEditorGoto } from "../editorState";
 import { errMsg } from "../notify";
 import { relPath } from "../pathUtils";
+import { Icon } from "./Icon";
 
 interface TodoHit {
   path: string;
@@ -155,7 +156,7 @@ export function TodosPanel({ wsId, root }: Props) {
           }
           aria-label="Rescan workspace for TODOs"
         >
-          {scanning ? "…" : "⟳"}
+          {scanning ? "…" : <Icon name="refresh" size={14} />}
         </button>
       </div>
       {hits.length > 0 && (
@@ -174,7 +175,7 @@ export function TodosPanel({ wsId, root }: Props) {
               title="Clear filter"
               aria-label="Clear filter"
             >
-              ×
+              <Icon name="x" size={12} />
             </button>
           )}
         </div>

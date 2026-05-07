@@ -2007,6 +2007,10 @@ input {
   border-radius: 3px;
   font-size: 11px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 .search-panel-replace-all:hover:not(:disabled) {
   filter: brightness(1.1);
@@ -7074,7 +7078,9 @@ input {
 }
 .git-branch-caret {
   color: var(--fg-muted);
-  font-size: 9px;
+}
+.git-branch-name {
+  font-weight: 500;
 }
 .git-branch-menu {
   position: absolute;

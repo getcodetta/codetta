@@ -4,6 +4,7 @@ import { useTheme, type ThemeMode } from "../theme";
 import { runCommand } from "../actions";
 import { useEditorSettings } from "../editorSettings";
 import { basename } from "../pathUtils";
+import { Icon, type IconName } from "./Icon";
 
 interface Props {
   onOpenPalette: () => void;
@@ -15,10 +16,10 @@ const themeNext: Record<ThemeMode, ThemeMode> = {
   system: "dark",
 };
 
-const themeIcon: Record<ThemeMode, string> = {
-  light: "☀",
-  dark: "🌙",
-  system: "⚙",
+const themeIcon: Record<ThemeMode, IconName> = {
+  light: "sun",
+  dark: "moon",
+  system: "monitor",
 };
 
 export function StatusBar({ onOpenPalette }: Props) {
@@ -85,7 +86,7 @@ export function StatusBar({ onOpenPalette }: Props) {
           disabled={!activeId}
           onClick={() => runCommand("view.toggle_sidebar")}
         >
-          📁
+          <Icon name="folder" />
         </button>
         <button
           className={`sb-btn ${sidebarVisible && sidebarView === "git" ? "active" : ""}`}
@@ -95,7 +96,7 @@ export function StatusBar({ onOpenPalette }: Props) {
           disabled={!activeId}
           onClick={() => runCommand("view.source_control")}
         >
-          ⎇
+          <Icon name="git-branch" />
         </button>
         <button
           className={`sb-btn ${bottomVisible ? "active" : ""}`}
@@ -105,7 +106,7 @@ export function StatusBar({ onOpenPalette }: Props) {
           disabled={!activeId}
           onClick={() => runCommand("view.toggle_panel")}
         >
-          ▭
+          <Icon name="panel-bottom" />
         </button>
         <button
           className="sb-btn"
@@ -114,7 +115,7 @@ export function StatusBar({ onOpenPalette }: Props) {
           disabled={!activeId}
           onClick={() => runCommand("terminal.new_bottom")}
         >
-          ›_
+          <Icon name="terminal" />
         </button>
         <button
           className={`sb-btn ${settings.autoSave ? "active" : ""}`}
@@ -127,7 +128,7 @@ export function StatusBar({ onOpenPalette }: Props) {
           aria-pressed={settings.autoSave}
           onClick={() => runCommand("edit.toggle_auto_save")}
         >
-          {settings.autoSave ? "⏱" : "💾"}
+          <Icon name={settings.autoSave ? "save-auto" : "save"} />
         </button>
         <button
           className="sb-btn"
@@ -136,7 +137,7 @@ export function StatusBar({ onOpenPalette }: Props) {
           disabled={!editorState.filePath}
           onClick={() => runCommand("file.save")}
         >
-          💾
+          <Icon name="save" />
         </button>
         <button
           className="sb-btn"
@@ -144,7 +145,7 @@ export function StatusBar({ onOpenPalette }: Props) {
           aria-label="Open folder"
           onClick={() => runCommand("file.open_folder")}
         >
-          📂
+          <Icon name="folder-open" />
         </button>
         <button
           className="sb-btn"
@@ -152,7 +153,7 @@ export function StatusBar({ onOpenPalette }: Props) {
           aria-label="Command palette"
           onClick={onOpenPalette}
         >
-          ⌖
+          <Icon name="command" />
         </button>
         <button
           className="sb-btn"
@@ -160,7 +161,7 @@ export function StatusBar({ onOpenPalette }: Props) {
           aria-label="Settings"
           onClick={() => runCommand("view.settings")}
         >
-          ⚙
+          <Icon name="settings" />
         </button>
         <button
           className="sb-btn sb-theme"
@@ -168,7 +169,7 @@ export function StatusBar({ onOpenPalette }: Props) {
           aria-label={`Theme: ${theme}, click to cycle`}
           onClick={cycleTheme}
         >
-          {themeIcon[theme]}
+          <Icon name={themeIcon[theme]} />
         </button>
       </div>
     </div>

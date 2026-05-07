@@ -24,6 +24,7 @@ import { setEditorGoto } from "../editorState";
 import { confirm as dialogConfirm } from "../dialog";
 import { errMsg, error as toastError, success as toastSuccess } from "../notify";
 import { relPath } from "../pathUtils";
+import { Icon } from "./Icon";
 
 interface Props {
   wsId: string;
@@ -299,7 +300,7 @@ export function SearchPanel({ wsId, root }: Props) {
           aria-label={replaceOpen ? "Hide replace" : "Show replace"}
           aria-expanded={replaceOpen}
         >
-          {replaceOpen ? "▾" : "▸"}
+          <Icon name={replaceOpen ? "chevron-down" : "chevron-right"} size={14} />
         </button>
         <div className="search-panel-inputs">
           <input
@@ -342,9 +343,12 @@ export function SearchPanel({ wsId, root }: Props) {
             disabled={replacing}
             title={`Replace ${totalHits} occurrence${totalHits === 1 ? "" : "s"} in ${fileCount} file${fileCount === 1 ? "" : "s"}`}
           >
-            {replacing
-              ? "Replacing…"
-              : `↻ Replace all (${totalHits} in ${fileCount})`}
+            <Icon name="rotate-ccw" size={12} />
+            <span>
+              {replacing
+                ? "Replacing…"
+                : `Replace all (${totalHits} in ${fileCount})`}
+            </span>
           </button>
         </div>
       )}
@@ -384,7 +388,7 @@ export function SearchPanel({ wsId, root }: Props) {
                   title={`Replace ${items.length} occurrence${items.length === 1 ? "" : "s"} in this file`}
                   aria-label={`Replace in ${relPath(path, root) || path}`}
                 >
-                  ↻
+                  <Icon name="rotate-ccw" size={12} />
                 </button>
               )}
             </div>

@@ -1,0 +1,294 @@
+import type { ReactNode } from "react";
+
+// Lightweight SVG icon registry — replaces the emoji affordances that
+// were scattered across the UI (📁 📂 🔍 ⎇ ⏱ ☀ 🌙 ⚙ etc.). Three reasons
+// to standardize:
+//
+//   1. Emoji rendering varies wildly across platforms / fonts. The same
+//      "branch" glyph shows as a tree icon on macOS, a fork on Windows,
+//      and sometimes literal "⎇" with no graphical fallback at all on
+//      bare Linux. SVGs render identically everywhere.
+//   2. Emojis don't recolor. Buttons that switch between active /
+//      inactive / disabled need icons that follow currentColor; emoji
+//      stays its native colour and looks wrong on accent backgrounds.
+//   3. Sizing emojis below ~14px breaks anti-aliasing on most platforms.
+//      SVG paths scale crisply at any size.
+//
+// Each icon is defined inline — no dependency on lucide-react or any
+// other library, which keeps the bundle small. The path data is in the
+// stroke style that matches VS Code's own icons, so the visual language
+// is consistent with what users expect from a code editor.
+
+interface IconProps {
+  name: IconName;
+  /** Pixel size of the bounding square. Defaults to 16. */
+  size?: number;
+  /** Optional className passed to the root <svg>. */
+  className?: string;
+  /** Optional title; pass an aria-hidden parent for purely decorative
+   *  icons sitting next to a labeled element. */
+  title?: string;
+}
+
+export type IconName =
+  | "folder"
+  | "folder-open"
+  | "file"
+  | "search"
+  | "git-branch"
+  | "play"
+  | "check-square"
+  | "cloud"
+  | "settings"
+  | "save"
+  | "save-auto"
+  | "terminal"
+  | "panel-bottom"
+  | "command"
+  | "sun"
+  | "moon"
+  | "monitor"
+  | "close"
+  | "refresh"
+  | "chevron-down"
+  | "chevron-right"
+  | "chevron-up"
+  | "plus"
+  | "minus"
+  | "rotate-ccw"
+  | "branch"
+  | "copy"
+  | "code"
+  | "arrow-down-circle"
+  | "arrow-down-right"
+  | "external-link"
+  | "more-horizontal"
+  | "stop"
+  | "trash"
+  | "edit"
+  | "eye"
+  | "send"
+  | "x";
+
+// Each entry returns the inner JSX for an svg with viewBox 0 0 24 24.
+// Use stroke={currentColor} + strokeWidth + strokeLinecap/Linejoin so
+// the icons follow the surrounding colour and feel cohesive.
+const ICONS: Record<IconName, ReactNode> = {
+  folder: (
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+  ),
+  "folder-open": (
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1H5l-2 9V7Zm0 11 2-9h17l-2 9H3Z" />
+  ),
+  file: (
+    <>
+      <path d="M14 3v5h5" />
+      <path d="M19 8 14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </>
+  ),
+  "git-branch": (
+    <>
+      <line x1="6" y1="3" x2="6" y2="15" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M18 9a9 9 0 0 1-9 9" />
+    </>
+  ),
+  play: (
+    <path d="M5 3.5v17l15-8.5-15-8.5Z" />
+  ),
+  "check-square": (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="m9 12 3 3 7-7" />
+    </>
+  ),
+  cloud: (
+    <path d="M17.5 19a4.5 4.5 0 1 0-1-8.9A6 6 0 0 0 3 13.5 4.5 4.5 0 0 0 7.5 19h10Z" />
+  ),
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+    </>
+  ),
+  save: (
+    <>
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </>
+  ),
+  "save-auto": (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="12 7 12 12 15 14" />
+    </>
+  ),
+  terminal: (
+    <>
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </>
+  ),
+  "panel-bottom": (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="3" y1="15" x2="21" y2="15" />
+    </>
+  ),
+  command: (
+    <path d="M18 3a3 3 0 1 0 0 6h-3V6a3 3 0 0 0-3-3Zm0 0V6m0 0v3m0 0h3a3 3 0 1 1-3 3m0 0v3m0 0v3a3 3 0 1 1-3-3m0 0h3m0 0h-3m0 0H6a3 3 0 1 1 3-3m0 0V9m0 0V6a3 3 0 1 1 3 3" />
+  ),
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </>
+  ),
+  moon: (
+    <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" />
+  ),
+  monitor: (
+    <>
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
+    </>
+  ),
+  close: (
+    <path d="m6 6 12 12M18 6 6 18" />
+  ),
+  refresh: (
+    <>
+      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+      <polyline points="21 3 21 8 16 8" />
+      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+      <polyline points="3 21 3 16 8 16" />
+    </>
+  ),
+  "chevron-down": (
+    <polyline points="6 9 12 15 18 9" />
+  ),
+  "chevron-right": (
+    <polyline points="9 6 15 12 9 18" />
+  ),
+  "chevron-up": (
+    <polyline points="6 15 12 9 18 15" />
+  ),
+  plus: (
+    <path d="M12 5v14M5 12h14" />
+  ),
+  minus: (
+    <path d="M5 12h14" />
+  ),
+  "rotate-ccw": (
+    <>
+      <polyline points="3 8 3 3 8 3" />
+      <path d="M3 3a9 9 0 1 1-1.5 9.5" />
+    </>
+  ),
+  branch: (
+    <>
+      <line x1="6" y1="3" x2="6" y2="15" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M18 9a9 9 0 0 1-9 9" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </>
+  ),
+  code: (
+    <>
+      <polyline points="16 18 22 12 16 6" />
+      <polyline points="8 6 2 12 8 18" />
+    </>
+  ),
+  "arrow-down-circle": (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="8 12 12 16 16 12" />
+      <line x1="12" y1="8" x2="12" y2="16" />
+    </>
+  ),
+  "arrow-down-right": (
+    <>
+      <line x1="6" y1="6" x2="18" y2="18" />
+      <polyline points="11 18 18 18 18 11" />
+    </>
+  ),
+  "external-link": (
+    <>
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </>
+  ),
+  "more-horizontal": (
+    <>
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+      <circle cx="5" cy="12" r="1.5" fill="currentColor" />
+      <circle cx="19" cy="12" r="1.5" fill="currentColor" />
+    </>
+  ),
+  stop: (
+    <rect x="6" y="6" width="12" height="12" rx="1" />
+  ),
+  trash: (
+    <>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </>
+  ),
+  edit: (
+    <>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4Z" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2 12s4-8 10-8 10 8 10 8-4 8-10 8-10-8-10-8Z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  send: (
+    <>
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </>
+  ),
+  x: <path d="m6 6 12 12M18 6 6 18" />,
+};
+
+export function Icon({ name, size = 16, className, title }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden={title ? undefined : true}
+      role={title ? "img" : undefined}
+      style={{ flexShrink: 0 }}
+    >
+      {title && <title>{title}</title>}
+      {ICONS[name]}
+    </svg>
+  );
+}
