@@ -730,13 +730,92 @@ fn find_cargo_manifest(root: &Path) -> Option<PathBuf> {
     None
 }
 
+// Pull out names from Cargo.toml's `[[bin]]` and `[[example]]` array
+// tables. We don't ship a real TOML parser — Cargo.toml's grammar is
+// constrained enough that walking line-by-line catches the cases we
+// care about (single-binary crate, multi-binary crate, examples
+// folder). Anything fancier (cfg-gated bins, build.rs workarounds)
+// falls back to the plain `cargo run` task and isn't a regression.
+fn collect_cargo_targets(manifest_text: &str, table_name: &str) -> Vec<String> {
+    let header = format!("[[{}]]", table_name);
+    let mut out = Vec::new();
+    let mut in_table = false;
+    for raw in manifest_text.lines() {
+        let line = raw.trim();
+        // A bracketed header always switches tables. We only consider
+        // ourselves "inside" the target table immediately after seeing
+        // [[bin]] or [[example]]; any other [...] header takes us out.
+        if line.starts_with('[') && line.ends_with(']') {
+            in_table = line == header;
+            continue;
+        }
+        if !in_table {
+            continue;
+        }
+        // We only care about the `name = "..."` key; everything else
+        // (path, required-features, edition, doc-comments) is noise.
+        let stripped = line.split('#').next().unwrap_or(line).trim();
+        if let Some(rest) = stripped.strip_prefix("name") {
+            let rest = rest.trim_start();
+            if let Some(rest) = rest.strip_prefix('=') {
+                let val = rest.trim().trim_matches(|c| c == '"' || c == '\'');
+                if !val.is_empty() {
+                    out.push(val.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+// Discover convention-based binaries — files matching `src/bin/*.rs`
+// and subdirectories with their own `main.rs` (`src/bin/foo/main.rs`).
+// Cargo treats both as binaries even when they aren't listed in
+// Cargo.toml, so the editor task panel should too.
+fn collect_convention_bins(manifest_dir: &Path) -> Vec<String> {
+    let bin_dir = manifest_dir.join("src").join("bin");
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&bin_dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if ft.is_file() {
+            if let Some(stem) = name.strip_suffix(".rs") {
+                if !stem.is_empty() {
+                    out.push(stem.to_string());
+                }
+            }
+        } else if ft.is_dir() && entry.path().join("main.rs").exists() {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+// Detect whether the manifest is a workspace root with no [package]
+// of its own. `cargo run` against a virtual workspace fails — we
+// shouldn't surface "cargo run" without a target hint when that's the
+// case. Heuristic: contains a `[workspace]` table and either no
+// `[package]` or [package] sits under `[workspace.package]` only.
+fn is_virtual_workspace(manifest_text: &str) -> bool {
+    let mut has_workspace = false;
+    let mut has_package = false;
+    for raw in manifest_text.lines() {
+        let line = raw.trim();
+        if line == "[workspace]" {
+            has_workspace = true;
+        } else if line == "[package]" {
+            has_package = true;
+        }
+    }
+    has_workspace && !has_package
+}
+
 #[tauri::command]
 pub fn read_cargo_tasks(root: String) -> Result<Vec<PackageScript>, String> {
-    // We don't parse the full TOML — just verify a manifest exists and
-    // (best-effort) fish out the package name so the UI can show what's
-    // about to run. Returning the standard set of cargo verbs is the
-    // useful 90% case for editor task panels; users with custom xtask
-    // setups can keep using the terminal.
     let manifest = match find_cargo_manifest(Path::new(&root)) {
         Some(p) => p,
         None => return Ok(vec![]),
@@ -759,21 +838,70 @@ pub fn read_cargo_tasks(root: String) -> Result<Vec<PackageScript>, String> {
     } else {
         String::new()
     };
-    let tasks = [
-        ("build", "Compile the project"),
-        ("run", "Build and run"),
-        ("test", "Run tests"),
-        ("check", "Type-check without producing artifacts"),
-        ("clippy", "Run the linter"),
-        ("fmt", "Format the source tree"),
-    ];
-    let out = tasks
-        .iter()
-        .map(|(name, desc)| PackageScript {
+    let manifest_text = std::fs::read_to_string(&manifest).unwrap_or_default();
+    let virt = is_virtual_workspace(&manifest_text);
+
+    let mut out: Vec<PackageScript> = Vec::new();
+    // Standard verbs. For virtual workspaces, `cargo run` is undefined
+    // without a --bin hint — drop the bare "cargo run" entry and let
+    // the per-bin entries below cover it.
+    let standard_tasks: &[(&str, &str)] = if virt {
+        &[
+            ("build", "Compile every crate in the workspace"),
+            ("test", "Run tests across the workspace"),
+            ("check", "Type-check the workspace"),
+            ("clippy", "Run the linter across the workspace"),
+            ("fmt", "Format the workspace"),
+        ]
+    } else {
+        &[
+            ("build", "Compile the project"),
+            ("run", "Build and run"),
+            ("test", "Run tests"),
+            ("check", "Type-check without producing artifacts"),
+            ("clippy", "Run the linter"),
+            ("fmt", "Format the source tree"),
+        ]
+    };
+    for (name, desc) in standard_tasks {
+        out.push(PackageScript {
             name: format!("cargo {}", name),
             command: format!("cargo {}{}  # {}", name, manifest_arg, desc),
-        })
-        .collect();
+        });
+    }
+    // Per-binary `cargo run --bin <name>` entries — surfaced in the
+    // panel so the user doesn't need to remember every binary name in
+    // a multi-bin crate. Sourced from both [[bin]] entries and the
+    // src/bin/ convention; deduplicated to handle crates that declare
+    // both.
+    let mut bins: Vec<String> = collect_cargo_targets(&manifest_text, "bin");
+    for b in collect_convention_bins(&manifest_dir) {
+        if !bins.contains(&b) {
+            bins.push(b);
+        }
+    }
+    bins.sort();
+    bins.dedup();
+    for bin in &bins {
+        out.push(PackageScript {
+            name: format!("cargo run --bin {}", bin),
+            command: format!("cargo run --bin {}{}", bin, manifest_arg),
+        });
+    }
+    // Per-example `cargo run --example <name>` entries — same pattern.
+    // We only include those declared in [[example]]; a future pass
+    // could also walk examples/*.rs but the convention is less
+    // universally followed than src/bin/.
+    let examples = collect_cargo_targets(&manifest_text, "example");
+    let mut examples: Vec<String> = examples;
+    examples.sort();
+    examples.dedup();
+    for ex in &examples {
+        out.push(PackageScript {
+            name: format!("cargo run --example {}", ex),
+            command: format!("cargo run --example {}{}", ex, manifest_arg),
+        });
+    }
     Ok(out)
 }
 
