@@ -242,7 +242,7 @@ function MainApp() {
         runCommand("view.search_palette");
       } else if (lower === "t" && e.shiftKey) {
         e.preventDefault();
-        runCommand("view.todos");
+        runCommand("edit.reopen_closed_tab");
       } else if (lower === "t" && !e.shiftKey) {
         e.preventDefault();
         runCommand("view.goto_symbol");

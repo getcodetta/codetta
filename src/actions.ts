@@ -12,6 +12,7 @@ import { fs } from "./ipc";
 import {
   error as toastError,
   errMsg,
+  info as toastInfo,
   success as toastSuccess,
 } from "./notify";
 import {
@@ -290,12 +291,25 @@ export const commands: CommandSpec[] = [
     id: "view.todos",
     label: "Show TODO / FIXME",
     category: "View",
-    accel: "Ctrl+Shift+T",
     run: () => {
       const wsId = s().activeId;
       if (!wsId) return;
       s().setSidebarVisible(wsId, true);
       s().setSidebarView(wsId, "todos");
+    },
+  },
+  {
+    id: "edit.reopen_closed_tab",
+    label: "Reopen Closed Tab",
+    category: "Edit",
+    accel: "Ctrl+Shift+T",
+    run: async () => {
+      const wsId = s().activeId;
+      if (!wsId) return;
+      const reopened = await s().reopenClosedTab(wsId);
+      if (!reopened) {
+        toastInfo("No recently closed tabs to reopen");
+      }
     },
   },
   {

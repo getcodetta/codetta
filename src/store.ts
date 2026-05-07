@@ -20,6 +20,7 @@ import {
 import { confirm as dialogConfirm } from "./dialog";
 import { getEditorSettings } from "./editorSettings";
 import { basename } from "./pathUtils";
+import { pushClosedTab, popClosedTab, forgetClosedTab } from "./closedTabsStack";
 
 /**
  * Close the pop-out window hosting a terminal, if any. Best-effort —
@@ -458,6 +459,7 @@ interface AppState {
 
   openFile(wsId: string, path: string): Promise<void>;
   closeTab(wsId: string, key: string): Promise<void>;
+  reopenClosedTab(wsId: string): Promise<boolean>;
   setActiveTab(wsId: string, paneId: PaneId, key: string): void;
   setActivePane(wsId: string, paneId: PaneId): void;
   setTabPinned(wsId: string, key: string, pinned: boolean): void;
@@ -1118,6 +1120,12 @@ export const useStore = create<AppState>((set, get) => {
     openFile: async (wsId, path) => {
       const ws = get().loaded[wsId];
       if (!ws) return;
+      // Reopening this file via any route (sidebar, palette, recent
+      // files cycle) makes a previously-recorded "closed" entry
+      // stale — clear it so Ctrl+Shift+T moves on to the next-most
+      // recent close instead of redundantly resurrecting a tab the
+      // user already has open.
+      forgetClosedTab(wsId, path);
       const k = fileKey(path);
       // Already open? Activate in its pane.
       const existingPane =
@@ -1202,6 +1210,9 @@ export const useStore = create<AppState>((set, get) => {
           );
           if (!ok) return;
         }
+        // Push onto the per-workspace "recently closed" stack so
+        // Ctrl+Shift+T can resurrect it.
+        pushClosedTab(wsId, parsed.path);
       }
       updateWs(wsId, (w) => {
         const er = removeTabFromTree(w.layout.editorRoot, key);
@@ -1233,6 +1244,24 @@ export const useStore = create<AppState>((set, get) => {
           },
         };
       });
+    },
+
+    reopenClosedTab: async (wsId) => {
+      // Pop the freshest entry; openFile clears any stale entries for
+      // the path so this is safely idempotent if the user spams the
+      // shortcut. Returns true when a tab was reopened so the caller
+      // can choose whether to flash a toast on the empty case.
+      while (true) {
+        const entry = popClosedTab(wsId);
+        if (!entry) return false;
+        // Skip files that are already open — the user might have
+        // reopened one via a different path while another close was
+        // still on the stack.
+        const ws = get().loaded[wsId];
+        if (ws && ws.files[entry.path]) continue;
+        await get().openFile(wsId, entry.path);
+        return true;
+      }
     },
 
     setActiveTab: (wsId, paneId, key) =>
