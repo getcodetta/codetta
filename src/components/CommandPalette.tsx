@@ -4,6 +4,7 @@ import { useStore } from "../store";
 import { search, type SymbolHit } from "../ipc";
 import { setEditorGoto } from "../editorState";
 import { relPath } from "../pathUtils";
+import { recordCommand, scoreCommand } from "../commandHistory";
 
 interface PaletteEntry {
   key: string;
@@ -215,7 +216,16 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
           }
         }
       }
-      for (const c of commands as CommandSpec[]) {
+      // Sort commands by recency-weighted usage so the bits the user
+      // touches every day rise to the top of the default-mode list.
+      // Stable secondary sort on label keeps unseen commands in
+      // alphabetical order rather than registration order.
+      const sorted = [...(commands as CommandSpec[])].sort((a, b) => {
+        const sb = scoreCommand(b.id) - scoreCommand(a.id);
+        if (sb !== 0) return sb;
+        return a.label.localeCompare(b.label);
+      });
+      for (const c of sorted) {
         out.push({
           key: c.id,
           label: c.label,
@@ -275,6 +285,13 @@ export function CommandPalette({ open, onClose, initialQuery }: Props) {
     const item = filtered[idx];
     if (!item) return;
     onClose();
+    // Only command entries (registered via actions.ts) feed the
+    // recency log — file/symbol/search hits are already keyed off
+    // their own surfaces (recentFiles, etc.). Detect a command entry
+    // by its key matching a registered id; cheap O(commands.length).
+    if ((commands as CommandSpec[]).some((c) => c.id === item.key)) {
+      recordCommand(item.key);
+    }
     void item.run();
   };
 
