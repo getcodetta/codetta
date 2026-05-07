@@ -10,6 +10,7 @@
 
 import { useState } from "react";
 import type { ChatMessage, ToolCall } from "../ai";
+import { balanceFences } from "../chatTextUtils";
 import { MarkdownPreview } from "./MarkdownPreview";
 
 // ---------- Tool-name labelling ----------
@@ -242,13 +243,6 @@ export function extractEditDiffs(call: ToolCall): EditDiff[] | null {
     return [{ oldText: "", newText: content }];
   }
   return null;
-}
-
-// While streaming, the model may have an unclosed ``` fence. The markdown
-// renderer expects balanced fences, so synthesize a closing one.
-function balanceFences(text: string): string {
-  const fences = (text.match(/```/g) ?? []).length;
-  return fences % 2 === 0 ? text : text + "\n```";
 }
 
 // ---------- Components ----------
