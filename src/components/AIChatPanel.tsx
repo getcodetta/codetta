@@ -1781,9 +1781,20 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     deleteSession(wsId, id);
     setSessions(loadSessions(wsId));
     if (id === sessionId) {
-      // Active chat deleted — start a new one.
+      // Active chat deleted — start a fully fresh one. Reset every bit
+      // of derived state we track per-chat: a leftover claudeSessionId
+      // would --resume the deleted server-side session on the next turn
+      // (still works, but the UI lies about it being a continued chat),
+      // and a leftover totalCost / todos / usage card would render
+      // values that no longer relate to anything visible.
       setSessionId(newSessionId());
       setMessages([]);
+      setClaudeSessionId(undefined);
+      setChatTotalCost(0);
+      setBudgetWarned(false);
+      setLastUsage(null);
+      setTodos(null);
+      setScrubIndex(null);
     }
   };
 
