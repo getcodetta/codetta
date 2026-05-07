@@ -72,18 +72,34 @@ export function TasksPanel({ wsId, root }: Props) {
 
   const runScript = (name: string) => {
     const termId = useStore.getState().addTerminal(wsId, "bottom");
+    // pnpm/yarn/bun let you skip "run" for non-reserved script names,
+    // but the explicit form works with all four and avoids the
+    // "missing script" footgun for scripts that share names with
+    // built-in commands ("test", "start").
+    const cmd = pm === "yarn" ? `yarn run ${name}` : `${pm} run ${name}`;
+
+    // Wait for the new terminal's PTY id to appear in the store. The
+    // subscription fires on every state change, so we capture a stable
+    // unsub handle and gate by termId. A 15s timeout sweeps the
+    // subscription if the PTY never spawns (Rust error, user closed
+    // the term tab) — without this, a subscription leaks for the
+    // lifetime of the page on every failed run.
+    let cleanup: (() => void) | null = null;
+    const timeout = window.setTimeout(() => {
+      cleanup?.();
+    }, 15000);
     const unsub = useStore.subscribe((state) => {
       const desc = state.loaded[wsId]?.terminals[termId];
       if (desc?.ptyId) {
-        // pnpm/yarn/bun let you skip "run" for non-reserved script names,
-        // but the explicit form works with all four and avoids the
-        // "missing script" footgun for scripts that share names with
-        // built-in commands ("test", "start").
-        const cmd = pm === "yarn" ? `yarn run ${name}` : `${pm} run ${name}`;
         void pty.write(desc.ptyId, `${cmd}\r`);
-        unsub();
+        cleanup?.();
       }
     });
+    cleanup = () => {
+      window.clearTimeout(timeout);
+      unsub();
+      cleanup = null;
+    };
   };
 
   return (

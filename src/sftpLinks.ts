@@ -32,16 +32,25 @@ export function normalizeLocalPath(p: string): string {
   return n;
 }
 
+// Per-workspace cache so PaneNode's per-tab autopush badge doesn't
+// re-parse localStorage on every layout render. Invalidated by save().
+const linksCache = new Map<string, Record<string, RemoteLink>>();
+
 function load(wsId: string): Record<string, RemoteLink> {
-  return getJson<Record<string, RemoteLink>>(
+  const hit = linksCache.get(wsId);
+  if (hit) return hit;
+  const parsed = getJson<Record<string, RemoteLink>>(
     KEY(wsId),
     {},
     (p): p is Record<string, RemoteLink> =>
       !!p && typeof p === "object" && !Array.isArray(p),
   );
+  linksCache.set(wsId, parsed);
+  return parsed;
 }
 
 function save(wsId: string, links: Record<string, RemoteLink>) {
+  linksCache.set(wsId, links);
   setJson(KEY(wsId), links);
 }
 
@@ -50,8 +59,7 @@ export function rememberRemoteLink(
   localPath: string,
   link: RemoteLink,
 ) {
-  const links = load(wsId);
-  links[normalizeLocalPath(localPath)] = link;
+  const links = { ...load(wsId), [normalizeLocalPath(localPath)]: link };
   save(wsId, links);
 }
 
