@@ -62,22 +62,24 @@ function MainApp() {
     void hydrate();
   }, [hydrate]);
 
-  // Reflect active workspace + file in the OS window title.
+  // Reflect active workspace + file in the OS window title. Depend only
+  // on the active workspace's NAME (not the whole `loaded` map) so the
+  // setTitle IPC doesn't fire on every unrelated buffer/layout mutation.
   const editorState = useEditorState();
+  const activeWsName = activeId ? loaded[activeId]?.meta.name ?? null : null;
   useEffect(() => {
-    const ws = activeId ? loaded[activeId]?.meta : null;
     const file = editorState.filePath;
     let title = "Codetta";
-    if (ws && file) {
+    if (activeWsName && file) {
       const base = file.replace(/\\/g, "/").split("/").pop() ?? file;
-      title = `${base} — ${ws.name} — Codetta`;
-    } else if (ws) {
-      title = `${ws.name} — Codetta`;
+      title = `${base} — ${activeWsName} — Codetta`;
+    } else if (activeWsName) {
+      title = `${activeWsName} — Codetta`;
     }
     getCurrentWindow()
       .setTitle(title)
       .catch(() => {});
-  }, [activeId, loaded, editorState.filePath]);
+  }, [activeWsName, editorState.filePath]);
 
   useEffect(() => {
     return onPaletteOpen((initial) => {
