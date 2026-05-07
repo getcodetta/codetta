@@ -2206,6 +2206,18 @@ input {
   text-transform: lowercase;
   letter-spacing: 0;
 }
+.tasks-group-label {
+  padding: 8px 12px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+  border-top: 1px solid var(--border);
+}
+.tasks-list:first-of-type .tasks-group-label {
+  border-top: none;
+}
 .tasks-list {
   display: flex;
   flex-direction: column;

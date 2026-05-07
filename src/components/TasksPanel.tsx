@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../store";
-import { fs, pty } from "../ipc";
+import { fs, pty, search } from "../ipc";
 import { errMsg } from "../notify";
 import { Icon } from "./Icon";
 
 interface PackageScript {
   name: string;
   command: string;
+}
+
+// One row in the panel. `kind` lets us group + label so a Rust + JS
+// project doesn't show "build" twice with no visual hint about which
+// build (cargo build vs. npm run build).
+type TaskKind = "package" | "cargo" | "make";
+interface Task extends PackageScript {
+  kind: TaskKind;
+  /** Verbatim command to send to the terminal. For package scripts
+   *  this differs from `command` (which is the script body) — we
+   *  build "<pm> run <name>" at run time. For cargo/make it's the
+   *  full invocation already. */
+  runCmd: string;
 }
 
 interface Props {
@@ -44,7 +56,7 @@ async function detectPackageManager(root: string): Promise<PackageManager> {
 }
 
 export function TasksPanel({ wsId, root }: Props) {
-  const [scripts, setScripts] = useState<PackageScript[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [pm, setPm] = useState<PackageManager>("npm");
@@ -53,15 +65,38 @@ export function TasksPanel({ wsId, root }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const [out, detected] = await Promise.all([
-        invoke<PackageScript[]>("read_package_scripts", { root }),
+      // Fan out to every task source in parallel — they're independent
+      // and the cheapest path to a snappy refresh on big monorepos.
+      const [pkgs, cargoTasks, makeTargets, detected] = await Promise.all([
+        search.readPackageScripts(root).catch(() => [] as PackageScript[]),
+        search.readCargoTasks(root).catch(() => [] as PackageScript[]),
+        search.readMakefileTargets(root).catch(() => [] as PackageScript[]),
         detectPackageManager(root),
       ]);
-      setScripts(out);
       setPm(detected);
+      const merged: Task[] = [];
+      // Order: package.json first (most common), then cargo, then make.
+      // Within each group we keep the source's own ordering (alphabetic
+      // for package + cargo, file order for make — useful because
+      // Makefile authors put the headline target first).
+      const pmRun = (name: string) =>
+        detected === "yarn" ? `yarn run ${name}` : `${detected} run ${name}`;
+      for (const s of pkgs) {
+        merged.push({ ...s, kind: "package", runCmd: pmRun(s.name) });
+      }
+      for (const s of cargoTasks) {
+        // Strip the trailing "  # description" comment — useful in the
+        // panel hint, but we don't want to ship it down the terminal.
+        const runCmd = s.command.split("  # ")[0];
+        merged.push({ ...s, kind: "cargo", runCmd });
+      }
+      for (const s of makeTargets) {
+        merged.push({ ...s, kind: "make", runCmd: s.command });
+      }
+      setTasks(merged);
     } catch (e) {
       setError(errMsg(e));
-      setScripts([]);
+      setTasks([]);
     } finally {
       setLoading(false);
     }
@@ -71,14 +106,9 @@ export function TasksPanel({ wsId, root }: Props) {
     void refresh();
   }, [refresh]);
 
-  const runScript = (name: string) => {
+  const runTask = (task: Task) => {
     const termId = useStore.getState().addTerminal(wsId, "bottom");
-    // pnpm/yarn/bun let you skip "run" for non-reserved script names,
-    // but the explicit form works with all four and avoids the
-    // "missing script" footgun for scripts that share names with
-    // built-in commands ("test", "start").
-    const cmd = pm === "yarn" ? `yarn run ${name}` : `${pm} run ${name}`;
-
+    const cmd = task.runCmd;
     // Wait for the new terminal's PTY id to appear in the store. The
     // subscription fires on every state change, so we capture a stable
     // unsub handle and gate by termId. A 15s timeout sweeps the
@@ -103,49 +133,50 @@ export function TasksPanel({ wsId, root }: Props) {
     };
   };
 
+  // Group tasks by kind for rendering. Empty groups disappear.
+  const grouped: Array<{ kind: TaskKind; label: string; items: Task[] }> = (
+    [
+      { kind: "package", label: pm, items: tasks.filter((t) => t.kind === "package") },
+      { kind: "cargo", label: "cargo", items: tasks.filter((t) => t.kind === "cargo") },
+      { kind: "make", label: "make", items: tasks.filter((t) => t.kind === "make") },
+    ] as Array<{ kind: TaskKind; label: string; items: Task[] }>
+  ).filter((g) => g.items.length > 0);
+
   return (
     <div className="tasks-panel">
       <div className="tasks-header">
-        <span>
-          Tasks
-          {scripts.length > 0 && (
-            <span
-              className="tasks-pm"
-              title={`Detected ${pm} from lockfile — scripts will run via "${pm} run <script>"`}
-            >
-              {" "}
-              · {pm}
-            </span>
-          )}
-        </span>
+        <span>Tasks</span>
         <button
           onClick={() => void refresh()}
-          title="Re-scan package.json"
-          aria-label="Re-scan package.json"
+          title="Re-scan package.json, Cargo.toml, and Makefile"
+          aria-label="Re-scan tasks"
         >
           <Icon name="refresh" size={14} />
         </button>
       </div>
       {error && <div className="tasks-empty">{error}</div>}
-      {!error && loading && scripts.length === 0 && (
-        <div className="tasks-empty">Scanning package.json…</div>
+      {!error && loading && tasks.length === 0 && (
+        <div className="tasks-empty">Scanning project…</div>
       )}
-      {!error && !loading && scripts.length === 0 && (
-        <div className="tasks-empty">No package.json scripts found</div>
+      {!error && !loading && tasks.length === 0 && (
+        <div className="tasks-empty">
+          No package.json scripts, Cargo manifest, or Makefile found
+        </div>
       )}
-      {scripts.length > 0 && (
-        <div className="tasks-list">
-          {scripts.map((s) => (
-            <div key={s.name} className="task-row">
+      {grouped.map((group) => (
+        <div key={group.kind} className="tasks-list">
+          <div className="tasks-group-label">{group.label}</div>
+          {group.items.map((s) => (
+            <div key={`${group.kind}:${s.name}`} className="task-row">
               <div>
                 <div className="task-name">{s.name}</div>
                 <div className="task-cmd">{s.command}</div>
               </div>
               <button
                 className="task-run"
-                onClick={() => runScript(s.name)}
-                title={`Run "${pm} run ${s.name}" in a new bottom-panel terminal`}
-                aria-label={`Run ${s.name} script`}
+                onClick={() => runTask(s)}
+                title={`Run "${s.runCmd}" in a new bottom-panel terminal`}
+                aria-label={`Run ${s.name}`}
               >
                 <Icon name="play" size={12} />
                 <span>Run</span>
@@ -153,7 +184,7 @@ export function TasksPanel({ wsId, root }: Props) {
             </div>
           ))}
         </div>
-      )}
+      ))}
     </div>
   );
 }

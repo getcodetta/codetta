@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Directory names that file walkers should skip — package caches, build
 /// outputs, framework state, virtual envs, IDE state. Public so other
@@ -712,5 +712,132 @@ pub fn read_package_scripts(root: String) -> Result<Vec<PackageScript>, String> 
         }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+// Resolve where the project's Cargo manifest lives. Tauri apps bury it
+// one level down (src-tauri/Cargo.toml); pure-Rust projects keep it at
+// the workspace root. We try root/Cargo.toml first, then src-tauri,
+// then a couple of other common conventions.
+fn find_cargo_manifest(root: &Path) -> Option<PathBuf> {
+    let candidates = ["Cargo.toml", "src-tauri/Cargo.toml", "rust/Cargo.toml"];
+    for rel in candidates {
+        let p = root.join(rel);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+#[tauri::command]
+pub fn read_cargo_tasks(root: String) -> Result<Vec<PackageScript>, String> {
+    // We don't parse the full TOML — just verify a manifest exists and
+    // (best-effort) fish out the package name so the UI can show what's
+    // about to run. Returning the standard set of cargo verbs is the
+    // useful 90% case for editor task panels; users with custom xtask
+    // setups can keep using the terminal.
+    let manifest = match find_cargo_manifest(Path::new(&root)) {
+        Some(p) => p,
+        None => return Ok(vec![]),
+    };
+    let manifest_dir = manifest
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| Path::new(&root).to_path_buf());
+    // If the manifest sits in a subdirectory (the Tauri case), every
+    // command needs `--manifest-path` so users running tasks from any
+    // workspace root land in the right crate.
+    let needs_manifest_path = manifest_dir != Path::new(&root);
+    let manifest_arg = if needs_manifest_path {
+        let rel = manifest_dir
+            .strip_prefix(Path::new(&root))
+            .unwrap_or(&manifest_dir)
+            .to_string_lossy()
+            .replace('\\', "/");
+        format!(" --manifest-path {}/Cargo.toml", rel)
+    } else {
+        String::new()
+    };
+    let tasks = [
+        ("build", "Compile the project"),
+        ("run", "Build and run"),
+        ("test", "Run tests"),
+        ("check", "Type-check without producing artifacts"),
+        ("clippy", "Run the linter"),
+        ("fmt", "Format the source tree"),
+    ];
+    let out = tasks
+        .iter()
+        .map(|(name, desc)| PackageScript {
+            name: format!("cargo {}", name),
+            command: format!("cargo {}{}  # {}", name, manifest_arg, desc),
+        })
+        .collect();
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn read_makefile_targets(root: String) -> Result<Vec<PackageScript>, String> {
+    // Order matters: GNU make resolves these the same way, and we match
+    // its precedence so users see whichever Makefile actually runs.
+    let candidates = ["GNUmakefile", "makefile", "Makefile"];
+    let mut path: Option<PathBuf> = None;
+    for c in candidates {
+        let p = Path::new(&root).join(c);
+        if p.exists() {
+            path = Some(p);
+            break;
+        }
+    }
+    let Some(path) = path else {
+        return Ok(vec![]);
+    };
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    // Parse target lines: anything matching `^[A-Za-z0-9_.-]+\s*:` that
+    // isn't a variable assignment (`:=`) and isn't a special pseudo
+    // target (`.PHONY`, `.SUFFIXES`, etc.). We strip dependencies after
+    // the colon and surface only the target name. Recipe lines (tab-
+    // indented) get skipped because the regex requires the line to
+    // start at column 0.
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for line in text.lines() {
+        // Skip indented lines (recipe bodies) and comments.
+        if line.starts_with('\t') || line.starts_with('#') {
+            continue;
+        }
+        let trimmed = line.trim_end();
+        let Some(colon_idx) = trimmed.find(':') else {
+            continue;
+        };
+        // `:=` and `::=` are variable assignments, not target rules.
+        let after = &trimmed[colon_idx..];
+        if after.starts_with(":=") || after.starts_with("::=") {
+            continue;
+        }
+        let name = trimmed[..colon_idx].trim();
+        if name.is_empty() {
+            continue;
+        }
+        // Skip pattern rules (% in name) and pseudo targets — neither
+        // is the kind of thing a user wants to "run from the panel."
+        if name.starts_with('.') || name.contains('%') || name.contains(' ') {
+            continue;
+        }
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/')
+        {
+            continue;
+        }
+        if !seen.insert(name.to_string()) {
+            continue;
+        }
+        out.push(PackageScript {
+            name: name.to_string(),
+            command: format!("make {}", name),
+        });
+    }
     Ok(out)
 }

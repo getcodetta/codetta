@@ -77,6 +77,8 @@ pub fn run() {
             search::scan_todos,
             search::find_symbols,
             search::read_package_scripts,
+            search::read_cargo_tasks,
+            search::read_makefile_targets,
             git::git_diff,
             git::git_diff_staged,
             git::git_show,

@@ -127,6 +127,10 @@ export const search = {
     invoke<SymbolHit[]>("find_symbols", { root, maxResults }),
   readPackageScripts: (root: string) =>
     invoke<PackageScript[]>("read_package_scripts", { root }),
+  readCargoTasks: (root: string) =>
+    invoke<PackageScript[]>("read_cargo_tasks", { root }),
+  readMakefileTargets: (root: string) =>
+    invoke<PackageScript[]>("read_makefile_targets", { root }),
 };
 
 export interface ClaudeSession {
