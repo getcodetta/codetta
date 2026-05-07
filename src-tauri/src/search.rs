@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::io::Read;
 use std::path::Path;
 
 /// Directory names that file walkers should skip — package caches, build
@@ -53,7 +54,35 @@ fn is_heavy_dir(name: &str) -> bool {
 }
 
 fn looks_binary(buf: &[u8]) -> bool {
-    buf.iter().take(BINARY_PROBE).any(|b| *b == 0)
+    // Caller passes only the first BINARY_PROBE bytes (read_text_file_capped
+    // probes ahead of any decision), so a NUL anywhere in the buffer is
+    // treated as a binary indicator.
+    buf.iter().any(|b| *b == 0)
+}
+
+/// Two-stage read: probe the first BINARY_PROBE bytes for NUL, bail
+/// early if it looks binary, otherwise read the full file. Returns None
+/// for files that are too big, fail to open, or look binary — every
+/// failure mode the search/scan loops want to skip silently. Saves up to
+/// MAX_FILE_BYTES_FOR_SEARCH per binary file we'd otherwise read in full
+/// just to discard.
+fn read_text_file_capped(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
+    let meta = std::fs::metadata(path).ok()?;
+    if meta.len() > max_bytes {
+        return None;
+    }
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut probe = vec![0u8; BINARY_PROBE];
+    let probed = f.read(&mut probe).ok()?;
+    probe.truncate(probed);
+    if looks_binary(&probe) {
+        return None;
+    }
+    let total = meta.len() as usize;
+    let mut bytes = Vec::with_capacity(total.max(probed));
+    bytes.extend_from_slice(&probe);
+    f.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
 }
 
 fn walk_files<F: FnMut(&Path) -> bool>(
@@ -135,20 +164,10 @@ pub fn search_text(
             break;
         }
         let pp = Path::new(&p);
-        let meta = match std::fs::metadata(pp) {
-            Ok(m) => m,
-            Err(_) => continue,
+        let bytes = match read_text_file_capped(pp, MAX_FILE_BYTES_FOR_SEARCH) {
+            Some(b) => b,
+            None => continue,
         };
-        if meta.len() > MAX_FILE_BYTES_FOR_SEARCH {
-            continue;
-        }
-        let bytes = match std::fs::read(pp) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-        if looks_binary(&bytes) {
-            continue;
-        }
         let text = match std::str::from_utf8(&bytes) {
             Ok(s) => s,
             Err(_) => continue,
@@ -299,20 +318,10 @@ fn scan_todos_blocking(root: String, cap: usize) -> Vec<TodoHit> {
 
     'outer: for p in paths {
         let pp = Path::new(&p);
-        let meta = match std::fs::metadata(pp) {
-            Ok(m) => m,
-            Err(_) => continue,
+        let bytes = match read_text_file_capped(pp, MAX_TODO_FILE_BYTES) {
+            Some(b) => b,
+            None => continue,
         };
-        if meta.len() > MAX_TODO_FILE_BYTES {
-            continue;
-        }
-        let bytes = match std::fs::read(pp) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-        if looks_binary(&bytes) {
-            continue;
-        }
         let text = match std::str::from_utf8(&bytes) {
             Ok(s) => s,
             Err(_) => continue,

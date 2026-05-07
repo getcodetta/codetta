@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(Serialize)]
@@ -42,8 +43,10 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
 }
 
 fn looks_binary(buf: &[u8]) -> bool {
-    // Heuristic: if there's a NUL in the first probe, treat as binary
-    buf.iter().take(BINARY_PROBE_BYTES).any(|b| *b == 0)
+    // Heuristic: if there's a NUL anywhere in the probe window, treat as
+    // binary. The caller passes only the first BINARY_PROBE_BYTES of the
+    // file so we can't get fooled by a NUL deep in a giant text file.
+    buf.iter().any(|b| *b == 0)
 }
 
 #[tauri::command]
@@ -57,10 +60,22 @@ pub fn read_file(path: String) -> Result<String, String> {
             MAX_READ_BYTES / (1024 * 1024)
         ));
     }
-    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
-    if looks_binary(&bytes) {
+    // Two-stage read: probe the first 8 KiB first, bail early if it
+    // looks binary (NUL byte). Previous code did fs::read which pulled
+    // up to 8 MiB before probing — meaningful waste on slow disks or
+    // when a user accidentally clicks an mp4 / pyc / lockfile.
+    let mut f = std::fs::File::open(p).map_err(|e| e.to_string())?;
+    let mut probe = vec![0u8; BINARY_PROBE_BYTES];
+    let probed = f.read(&mut probe).map_err(|e| e.to_string())?;
+    probe.truncate(probed);
+    if looks_binary(&probe) {
         return Err("File appears to be binary.".to_string());
     }
+    // Buffer the rest of the file, prepending the probe we already read.
+    let total = meta.len() as usize;
+    let mut bytes = Vec::with_capacity(total.max(probed));
+    bytes.extend_from_slice(&probe);
+    f.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     Ok(decode_text_bytes(&bytes))
 }
 
