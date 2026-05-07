@@ -309,6 +309,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
   const [attachTerminal, setAttachTerminal] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
+  // Shell-style prompt history. historyIdx counts backwards through
+  // the user-message stream (0 = most recent); null means we're not
+  // in history mode. historyDraft snapshots whatever the user was
+  // typing when they entered history mode so ArrowDown past the
+  // start restores it instead of leaving the buffer empty.
+  const [historyIdx, setHistoryIdx] = useState<number | null>(null);
+  const historyDraftRef = useRef("");
   const abortRef = useRef<AbortController | null>(null);
   const editorState = useEditorState();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -869,6 +876,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     const text = input.trim();
     if (!text) return;
     setInput("");
+    setHistoryIdx(null);
+    historyDraftRef.current = "";
     if (streaming !== null || runningTools) {
       // Active turn — queue this message instead of dropping it.
       queueRef.current.push(text);
@@ -2946,6 +2955,11 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           onChange={(e) => {
             setInput(e.target.value);
             setSlashIndex(0);
+            // Any user-driven change (typing, paste) takes us out of
+            // history mode so the next ArrowUp starts a fresh walk
+            // from the most recent message instead of resuming a
+            // stale cursor.
+            if (historyIdx !== null) setHistoryIdx(null);
           }}
           onKeyDown={(e) => {
             // Esc while a request is in flight = stop. Always wins so the
@@ -3010,25 +3024,53 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 return;
               }
             }
-            // ArrowUp on an empty input recalls the most recent prompt the
-            // user sent — same idiom as a shell. Modifier keys skip it so
-            // we don't fight selection-extending shortcuts.
-            if (
-              e.key === "ArrowUp" &&
-              input.length === 0 &&
-              !e.shiftKey &&
-              !e.ctrlKey &&
-              !e.metaKey &&
-              !e.altKey
-            ) {
-              const lastUser = [...messages]
-                .reverse()
-                .find((m) => m.role === "user");
-              if (lastUser) {
+            // Shell-style prompt history. ArrowUp on empty input or
+            // already in history mode steps backward through past
+            // user messages; ArrowDown steps forward and restores the
+            // original draft when we walk past the most-recent entry.
+            // Modifier keys skip it so we don't fight selection-
+            // extending shortcuts.
+            const noMods =
+              !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+            if (e.key === "ArrowUp" && noMods) {
+              const userMessages = messages.filter((m) => m.role === "user");
+              if (userMessages.length === 0) {
+                // Nothing to recall — fall through to the textarea's
+                // native cursor-up movement.
+              } else if (historyIdx === null && input.length > 0) {
+                // Don't grab ArrowUp away from a user mid-edit. Same
+                // rule as before: a non-empty draft means the user is
+                // navigating within their text.
+              } else {
                 e.preventDefault();
-                setInput(lastUser.content);
+                if (historyIdx === null) {
+                  // Entering history mode — snapshot the current draft.
+                  historyDraftRef.current = input;
+                }
+                const next = (historyIdx ?? -1) + 1;
+                const clamped = Math.min(next, userMessages.length - 1);
+                setHistoryIdx(clamped);
+                // userMessages[length-1] is the most recent; idx 0
+                // means "go one step back," so we walk from the end.
+                setInput(userMessages[userMessages.length - 1 - clamped].content);
                 return;
               }
+            }
+            if (e.key === "ArrowDown" && noMods && historyIdx !== null) {
+              e.preventDefault();
+              const userMessages = messages.filter((m) => m.role === "user");
+              if (historyIdx <= 0) {
+                // Walked back past the most recent — restore the draft
+                // and exit history mode.
+                setHistoryIdx(null);
+                setInput(historyDraftRef.current);
+                historyDraftRef.current = "";
+              } else {
+                const next = historyIdx - 1;
+                setHistoryIdx(next);
+                setInput(userMessages[userMessages.length - 1 - next].content);
+              }
+              return;
             }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
