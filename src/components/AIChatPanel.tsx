@@ -1555,8 +1555,15 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   // elsewhere in the app (don't steal Esc from the file dialog, the
   // settings modal, etc.). The textarea-bound handler still wins
   // when its own slash-menu / attachment paths apply.
+  //
+  // Dependency note: condense `streaming !== null || runningTools` into
+  // a boolean before the deps array. Listing the raw `streaming` string
+  // re-attached the listener on every content delta (i.e. dozens of
+  // times per second during a streaming response) — the only event the
+  // effect cares about is the active/inactive flip, not the text.
+  const turnActive = streaming !== null || runningTools;
   useEffect(() => {
-    if (streaming === null && !runningTools) return;
+    if (!turnActive) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       const t = e.target as HTMLElement | null;
@@ -1572,7 +1579,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [streaming, runningTools]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnActive]);
 
   const regenerateFrom = async (index: number) => {
     if (streaming !== null || runningTools) return;
