@@ -21,7 +21,8 @@ import { prompt as dialogPrompt } from "../dialog";
 import { popOutTerminal, redockTerminal } from "../terminalPopout";
 import { AIIcon } from "./AIIcon";
 import { lookupRemoteLink } from "../sftpLinks";
-import { basename } from "../pathUtils";
+import { basename, relPath } from "../pathUtils";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Icon } from "./Icon";
 
 function tabLabel(
@@ -303,6 +304,69 @@ function TabsPaneView(
         onClick: async () => {
           try {
             await navigator.clipboard.writeText(parsed.path);
+          } catch {
+            /* ignore */
+          }
+        },
+      });
+      out.push({
+        label: "Copy Relative Path",
+        onClick: async () => {
+          try {
+            await navigator.clipboard.writeText(
+              relPath(parsed.path, ws.meta.root),
+            );
+          } catch {
+            /* ignore */
+          }
+        },
+      });
+      out.push({
+        label: "Reveal in File Tree",
+        onClick: () => {
+          // Same path-walking logic as view.reveal_in_tree but
+          // parameterised to the right-clicked tab rather than the
+          // active editor — the user might right-click an unfocused
+          // tab and we should reveal *that* file.
+          const root = ws.meta.root.replace(/\\/g, "/").replace(/\/+$/, "");
+          const rel = parsed.path
+            .replace(/\\/g, "/")
+            .replace(root + "/", "");
+          const segs = rel.split("/").slice(0, -1);
+          let cur = root;
+          const expanded = new Set(ws.layout.expandedDirs);
+          for (const seg of segs) {
+            cur = `${cur}/${seg}`;
+            expanded.add(cur);
+          }
+          useStore.getState().setSidebarVisible(wsId, true);
+          useStore.getState().setSidebarView(wsId, "files");
+          useStore.setState((st) => {
+            const w = st.loaded[wsId];
+            if (!w) return st;
+            return {
+              loaded: {
+                ...st.loaded,
+                [wsId]: {
+                  ...w,
+                  layout: {
+                    ...w.layout,
+                    expandedDirs: Array.from(expanded),
+                  },
+                },
+              },
+            };
+          });
+        },
+      });
+      out.push({
+        label:
+          navigator.userAgent.includes("Mac")
+            ? "Reveal in Finder"
+            : "Reveal in File Explorer",
+        onClick: async () => {
+          try {
+            await revealItemInDir(parsed.path);
           } catch {
             /* ignore */
           }
