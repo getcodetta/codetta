@@ -679,10 +679,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // so switching workspaces while either was populated left the
     // PREVIOUS workspace's usage card and TodoWrite checklist stuck
     // on the screen of the new chat.
-    setLastUsage(null);
-    setTodos(null);
-    setBudgetWarned(false);
-    setScrubIndex(null);
+    resetTurnTransients();
 
     if (aiChatId) {
       const desc = useStore.getState().loaded[wsId]?.aiChats[aiChatId];
@@ -1583,6 +1580,20 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turnActive]);
 
+  // Clear the four bits of per-turn transient UI state that aren't
+  // tied to a specific session — the last-turn usage card, the
+  // TodoWrite checklist, the budget-warning latch, and the
+  // history-scrub index. Six call sites (chat-restore, /clear,
+  // regenerate, branchOrigin, startNewChat, openSession, removeSession)
+  // were repeating these four lines and drifting in subtle ways
+  // (one branch missed setLastUsage, another missed setTodos…).
+  const resetTurnTransients = () => {
+    setLastUsage(null);
+    setTodos(null);
+    setBudgetWarned(false);
+    setScrubIndex(null);
+  };
+
   const regenerateFrom = async (index: number) => {
     if (streaming !== null || runningTools) return;
     const target = messages[index];
@@ -1595,11 +1606,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // turns we just truncated, so resuming it would feed the model
     // context the user explicitly wiped. Next turn will get a new id.
     setClaudeSessionId(undefined);
-    setLastUsage(null);
-    setTodos(null);
     setChatTotalCost(0);
-    setBudgetWarned(false);
-    setScrubIndex(null);
+    resetTurnTransients();
     await sendUserText(target.content, truncated);
   };
 
@@ -1650,11 +1658,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // Forget the prior Claude Code session so the next turn spawns a
     // fresh server-side session instead of resuming an unrelated one.
     setClaudeSessionId(undefined);
-    setLastUsage(null);
-    setTodos(null);
     setChatTotalCost(0);
-    setBudgetWarned(false);
-    setScrubIndex(null);
+    resetTurnTransients();
     setMessages([]);
     setInput("");
     setHistoryOpen(false);
@@ -1672,17 +1677,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // first turn will start a fresh CC session — the next stream-init
     // event will populate it.
     setClaudeSessionId(s.claudeSessionId);
-    // Reset transient last-turn telemetry. The cumulative cost IS
-    // persisted across reloads, so restore it from the session — the
-    // running total in the footer should reflect the chat's full
-    // history of spend, not reset to 0.
-    setLastUsage(null);
-    setTodos(null);
+    // The cumulative cost IS persisted across reloads, so restore it
+    // from the session — the running total in the footer should reflect
+    // the chat's full history of spend, not reset to 0. Everything else
+    // (last-turn usage card, TodoWrite list, budget-warn latch, scrub
+    // index) clears via the shared transient-reset helper.
     setChatTotalCost(s.totalCostUsd ?? 0);
-    // Also reset the budget-warning latch so a fresh load can warn
-    // again if the user has already crossed.
-    setBudgetWarned(false);
-    setScrubIndex(null);
+    resetTurnTransients();
     setMessages(s.messages);
     setInput("");
     setHistoryOpen(false);
@@ -1728,11 +1729,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       // we were talking about", and resuming an old CC session would
       // contradict that even if the local message list is empty.
       setClaudeSessionId(undefined);
-    setLastUsage(null);
-    setTodos(null);
-    setChatTotalCost(0);
-    setBudgetWarned(false);
-    setScrubIndex(null);
+      setChatTotalCost(0);
+      resetTurnTransients();
       setInput("");
       return;
     }
@@ -1791,10 +1789,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       setMessages([]);
       setClaudeSessionId(undefined);
       setChatTotalCost(0);
-      setBudgetWarned(false);
-      setLastUsage(null);
-      setTodos(null);
-      setScrubIndex(null);
+      resetTurnTransients();
     }
   };
 
@@ -1857,8 +1852,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             cwd={root}
             onResume={async (id) => {
               setClaudeSessionId(id);
-              setLastUsage(null);
-              setTodos(null);
+              resetTurnTransients();
               // Hydrate the full prior transcript from the on-disk
               // JSONL so the user sees what they're continuing from,
               // not an empty pane. Best-effort — show a toast + start
