@@ -19,6 +19,9 @@ type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
 // Falls back to npm when nothing definitive is found. Order matters:
 // pnpm/yarn/bun lockfiles co-existing with package-lock.json is rare
 // but real (CI artifacts), so check the more specific ones first.
+// Uses fs.exists rather than reading the file — package-lock.json on
+// large monorepos can be tens of megabytes; we only care whether the
+// path resolves.
 async function detectPackageManager(root: string): Promise<PackageManager> {
   const candidates: Array<{ file: string; pm: PackageManager }> = [
     { file: "pnpm-lock.yaml", pm: "pnpm" },
@@ -27,15 +30,12 @@ async function detectPackageManager(root: string): Promise<PackageManager> {
     { file: "yarn.lock", pm: "yarn" },
     { file: "package-lock.json", pm: "npm" },
   ];
+  const base = root.replace(/[\\/]+$/, "");
   for (const { file, pm } of candidates) {
     try {
-      const path = `${root.replace(/[\\/]+$/, "")}/${file}`;
-      // fs.readFile rejects when the file doesn't exist — cheaper than
-      // pulling a stat helper just for "exists?".
-      await fs.readFile(path);
-      return pm;
+      if (await fs.exists(`${base}/${file}`)) return pm;
     } catch {
-      /* not present, try next */
+      /* fs.exists shouldn't throw, but defend against it */
     }
   }
   return "npm";
