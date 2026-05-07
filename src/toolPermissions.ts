@@ -27,13 +27,20 @@ const DEFAULTS: ToolPolicy = {
   alwaysAllowedPaths: {},
 };
 
+// Cached policy. Parsed once on first read and reused until setToolPolicy
+// invalidates it. Tool calls inside a single chat turn used to re-parse
+// localStorage on every call; the cache cuts the per-call cost to a
+// pointer dereference.
+let cachedPolicy: ToolPolicy | null = null;
+
 export function getToolPolicy(): ToolPolicy {
+  if (cachedPolicy) return cachedPolicy;
   const obj = getJson<Partial<ToolPolicy>>(
     KEY,
     {},
     (p): p is Partial<ToolPolicy> => !!p && typeof p === "object",
   );
-  return {
+  const out: ToolPolicy = {
     read: norm(obj.read, DEFAULTS.read),
     webSearch: norm(obj.webSearch, DEFAULTS.webSearch),
     write: norm(obj.write, DEFAULTS.write),
@@ -54,6 +61,8 @@ export function getToolPolicy(): ToolPolicy {
           )
         : {},
   };
+  cachedPolicy = out;
+  return out;
 }
 
 function norm(v: unknown, fallback: ToolPermission): ToolPermission {
@@ -61,6 +70,7 @@ function norm(v: unknown, fallback: ToolPermission): ToolPermission {
 }
 
 export function setToolPolicy(policy: ToolPolicy): void {
+  cachedPolicy = policy;
   setJson(KEY, policy);
 }
 

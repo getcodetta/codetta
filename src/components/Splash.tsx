@@ -10,10 +10,12 @@ export function Splash() {
     0,
     Math.min(100, (progress.current / Math.max(1, progress.total)) * 100),
   );
+  const phase = progress.phase || "Loading…";
+  const pctRounded = Math.round(pct);
   return (
-    <div className="splash">
+    <div className="splash" role="status" aria-live="polite">
       <div className="splash-card">
-        <div className="splash-mark">
+        <div className="splash-mark" aria-hidden="true">
           <span className="splash-mark-letter">C</span>
         </div>
         <div className="splash-wordmark">
@@ -23,16 +25,23 @@ export function Splash() {
         <div className="splash-tagline">
           A lightweight desktop code editor with first-class AI
         </div>
-        <div className="splash-progress-track">
+        <div
+          className="splash-progress-track"
+          role="progressbar"
+          aria-valuenow={pctRounded}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`Loading: ${phase}`}
+        >
           <div
             className="splash-progress-fill"
             style={{ width: `${pct}%` }}
           />
-          <div className="splash-progress-shimmer" />
+          <div className="splash-progress-shimmer" aria-hidden="true" />
         </div>
         <div className="splash-status">
-          <span className="splash-phase">{progress.phase || "Loading…"}</span>
-          <span className="splash-pct">{Math.round(pct)}%</span>
+          <span className="splash-phase">{phase}</span>
+          <span className="splash-pct">{pctRounded}%</span>
         </div>
       </div>
       <div className="splash-credit">

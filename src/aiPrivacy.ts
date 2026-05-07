@@ -53,22 +53,37 @@ interface PrivacySettings {
 type Listener = () => void;
 const listeners = new Set<Listener>();
 function notify() {
+  // Drop the cached settings + compiled-regex derived caches so the
+  // next matchExclusion call rebuilds against the new list. Without
+  // this, a Settings edit to the exclusion list wouldn't take effect
+  // until the page reloaded.
+  cachedSettings = null;
+  cachedPatternList = null;
   for (const l of listeners) l();
 }
 
+// Cached settings + derived pattern list. Rebuilt lazily on next read
+// after a save() invalidates them. localStorage parses on every load
+// were a real cost when the AI panel re-renders during streaming.
+let cachedSettings: PrivacySettings | null = null;
+let cachedPatternList: string[] | null = null;
+
 export function loadPrivacySettings(): PrivacySettings {
+  if (cachedSettings) return cachedSettings;
   const parsed = getJson<Record<string, unknown>>(
     KEY,
     {},
     (p): p is Record<string, unknown> => !!p && typeof p === "object",
   );
-  return {
+  const out: PrivacySettings = {
     enabled: parsed.enabled !== false,
     patterns: Array.isArray(parsed.patterns)
       ? parsed.patterns.filter((p: unknown): p is string => typeof p === "string")
       : [],
     useDefaults: parsed.useDefaults !== false,
   };
+  cachedSettings = out;
+  return out;
 }
 
 export function savePrivacySettings(next: PrivacySettings) {
@@ -84,8 +99,14 @@ export function subscribePrivacy(fn: Listener): () => void {
 /** Effective pattern list — defaults + user patterns when both
  *  are enabled, just user patterns otherwise. */
 export function effectivePatterns(s?: PrivacySettings): string[] {
+  // Fast path for the default caller (no override settings). Reuses
+  // the cached list invalidated by notify() on save.
+  if (!s && cachedPatternList) return cachedPatternList;
   const settings = s ?? loadPrivacySettings();
-  if (!settings.enabled) return [];
+  if (!settings.enabled) {
+    if (!s) cachedPatternList = [];
+    return [];
+  }
   const out: string[] = settings.useDefaults
     ? [...DEFAULT_EXCLUSIONS]
     : [];
@@ -93,6 +114,7 @@ export function effectivePatterns(s?: PrivacySettings): string[] {
     const trimmed = p.trim();
     if (trimmed && !out.includes(trimmed)) out.push(trimmed);
   }
+  if (!s) cachedPatternList = out;
   return out;
 }
 
@@ -127,7 +149,25 @@ function normalizePath(p: string): string {
   return n;
 }
 
-function globToRegex(pattern: string): RegExp {
+// Detect once at module load — navigator.platform is stable for the
+// lifetime of the page, and most callers were re-running this regex
+// inside a hot loop.
+const REGEX_FLAGS =
+  typeof navigator !== "undefined" &&
+  /win/i.test(navigator.platform || "")
+    ? "i"
+    : "";
+
+// Compiled regex cache keyed by raw pattern string. Patterns rarely
+// change at runtime; recompiling on every matchExclusion call was
+// pure overhead. We cap the cache so a runaway "edit settings every
+// frame" loop can't grow it unbounded.
+const regexCache = new Map<string, RegExp | null>();
+const REGEX_CACHE_MAX = 256;
+
+function compileGlob(pattern: string): RegExp | null {
+  const cached = regexCache.get(pattern);
+  if (cached !== undefined) return cached;
   let p = pattern.trim();
   // Always anchor at start; allow end. Globs are full-path matches.
   let re = "^";
@@ -157,13 +197,20 @@ function globToRegex(pattern: string): RegExp {
     }
   }
   re += "$";
-  // Windows: case-insensitive to match the OS.
-  const flags =
-    typeof navigator !== "undefined" &&
-    /win/i.test(navigator.platform || "")
-      ? "i"
-      : "";
-  return new RegExp(re, flags);
+  let result: RegExp | null;
+  try {
+    result = new RegExp(re, REGEX_FLAGS);
+  } catch {
+    // Bad pattern — cache the null so we don't retry compilation.
+    result = null;
+  }
+  if (regexCache.size >= REGEX_CACHE_MAX) {
+    // Evict the oldest entry. Map iteration order is insertion order.
+    const firstKey = regexCache.keys().next().value;
+    if (firstKey !== undefined) regexCache.delete(firstKey);
+  }
+  regexCache.set(pattern, result);
+  return result;
 }
 
 /** Returns the matched pattern (for explainable denials) or null. */
@@ -176,11 +223,8 @@ export function matchExclusion(
   if (list.length === 0) return null;
   const norm = normalizePath(absolutePath);
   for (const pat of list) {
-    try {
-      if (globToRegex(pat).test(norm)) return pat;
-    } catch {
-      // Bad pattern — skip silently rather than crash the AI flow
-    }
+    const re = compileGlob(pat);
+    if (re && re.test(norm)) return pat;
   }
   return null;
 }
