@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { Icon } from "./Icon";
 import {
   CATEGORY_LABELS,
   MODEL_CATALOG,
@@ -130,7 +131,7 @@ export function ModelBrowser({
             title="Close (Esc)"
             aria-label="Close model browser"
           >
-            ×
+            <Icon name="x" size={14} />
           </button>
         </div>
 

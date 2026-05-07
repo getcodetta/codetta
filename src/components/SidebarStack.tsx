@@ -11,6 +11,7 @@ import { TasksPanel } from "./TasksPanel";
 import { TodosPanel } from "./TodosPanel";
 import { AIChatPanel } from "./AIChatPanel";
 import { RemoteSftpPanel } from "./RemoteSftpPanel";
+import { Icon } from "./Icon";
 
 const VIEW_LABEL: Record<SidebarView, string> = {
   files: "Explorer",
@@ -162,7 +163,10 @@ export function SidebarStack({ wsId, ws }: Props) {
                 aria-controls={`sidebar-body-${sec.view}`}
               >
                 <span className="sidebar-section-caret" aria-hidden="true">
-                  {sec.collapsed ? "▸" : "▾"}
+                  <Icon
+                    name={sec.collapsed ? "chevron-right" : "chevron-down"}
+                    size={11}
+                  />
                 </span>
                 <span className="sidebar-section-title">
                   {sec.view === "files" ? ws.meta.name : VIEW_LABEL[sec.view]}
@@ -191,7 +195,7 @@ export function SidebarStack({ wsId, ws }: Props) {
                     title="Remove section"
                     aria-label={`Remove ${VIEW_LABEL[sec.view]} section`}
                   >
-                    ×
+                    <Icon name="x" size={11} />
                   </span>
                 )}
               </button>

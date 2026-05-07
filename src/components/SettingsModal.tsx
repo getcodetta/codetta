@@ -27,6 +27,7 @@ import {
   ClaudeCodeBudgetEditor,
 } from "./claudeCodeSettings";
 import { SftpProfilesEditor } from "./sftpProfilesEditor";
+import { Icon } from "./Icon";
 
 export function SettingsModal() {
   const [open, setOpen] = useState(false);
@@ -132,7 +133,7 @@ export function SettingsModal() {
             title="Close (Esc)"
             aria-label="Close settings"
           >
-            ×
+            <Icon name="x" size={14} />
           </button>
         </div>
         {view === "json" ? (

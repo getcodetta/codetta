@@ -6,6 +6,7 @@ import {
   useToasts,
   type Toast,
 } from "../notify";
+import { Icon } from "./Icon";
 
 export function Toasts() {
   const toasts = useToasts();
@@ -44,7 +45,7 @@ export function Toasts() {
               onClick={() => dismissToast(t.id)}
               aria-label="Dismiss notification"
             >
-              ×
+              <Icon name="x" size={12} />
             </button>
           </div>
         );

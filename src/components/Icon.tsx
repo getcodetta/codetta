@@ -53,6 +53,7 @@ export type IconName =
   | "chevron-down"
   | "chevron-right"
   | "chevron-up"
+  | "chevron-left"
   | "plus"
   | "minus"
   | "rotate-ccw"
@@ -181,6 +182,9 @@ const ICONS: Record<IconName, ReactNode> = {
   ),
   "chevron-up": (
     <polyline points="6 15 12 9 18 15" />
+  ),
+  "chevron-left": (
+    <polyline points="15 6 9 12 15 18" />
   ),
   plus: (
     <path d="M12 5v14M5 12h14" />

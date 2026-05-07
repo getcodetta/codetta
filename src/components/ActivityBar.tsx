@@ -106,7 +106,7 @@ export function ActivityBar() {
                 title="Close workspace"
                 aria-label={`Close workspace ${meta.name}`}
               >
-                ×
+                <Icon name="x" size={10} />
               </button>
             </div>
           );
@@ -120,7 +120,7 @@ export function ActivityBar() {
           aria-expanded={addOpen}
           onClick={() => setAddOpen((v) => !v)}
         >
-          +
+          <Icon name="plus" size={18} />
         </button>
       </div>
 
@@ -255,8 +255,9 @@ export function ActivityBar() {
                             void removeRecent(w.id);
                           }}
                           title="Remove from recent"
+                          aria-label={`Remove ${w.name} from recent`}
                         >
-                          ×
+                          <Icon name="x" size={12} />
                         </button>
                       </div>
                     ))}

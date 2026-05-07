@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Icon } from "./Icon";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -1844,7 +1845,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           title="New chat (current is saved to history)"
           disabled={streaming !== null || runningTools}
         >
-          ✚ New chat
+          <Icon name="plus" size={14} />
+          <span>New chat</span>
         </button>
         <div className="ai-header-spacer" />
         {parsed?.providerId === "claude-code" && (
@@ -1966,7 +1968,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               title="Delete this chat"
               aria-label={`Delete chat: ${s.title || "Untitled"}`}
             >
-              ×
+              <Icon name="x" size={12} />
             </button>
           </div>
         ))}
@@ -2353,7 +2355,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                       onClick={() => void regenerateFrom(i)}
                       disabled={streaming !== null || runningTools}
                     >
-                      ↻
+                      <Icon name="rotate-ccw" size={12} />
                     </button>
                     {aiChatId && (
                       <button
@@ -2363,7 +2365,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                         onClick={() => branchFromHere(i)}
                         disabled={streaming !== null || runningTools}
                       >
-                        ⎇
+                        <Icon name="git-branch" size={12} />
                       </button>
                     )}
                   </>
@@ -2506,7 +2508,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                     }}
                     title="Copy message"
                   >
-                    📋 Copy
+                    <Icon name="copy" size={12} />
+                    <span>Copy</span>
                   </button>
                   {blocks.length > 0 && (
                     <button
@@ -2519,7 +2522,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                       }}
                       title="Copy code blocks only"
                     >
-                      &lt;/&gt; Copy code
+                      <Icon name="code" size={12} />
+                      <span>Copy code</span>
                     </button>
                   )}
                   <button
@@ -2531,7 +2535,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                     }}
                     title="Insert at cursor / replace selection"
                   >
-                    ↳ Insert
+                    <Icon name="arrow-down-right" size={12} />
+                    <span>Insert</span>
                   </button>
                   {shellBlocks.length > 0 && (
                     <button
@@ -2549,7 +2554,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                       }}
                       title="Run the shell command(s) in the active terminal"
                     >
-                      ▶ Run
+                      <Icon name="play" size={12} />
+                      <span>Run</span>
                     </button>
                   )}
                   {isLatest && (
@@ -2559,7 +2565,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                       title="Ask the model to investigate further and expand the answer"
                       disabled={streaming !== null || runningTools}
                     >
-                      ↡ Go deeper
+                      <Icon name="arrow-down-circle" size={12} />
+                      <span>Go deeper</span>
                     </button>
                   )}
                 </div>
@@ -2686,7 +2693,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                         onClick={() => stop()}
                         title="Cancel this turn"
                       >
-                        ⏹ Stop
+                        <Icon name="stop" size={11} />
+                        <span>Stop</span>
                       </button>
                     )}
                   </>

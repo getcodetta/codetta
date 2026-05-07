@@ -6,6 +6,7 @@ import {
   type WorkspaceData,
 } from "../store";
 import { AIIcon } from "./AIIcon";
+import { Icon } from "./Icon";
 
 interface Props {
   wsId: string;
@@ -148,7 +149,9 @@ export function AIChatsRail({ wsId, ws }: Props) {
           aria-label="New AI chat"
         >
           <AIIcon size={14} />
-          <span className="ai-chats-rail-plus" aria-hidden="true">+</span>
+          <span className="ai-chats-rail-plus" aria-hidden="true">
+            <Icon name="plus" size={10} />
+          </span>
           {expanded && <span className="ai-chats-rail-add-label">New chat</span>}
         </button>
         <button
@@ -158,13 +161,15 @@ export function AIChatsRail({ wsId, ws }: Props) {
           aria-label={expanded ? "Collapse AI chat rail" : "Expand AI chat rail"}
           aria-expanded={expanded}
         >
-          {expanded
-            ? layout.sidebarSide === "left"
-              ? "›"
-              : "‹"
-            : layout.sidebarSide === "left"
-              ? "‹"
-              : "›"}
+          <Icon
+            name={
+              (expanded && layout.sidebarSide === "left") ||
+              (!expanded && layout.sidebarSide !== "left")
+                ? "chevron-right"
+                : "chevron-left"
+            }
+            size={12}
+          />
         </button>
       </div>
       <div className="ai-chats-rail-list" role="tablist" aria-label="AI chats">
@@ -229,7 +234,7 @@ export function AIChatsRail({ wsId, ws }: Props) {
                   title="Close chat"
                   aria-label={`Close chat ${chat.title}`}
                 >
-                  ×
+                  <Icon name="x" size={10} />
                 </button>
               </div>
             </div>

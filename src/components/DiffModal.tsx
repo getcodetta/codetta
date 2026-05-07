@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { onDiffRequest, type DiffRequest } from "../editorState";
 import { DiffView } from "./DiffView";
+import { Icon } from "./Icon";
 
 export function DiffModal() {
   const [req, setReq] = useState<DiffRequest | null>(null);
@@ -40,7 +41,7 @@ export function DiffModal() {
             title="Close (Esc)"
             aria-label="Close diff view"
           >
-            ×
+            <Icon name="x" size={14} />
           </button>
         </div>
         <div className="diff-modal-body">

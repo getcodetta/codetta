@@ -22,6 +22,7 @@ import {
 } from "../sftpLinks";
 import { basename, dirname, joinPath } from "../pathUtils";
 import { dropRecentFile } from "../recentFiles";
+import { Icon } from "./Icon";
 
 interface MenuTarget {
   x: number;
@@ -135,9 +136,13 @@ function Node({ wsId, entry, depth, onContext }: NodeProps) {
         title={entry.path}
       >
         <span className="tree-caret">
-          {entry.is_dir ? (expanded ? "▾" : "▸") : ""}
+          {entry.is_dir && (
+            <Icon name={expanded ? "chevron-down" : "chevron-right"} size={10} />
+          )}
         </span>
-        <span className="tree-icon">{entry.is_dir ? "📁" : "📄"}</span>
+        <span className="tree-icon">
+          <Icon name={entry.is_dir ? "folder" : "file"} size={14} />
+        </span>
         <span className="tree-name">{entry.name}</span>
       </div>
       {entry.is_dir && expanded && children && (

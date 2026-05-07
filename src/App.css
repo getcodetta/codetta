@@ -3894,6 +3894,11 @@ input {
 .ai-header-menu-item:hover {
   background: var(--bg-alt);
 }
+.ai-header-menu-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .ai-header-menu-meta {
   font-size: 10px;
   color: var(--fg-muted);

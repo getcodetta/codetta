@@ -4,6 +4,7 @@ import { openPalette } from "../paletteBus";
 import { pty } from "../ipc";
 import { error as toastError, errMsg, info as toastInfo } from "../notify";
 import { prompt as dialogPrompt } from "../dialog";
+import { Icon } from "./Icon";
 
 interface Tip {
   keys: string[];
@@ -79,7 +80,9 @@ export function WorkspacePicker() {
               className="welcome-action primary"
               onClick={() => void pickFolder()}
             >
-              <span className="welcome-action-icon">📁</span>
+              <span className="welcome-action-icon">
+                <Icon name="folder-open" size={20} />
+              </span>
               <span className="welcome-action-label">
                 <strong>Open Folder…</strong>
                 <span>Open any project directory as a workspace</span>
@@ -89,7 +92,9 @@ export function WorkspacePicker() {
               className="welcome-action"
               onClick={() => void cloneFromUrl()}
             >
-              <span className="welcome-action-icon">⎇</span>
+              <span className="welcome-action-icon">
+                <Icon name="git-branch" size={20} />
+              </span>
               <span className="welcome-action-label">
                 <strong>Clone from Git URL…</strong>
                 <span>Pick a destination folder and run git clone</span>
@@ -99,7 +104,9 @@ export function WorkspacePicker() {
               className="welcome-action"
               onClick={() => openPalette("")}
             >
-              <span className="welcome-action-icon">⌖</span>
+              <span className="welcome-action-icon">
+                <Icon name="command" size={20} />
+              </span>
               <span className="welcome-action-label">
                 <strong>Command Palette</strong>
                 <span>Search commands, files, and workspaces</span>
@@ -132,7 +139,7 @@ export function WorkspacePicker() {
                       title="Remove from list"
                       aria-label={`Remove ${w.name} from recent workspaces`}
                     >
-                      ×
+                      <Icon name="x" size={12} />
                     </button>
                   </li>
                 ))}

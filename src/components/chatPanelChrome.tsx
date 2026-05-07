@@ -20,6 +20,7 @@
 
 import { useEffect, useState } from "react";
 import { claudeCode as claudeCodeIpc, type ClaudeSession } from "../ipc";
+import { Icon } from "./Icon";
 
 // ---------- TimelineScrubber ----------
 
@@ -78,7 +79,8 @@ export function TimelineScrubber({
                 onClick={onBranch}
                 title="Open a new chat tab with the conversation up to this point"
               >
-                ⎇ Branch from here
+                <Icon name="git-branch" size={11} />
+                <span>Branch from here</span>
               </button>
             )}
             <button
@@ -86,7 +88,8 @@ export function TimelineScrubber({
               onClick={onReset}
               title="Drop scrub, jump back to live view"
             >
-              ↩ Live
+              <Icon name="rotate-ccw" size={11} />
+              <span>Live</span>
             </button>
           </>
         ) : (
@@ -237,7 +240,9 @@ export function TodosCard({ items }: TodosCardProps) {
         onClick={() => setCollapsed((c) => !c)}
         title={collapsed ? "Show todos" : "Hide todos"}
       >
-        <span className="ai-todos-icon">📋</span>
+        <span className="ai-todos-icon">
+          <Icon name="check-square" size={14} />
+        </span>
         <span className="ai-todos-summary">{summary}</span>
         <span className="ai-todos-caret">{collapsed ? "▸" : "▾"}</span>
       </button>
@@ -350,7 +355,7 @@ export function HeaderMenu({
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        ⋯
+        <Icon name="more-horizontal" size={14} />
       </button>
       {open && (
         <div className="ai-header-menu-popover" role="menu">
@@ -361,7 +366,13 @@ export function HeaderMenu({
               setOpen(false);
             }}
           >
-            <span>{historyActive ? "▾" : "▸"} Chat history</span>
+            <span className="ai-header-menu-row">
+              <Icon
+                name={historyActive ? "chevron-down" : "chevron-right"}
+                size={11}
+              />
+              Chat history
+            </span>
             {historyCount > 0 && (
               <span className="ai-header-menu-meta">{historyCount}</span>
             )}
@@ -373,7 +384,10 @@ export function HeaderMenu({
               setOpen(false);
             }}
           >
-            <span>⊕ Browse models</span>
+            <span className="ai-header-menu-row">
+              <Icon name="plus" size={11} />
+              Browse models
+            </span>
           </button>
           <div className="ai-header-menu-sep" />
           <button
@@ -383,7 +397,10 @@ export function HeaderMenu({
               setOpen(false);
             }}
           >
-            <span>⟳ Refresh providers</span>
+            <span className="ai-header-menu-row">
+              <Icon name="refresh" size={11} />
+              Refresh providers
+            </span>
           </button>
           <button
             className="ai-header-menu-item"
@@ -392,7 +409,10 @@ export function HeaderMenu({
               setOpen(false);
             }}
           >
-            <span>⚙ Settings</span>
+            <span className="ai-header-menu-row">
+              <Icon name="settings" size={11} />
+              Settings
+            </span>
           </button>
         </div>
       )}
