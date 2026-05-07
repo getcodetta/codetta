@@ -164,7 +164,7 @@ export function TerminalPopoutWindow() {
   };
 
   return (
-    <div className="popout-shell">
+    <div className="popout-shell" role="application" aria-label={`Terminal: ${params.title}`}>
       <div className="popout-bar" data-tauri-drag-region>
         <span className="popout-bar-title">{params.title}</span>
         <span className="popout-bar-spacer" />
@@ -173,6 +173,7 @@ export function TerminalPopoutWindow() {
           className="popout-bar-btn"
           onClick={redock}
           title="Send this terminal back to the main window"
+          aria-label="Re-dock terminal to main window"
         >
           ↩ Re-dock
         </button>

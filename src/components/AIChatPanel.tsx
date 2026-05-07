@@ -1959,6 +1959,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               className="ai-history-delete"
               onClick={() => void removeSession(s.id)}
               title="Delete this chat"
+              aria-label={`Delete chat: ${s.title || "Untitled"}`}
             >
               ×
             </button>
@@ -2343,6 +2344,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                     <button
                       className="ai-msg-regen"
                       title="Re-send this message — wipes everything below"
+                      aria-label="Re-send this message"
                       onClick={() => void regenerateFrom(i)}
                       disabled={streaming !== null || runningTools}
                     >
@@ -2352,6 +2354,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                       <button
                         className="ai-msg-branch"
                         title="Branch from here — open a new chat tab with the conversation up to this turn, leaving this one intact"
+                        aria-label="Branch from this message into a new chat"
                         onClick={() => branchFromHere(i)}
                         disabled={streaming !== null || runningTools}
                       >
