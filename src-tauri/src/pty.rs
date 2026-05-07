@@ -260,6 +260,11 @@ pub fn available_shells() -> Vec<ShellOption> {
     out
 }
 
+// Tauri commands bind each parameter to a JS-side property by name, so
+// collapsing these into a single struct would require a parallel rename
+// of every caller. The 8 args here are the JS-API surface — keep them
+// flat and silence the lint at the function site.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn pty_spawn(
     app: AppHandle,

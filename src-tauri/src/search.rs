@@ -57,7 +57,7 @@ fn looks_binary(buf: &[u8]) -> bool {
     // Caller passes only the first BINARY_PROBE bytes (read_text_file_capped
     // probes ahead of any decision), so a NUL anywhere in the buffer is
     // treated as a binary indicator.
-    buf.iter().any(|b| *b == 0)
+    buf.contains(&0)
 }
 
 /// Two-stage read: probe the first BINARY_PROBE bytes for NUL, bail

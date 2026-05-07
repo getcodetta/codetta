@@ -104,9 +104,10 @@ impl client::Handler for AcceptAllKeysClient {
 /// is configured, then falling back to password. Returns the live
 /// session — caller decides whether to pool it or use it one-shot.
 async fn open_session(args: &SftpConnectArgs) -> SftpResult<SftpSession> {
-    let mut config = client::Config::default();
-    config.inactivity_timeout = Some(Duration::from_secs(30));
-    let config = Arc::new(config);
+    let config = Arc::new(client::Config {
+        inactivity_timeout: Some(Duration::from_secs(30)),
+        ..client::Config::default()
+    });
 
     let mut session = client::connect(
         config,

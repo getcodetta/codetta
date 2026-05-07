@@ -46,7 +46,7 @@ fn looks_binary(buf: &[u8]) -> bool {
     // Heuristic: if there's a NUL anywhere in the probe window, treat as
     // binary. The caller passes only the first BINARY_PROBE_BYTES of the
     // file so we can't get fooled by a NUL deep in a giant text file.
-    buf.iter().any(|b| *b == 0)
+    buf.contains(&0)
 }
 
 #[tauri::command]
@@ -81,10 +81,12 @@ pub fn read_file(path: String) -> Result<String, String> {
 
 /// Decode arbitrary text bytes, tolerating common non-UTF-8 encodings
 /// (GBK / GB2312 / Big5 / Shift-JIS / EUC-KR / Windows-125x). Strategy:
+///
 ///   1. Strip UTF-8 BOM if present and the rest is valid UTF-8.
 ///   2. Honour explicit UTF-16 BOMs.
 ///   3. Try plain UTF-8.
 ///   4. Fall back to chardetng + encoding_rs for everything else.
+///
 /// Always returns a String — never errors. Garbage in → "best-guess"
 /// out, which is exactly how every other editor handles legacy files.
 fn decode_text_bytes(bytes: &[u8]) -> String {
