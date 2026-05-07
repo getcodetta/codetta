@@ -365,6 +365,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const stickyBottomRef = useRef(true);
+  // Visible "jump to bottom" affordance. Mirrors stickyBottomRef into
+  // React state so the button can render when the user scrolls up
+  // mid-stream and they need a one-click way back to the live tail.
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [expandedMsgIdx, setExpandedMsgIdx] = useState<Set<number>>(new Set());
 
   // Reset expanded state when the conversation switches (new chat / restore).
@@ -736,7 +740,11 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     if (!el) return;
     const onScroll = () => {
       const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-      stickyBottomRef.current = remaining < 60;
+      const sticky = remaining < 60;
+      stickyBottomRef.current = sticky;
+      // Only flip state when the boolean would actually change so we
+      // don't trigger a re-render on every pixel of scroll.
+      setShowJumpToBottom((prev) => (prev === !sticky ? prev : !sticky));
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
@@ -2394,6 +2402,23 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           }
         />
       )}
+      <div className="ai-messages-wrap">
+      {showJumpToBottom && (
+        <button
+          className="ai-jump-to-bottom"
+          onClick={() => {
+            const el = scrollRef.current;
+            if (!el) return;
+            el.scrollTop = el.scrollHeight;
+            stickyBottomRef.current = true;
+            setShowJumpToBottom(false);
+          }}
+          title="Jump to latest"
+          aria-label="Jump to latest message"
+        >
+          <Icon name="chevron-down" size={14} />
+        </button>
+      )}
       <div className="ai-messages" ref={scrollRef}>
         {display.length === 0 && (
           <>
@@ -2916,6 +2941,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             onResolve={(decision) => pendingPermission.resolve(decision)}
           />
         )}
+      </div>
       </div>
       {attachTree && (
         <div

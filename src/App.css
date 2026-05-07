@@ -4376,6 +4376,14 @@ input {
     transform: rotate(360deg);
   }
 }
+.ai-messages-wrap {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
 .ai-messages {
   flex: 1;
   min-height: 0;
@@ -4386,6 +4394,32 @@ input {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+/* Floating "back to bottom" affordance — visible only when the user
+   has scrolled away from the live tail. Sits inside the relatively-
+   positioned wrap so it stays in the viewport regardless of scroll. */
+.ai-jump-to-bottom {
+  position: absolute;
+  bottom: 12px;
+  right: 14px;
+  z-index: 5;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  opacity: 0.9;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.ai-jump-to-bottom:hover {
+  opacity: 1;
+  transform: translateY(-1px);
 }
 .ai-hint {
   color: var(--fg-muted);
