@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   setAutoClosingBrackets,
@@ -17,6 +17,7 @@ import { useTheme, type ThemeMode } from "../theme";
 import { onSettingsOpen } from "../settingsBus";
 import { useStore } from "../store";
 import { PROVIDERS } from "../providers";
+import { getJson, setJson } from "../localStore";
 import { McpServerBrowser } from "./McpServerBrowser";
 import { SettingsJsonEditor } from "./settingsJsonEditor";
 import {
@@ -37,6 +38,280 @@ import {
 } from "./claudeCodeSettings";
 import { SftpProfilesEditor } from "./sftpProfilesEditor";
 import { Icon } from "./Icon";
+
+// ─── AI Templates store ────────────────────────────────────────────────
+// Saved AI prompt templates the user reuses across chats. Persisted in
+// localStorage under "lcp.aiTemplates" as a JSON array. The store is
+// kept inline here (rather than in a separate module) because the
+// editor below is currently the sole consumer; the palette commands
+// `ai.save_template` / `ai.run_template` will gain matching helpers
+// when that wiring lands. The shape and helper names are kept simple
+// so a future split into `src/aiTemplates.ts` is a copy-paste move.
+
+interface AITemplate {
+  id: string;
+  label: string;
+  prompt: string;
+  createdAt: number;
+}
+
+const TEMPLATES_KEY = "lcp.aiTemplates";
+
+type TemplatesListener = () => void;
+const templatesListeners = new Set<TemplatesListener>();
+let templatesCache: AITemplate[] | null = null;
+
+function isTemplate(v: unknown): v is AITemplate {
+  if (!v || typeof v !== "object") return false;
+  const t = v as Partial<AITemplate>;
+  return (
+    typeof t.id === "string" &&
+    typeof t.label === "string" &&
+    typeof t.prompt === "string" &&
+    typeof t.createdAt === "number"
+  );
+}
+
+function loadTemplates(): AITemplate[] {
+  if (templatesCache) return templatesCache;
+  const parsed = getJson<unknown[]>(TEMPLATES_KEY, [], Array.isArray);
+  templatesCache = parsed.filter(isTemplate);
+  return templatesCache;
+}
+
+function persistTemplates(list: AITemplate[]) {
+  templatesCache = list;
+  setJson(TEMPLATES_KEY, list);
+  for (const l of templatesListeners) l();
+}
+
+function getTemplates(): AITemplate[] {
+  return loadTemplates();
+}
+
+function addTemplate(label: string, prompt: string): AITemplate {
+  const t: AITemplate = {
+    id: `tpl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    label,
+    prompt,
+    createdAt: Date.now(),
+  };
+  persistTemplates([t, ...loadTemplates()]);
+  return t;
+}
+
+function removeTemplate(id: string) {
+  const next = loadTemplates().filter((t) => t.id !== id);
+  persistTemplates(next);
+}
+
+function subscribeTemplates(fn: TemplatesListener): () => void {
+  templatesListeners.add(fn);
+  return () => {
+    templatesListeners.delete(fn);
+  };
+}
+
+// Per-row local draft state. Edits commit on blur (or on Enter for the
+// label input). We can't mutate templates in place — the underlying
+// store has no updateTemplate — so each blur-commit removes the old
+// row and re-adds a new one. The new entry sorts to the top of the
+// list, which is fine for an editor that only ever shows ~ a dozen
+// templates and a noticeable signal that the save took effect.
+function commitEdit(
+  oldId: string,
+  draftLabel: string,
+  draftPrompt: string,
+): string {
+  const label = draftLabel.trim() || "Untitled";
+  const prompt = draftPrompt;
+  removeTemplate(oldId);
+  const created = addTemplate(label, prompt);
+  return created.id;
+}
+
+function AITemplatesEditor() {
+  // Subscribe to the underlying store so external changes (palette
+  // commands, future sync) reflect here without a manual refresh.
+  const [templates, setTemplates] = useState<AITemplate[]>(() =>
+    getTemplates(),
+  );
+  useEffect(() => {
+    const unsub = subscribeTemplates(() => setTemplates(getTemplates()));
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  // Local drafts keyed by current template id — typing into a row
+  // updates only this map, so re-sorts in the underlying store don't
+  // yank focus mid-edit. We resolve the live value as `draft ?? stored`
+  // when rendering. Map key swaps to the new id after commit.
+  const [drafts, setDrafts] = useState<
+    Record<string, { label: string; prompt: string }>
+  >({});
+
+  const setDraftField = (
+    id: string,
+    field: "label" | "prompt",
+    value: string,
+  ) => {
+    setDrafts((d) => {
+      const cur = d[id] ?? {
+        label:
+          templates.find((t) => t.id === id)?.label ?? "",
+        prompt:
+          templates.find((t) => t.id === id)?.prompt ?? "",
+      };
+      return { ...d, [id]: { ...cur, [field]: value } };
+    });
+  };
+
+  const flushDraft = (id: string) => {
+    const draft = drafts[id];
+    if (!draft) return;
+    const original = templates.find((t) => t.id === id);
+    if (!original) return;
+    const labelChanged = draft.label !== original.label;
+    const promptChanged = draft.prompt !== original.prompt;
+    if (!labelChanged && !promptChanged) {
+      // No-op blur; drop the draft so the row reads from the store.
+      setDrafts((d) => {
+        if (!(id in d)) return d;
+        const { [id]: _drop, ...rest } = d;
+        void _drop;
+        return rest;
+      });
+      return;
+    }
+    commitEdit(id, draft.label, draft.prompt);
+    // Drop the old draft entry — the new template gets a new id, and
+    // the list re-render will pick the stored values up.
+    setDrafts((d) => {
+      if (!(id in d)) return d;
+      const { [id]: _drop, ...rest } = d;
+      void _drop;
+      return rest;
+    });
+  };
+
+  const onAdd = () => {
+    const created = addTemplate("New template", "");
+    // Open the new row immediately for editing by seeding a draft.
+    setDrafts((d) => ({
+      ...d,
+      [created.id]: { label: created.label, prompt: created.prompt },
+    }));
+  };
+
+  const onDelete = (id: string) => {
+    removeTemplate(id);
+    setDrafts((d) => {
+      if (!(id in d)) return d;
+      const { [id]: _drop, ...rest } = d;
+      void _drop;
+      return rest;
+    });
+  };
+
+  const sorted = useMemo(
+    () => templates.slice().sort((a, b) => b.createdAt - a.createdAt),
+    [templates],
+  );
+
+  if (sorted.length === 0) {
+    return (
+      <>
+        <div className="settings-row settings-row-note">
+          No templates yet. Use "AI: Save AI Template…" from the palette,
+          or add one here.
+        </div>
+        <div className="settings-row" style={{ justifyContent: "flex-end" }}>
+          <button className="settings-toc-item" onClick={onAdd}>
+            + Add template
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {sorted.map((t) => {
+        const draft = drafts[t.id];
+        const labelValue = draft?.label ?? t.label;
+        const promptValue = draft?.prompt ?? t.prompt;
+        return (
+          <div
+            key={t.id}
+            className="settings-row settings-row-multiline"
+            style={{
+              flexDirection: "column",
+              alignItems: "stretch",
+              gap: 6,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+              }}
+            >
+              <input
+                type="text"
+                value={labelValue}
+                onChange={(e) =>
+                  setDraftField(t.id, "label", e.target.value)
+                }
+                onBlur={() => flushDraft(t.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    (e.currentTarget as HTMLInputElement).blur();
+                  }
+                }}
+                placeholder="Template label"
+                spellCheck={false}
+                style={{ flex: 1, minWidth: 0 }}
+              />
+              <button
+                className="settings-toc-item"
+                onClick={() => onDelete(t.id)}
+                title="Delete template"
+                style={{ flex: "none" }}
+              >
+                Delete
+              </button>
+            </div>
+            <textarea
+              value={promptValue}
+              onChange={(e) =>
+                setDraftField(t.id, "prompt", e.target.value)
+              }
+              onBlur={() => flushDraft(t.id)}
+              placeholder="Prompt body — supports plain text. Saved on blur."
+              spellCheck={false}
+              rows={3}
+              style={{
+                width: "100%",
+                resize: "vertical",
+                minHeight: 60,
+                fontFamily: "var(--font-mono, monospace)",
+                fontSize: 12,
+              }}
+            />
+          </div>
+        );
+      })}
+      <div className="settings-row" style={{ justifyContent: "flex-end" }}>
+        <button className="settings-toc-item" onClick={onAdd}>
+          + Add template
+        </button>
+      </div>
+    </>
+  );
+}
 
 export function SettingsModal() {
   const [open, setOpen] = useState(false);
@@ -372,6 +647,10 @@ export function SettingsModal() {
               dialog each time. "Deny" disables the tool — the AI sees a
               denial message instead of executing.
             </div>
+          </Section>
+
+          <Section title="AI Templates">
+            <AITemplatesEditor />
           </Section>
 
           <Section title="AI Usage — Cross-chat dashboard">
