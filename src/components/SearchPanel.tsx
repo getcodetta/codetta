@@ -24,6 +24,13 @@ import { setEditorGoto } from "../editorState";
 import { confirm as dialogConfirm } from "../dialog";
 import { errMsg, error as toastError, success as toastSuccess } from "../notify";
 import { relPath } from "../pathUtils";
+import {
+  clearSearchHistory,
+  getRecentSearches,
+  recordSearch,
+  subscribeSearchHistory,
+  type SearchHistoryEntry,
+} from "../searchHistory";
 import { Icon } from "./Icon";
 
 interface Props {
@@ -90,6 +97,18 @@ export function SearchPanel({ wsId, root }: Props) {
   const mountedRef = useRef(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Mirror of the persisted recent-search list. Re-rendered when
+  // recordSearch / clearSearchHistory fire via the subscriber API.
+  const [recent, setRecent] = useState<SearchHistoryEntry[]>(() =>
+    getRecentSearches(),
+  );
+  useEffect(() => {
+    const unsub = subscribeSearchHistory(() => {
+      setRecent(getRecentSearches());
+    });
+    return unsub;
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -154,6 +173,18 @@ export function SearchPanel({ wsId, root }: Props) {
           hits: out,
           ranAt: Date.now(),
         });
+        // Persist the query when it actually returned something. We
+        // skip zero-hit searches on purpose so typos and dead-end
+        // queries don't pollute the recent-searches surface — the
+        // same query yielding hits later (or run by Enter via
+        // recordSearchExplicit) will still get captured.
+        if (out.length > 0) {
+          recordSearch({
+            query: q,
+            mode: useRegex ? "regex" : "literal",
+            caseSensitive: cs,
+          });
+        }
       } catch (e) {
         if (!mountedRef.current || scanIdRef.current !== id) return;
         setHits([]);
@@ -204,6 +235,27 @@ export function SearchPanel({ wsId, root }: Props) {
     await useStore.getState().openFile(wsId, hit.path);
     setEditorGoto(hit.line, hit.col);
   };
+
+  // Click handler for a recent-search row: prefill the input + the
+  // regex/case toggles to match the saved entry, then dispatch the
+  // search immediately. We don't wait for the debounce-on-type effect
+  // because the user explicitly chose this query — making them watch
+  // a 220ms spinner first would feel sticky.
+  const onRecentClick = (entry: SearchHistoryEntry) => {
+    const useRegex = entry.mode === "regex";
+    setQuery(entry.query);
+    setCaseSensitive(entry.caseSensitive);
+    setRegex(useRegex);
+    void runSearch(entry.query, entry.caseSensitive, useRegex);
+    inputRef.current?.focus();
+  };
+
+  // Recent searches surface only when the input is empty — once the
+  // user starts typing, the live results take over the same screen
+  // real estate. Capped at 8 to keep the panel from turning into a
+  // wall of history.
+  const showRecent = query.trim().length === 0 && recent.length > 0;
+  const recentVisible = recent.slice(0, 8);
 
   const renderHitText = (text: string, q: string) => {
     // Highlight the first match of `q` in the line so the eye can
@@ -429,6 +481,20 @@ export function SearchPanel({ wsId, root }: Props) {
             placeholder="Search workspace…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              const q = query.trim();
+              if (q.length === 0) return;
+              // Explicit user trigger: capture the query in history
+              // even if it's currently zero-hit. Then re-dispatch so
+              // pressing Enter mid-debounce gives an immediate run.
+              recordSearch({
+                query: q,
+                mode: regex ? "regex" : "literal",
+                caseSensitive,
+              });
+              void runSearch(q, caseSensitive, regex);
+            }}
             aria-label="Workspace text search"
           />
           {replaceOpen && (
@@ -532,6 +598,43 @@ export function SearchPanel({ wsId, root }: Props) {
         )}
         {error && <span className="search-panel-error"> · {error}</span>}
       </div>
+
+      {showRecent && (
+        <div className="search-panel-recent">
+          <div className="search-panel-recent-head">
+            <span className="search-panel-recent-title">Recent searches</span>
+            <button
+              className="search-panel-recent-clear"
+              onClick={() => clearSearchHistory()}
+              title="Clear search history"
+              aria-label="Clear search history"
+            >
+              Clear
+            </button>
+          </div>
+          <ul className="search-panel-recent-list">
+            {recentVisible.map((entry) => (
+              <li key={`${entry.mode}:${entry.caseSensitive}:${entry.query}`}>
+                <button
+                  className="search-panel-recent-item"
+                  onClick={() => onRecentClick(entry)}
+                  title={`Re-run: ${entry.query}${
+                    entry.mode === "regex" ? " (regex)" : ""
+                  }${entry.caseSensitive ? " (Aa)" : ""}`}
+                >
+                  <span className="search-panel-recent-query">{entry.query}</span>
+                  {entry.mode === "regex" && (
+                    <span className="search-panel-recent-chip">regex</span>
+                  )}
+                  {entry.caseSensitive && (
+                    <span className="search-panel-recent-chip">Aa</span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="search-panel-results">
         {visibleGroups.map(([path, items]) => (
