@@ -247,6 +247,12 @@ export function EditorPane({ wsId, path }: Props) {
   useEffect(() => {
     setEditorState({ filePath: path, language });
     pushRecentFile(wsId, path);
+    // Mark the file as "just touched" so the idle-buffer sweeper knows
+    // someone is paying attention to it. The sweeper resets to "now"
+    // again on focus + cursor moves below; this mount call covers the
+    // common case where the user opens a tab and then walks away
+    // without ever bringing focus to the editor body.
+    useStore.getState().touchFile(wsId, path);
     return () => {
       clearEditorState();
     };
@@ -440,12 +446,16 @@ export function EditorPane({ wsId, path }: Props) {
           editorRef.current = ed;
           monacoRef.current = monaco;
           setActiveEditor(ed);
-          ed.onDidFocusEditorWidget(() => setActiveEditor(ed));
+          ed.onDidFocusEditorWidget(() => {
+            setActiveEditor(ed);
+            useStore.getState().touchFile(wsId, path);
+          });
           ed.onDidChangeCursorPosition((e) => {
             setEditorState({
               line: e.position.lineNumber,
               col: e.position.column,
             });
+            useStore.getState().touchFile(wsId, path);
           });
           ed.onDidChangeCursorSelection(() => {
             const sel = ed.getSelection();

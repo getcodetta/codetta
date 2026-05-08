@@ -19,8 +19,45 @@ import {
 } from "./ipc";
 import { confirm as dialogConfirm } from "./dialog";
 import { getEditorSettings } from "./editorSettings";
+import { getFootprintSettings } from "./footprintSettings";
 import { basename } from "./pathUtils";
 import { pushClosedTab, popClosedTab, forgetClosedTab } from "./closedTabsStack";
+
+// -------- Idle tracking (footprint features) --------
+//
+// Two non-persisted maps track the last time the user touched each
+// file or terminal. They live at module scope so the sweeper can read
+// them without going through Zustand state — an idle file's "last
+// touched" timestamp is metadata, not part of the user-visible
+// workspace and not worth persisting (a fresh app start resets the
+// clock, which is fine: it just delays the next unload by a few
+// minutes).
+const fileLastTouched = new Map<string, Map<string, number>>();
+const terminalLastTouched = new Map<string, Map<string, number>>();
+
+function touchInMap(
+  m: Map<string, Map<string, number>>,
+  outer: string,
+  inner: string,
+): void {
+  let bucket = m.get(outer);
+  if (!bucket) {
+    bucket = new Map();
+    m.set(outer, bucket);
+  }
+  bucket.set(inner, Date.now());
+}
+
+/** Walk a pane tree and collect the active tab key in every leaf. */
+function collectActiveTabs(p: Pane | null, out: Set<string>): void {
+  if (!p) return;
+  if (p.kind === "tabs") {
+    if (p.active) out.add(p.active);
+    return;
+  }
+  collectActiveTabs(p.first, out);
+  collectActiveTabs(p.second, out);
+}
 
 /**
  * Close the pop-out window hosting a terminal, if any. Best-effort —
@@ -513,6 +550,16 @@ interface AppState {
    *  before `beforeId`. Pass null to move to the end. The rail is sorted
    *  by createdAt so this is the only state mutation needed. */
   reorderAIChat(wsId: string, id: string, beforeId: string | null): void;
+
+  /** Mark a file as "just touched" for the idle-buffer sweeper. Cheap;
+   *  fired from EditorPane on focus and cursor activity. */
+  touchFile(wsId: string, path: string): void;
+  /** Mark a terminal as "just touched" for the idle-close sweeper. */
+  touchTerminal(wsId: string, termId: string): void;
+  /** Drop a file's contents from the in-memory store IF it is not dirty
+   *  and not currently the active tab in any pane. The tab key stays in
+   *  the layout — clicking it re-reads from disk via openFile. */
+  unloadIdleFile(wsId: string, path: string): void;
 }
 
 const defaultLayout = (): WorkspaceLayout => {
@@ -1826,6 +1873,43 @@ export const useStore = create<AppState>((set, get) => {
         };
       }),
 
+    touchFile: (wsId, path) => {
+      touchInMap(fileLastTouched, wsId, path);
+    },
+
+    touchTerminal: (wsId, termId) => {
+      touchInMap(terminalLastTouched, wsId, termId);
+    },
+
+    unloadIdleFile: (wsId, path) => {
+      const ws = get().loaded[wsId];
+      if (!ws) return;
+      const f = ws.files[path];
+      if (!f) return;
+      // Never drop unsaved edits.
+      if (f.contents !== f.original) return;
+      // Never drop a file the user is currently looking at. We check
+      // every leaf pane in both editor and bottom roots — a tab can be
+      // visible in only one pane at a time, but the user might have
+      // multiple panes with different active tabs.
+      const visible = new Set<string>();
+      collectActiveTabs(ws.layout.editorRoot, visible);
+      collectActiveTabs(ws.layout.bottomRoot, visible);
+      if (visible.has(fileKey(path))) return;
+      set((s) => {
+        const w = s.loaded[wsId];
+        if (!w || !w.files[path]) return s;
+        const { [path]: _drop, ...rest } = w.files;
+        void _drop;
+        return {
+          loaded: { ...s.loaded, [wsId]: { ...w, files: rest } },
+        };
+      });
+      // Drop the per-path tracker so the next open-and-touch starts
+      // from a fresh clock instead of inheriting an ancient timestamp.
+      fileLastTouched.get(wsId)?.delete(path);
+    },
+
     reorderAIChat: (wsId, id, beforeId) =>
       updateWs(wsId, (w) => {
         const desc = w.aiChats[id];
@@ -1862,3 +1946,67 @@ export const useStore = create<AppState>((set, get) => {
       }),
   };
 });
+
+// -------- Idle sweeper --------
+//
+// Runs once a minute (cheap) and reads footprint settings live, so a
+// user toggling "drop idle buffers" in Settings sees the next sweep
+// honor the new value without an app restart. Lives at module scope so
+// there's exactly one sweeper regardless of how many components mount;
+// the `typeof window` guard keeps it out of any non-DOM contexts (SSR
+// / unit tests).
+function runIdleSweep(): void {
+  const settings = getFootprintSettings();
+  if (
+    !settings.idleBufferUnloadEnabled &&
+    !settings.idleTerminalCloseEnabled
+  ) {
+    return;
+  }
+  const now = Date.now();
+  const fileTtl = settings.idleBufferUnloadMinutes * 60_000;
+  const termTtl = settings.idleTerminalCloseMinutes * 60_000;
+  const state = useStore.getState();
+  for (const [wsId, ws] of Object.entries(state.loaded)) {
+    if (settings.idleBufferUnloadEnabled) {
+      const visible = new Set<string>();
+      collectActiveTabs(ws.layout.editorRoot, visible);
+      collectActiveTabs(ws.layout.bottomRoot, visible);
+      const fileTouches = fileLastTouched.get(wsId);
+      for (const [path, f] of Object.entries(ws.files)) {
+        if (f.contents !== f.original) continue; // never touch dirty
+        if (visible.has(fileKey(path))) continue; // never touch visible
+        // Files we've never seen a touch for get treated as "touched
+        // at workspace load" — bootstrap their timestamp now so the
+        // first sweep doesn't immediately unload everything that was
+        // hydrated from disk.
+        let last = fileTouches?.get(path);
+        if (last === undefined) {
+          touchInMap(fileLastTouched, wsId, path);
+          last = now;
+        }
+        if (now - last > fileTtl) {
+          state.unloadIdleFile(wsId, path);
+        }
+      }
+    }
+    if (settings.idleTerminalCloseEnabled) {
+      const termTouches = terminalLastTouched.get(wsId);
+      for (const termId of Object.keys(ws.terminals)) {
+        let last = termTouches?.get(termId);
+        if (last === undefined) {
+          touchInMap(terminalLastTouched, wsId, termId);
+          last = now;
+        }
+        if (now - last > termTtl) {
+          state.closeTerminal(wsId, termId);
+          terminalLastTouched.get(wsId)?.delete(termId);
+        }
+      }
+    }
+  }
+}
+
+if (typeof window !== "undefined") {
+  setInterval(runIdleSweep, 60_000);
+}
