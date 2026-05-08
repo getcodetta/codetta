@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   setEditorSettings,
+  setRenderWhitespace,
   useEditorSettings,
 } from "../editorSettings";
+import type { EditorSettings } from "../editorSettings";
 import { useTheme, type ThemeMode } from "../theme";
 import { onSettingsOpen } from "../settingsBus";
 import { useStore } from "../store";
@@ -230,6 +232,26 @@ export function SettingsModal() {
               value={settings.minimap}
               onChange={(v) => setEditorSettings({ minimap: v })}
             />
+            <Row label="Render whitespace">
+              <div className="settings-segmented">
+                {(
+                  [
+                    ["none", "Off"],
+                    ["boundary", "Boundary"],
+                    ["selection", "Selection"],
+                    ["all", "All"],
+                  ] as [EditorSettings["renderWhitespace"], string][]
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    className={`segmented-btn ${settings.renderWhitespace === value ? "active" : ""}`}
+                    onClick={() => setRenderWhitespace(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </Row>
           </Section>
 
           <Section title="On save">

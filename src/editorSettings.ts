@@ -18,6 +18,10 @@ export interface EditorSettings {
   /** Vertical guides at the configured columns (e.g. [80, 100]).
    *  Empty array disables. */
   rulers: number[];
+  /** Monaco's `renderWhitespace` option. "selection" (default) only
+   *  shows whitespace markers within the current selection — matches
+   *  the editor's pre-existing behaviour. */
+  renderWhitespace: "none" | "boundary" | "selection" | "all";
 }
 
 const STORAGE_KEY = "lcp.editorSettings";
@@ -32,6 +36,7 @@ const DEFAULT: EditorSettings = {
   insertFinalNewline: false,
   formatOnSave: false,
   rulers: [],
+  renderWhitespace: "selection",
 };
 
 function read(): EditorSettings {
@@ -82,6 +87,13 @@ function read(): EditorSettings {
             typeof n === "number" && Number.isFinite(n) && n > 0 && n < 1000,
         )
       : DEFAULT.rulers,
+    renderWhitespace:
+      raw.renderWhitespace === "none" ||
+      raw.renderWhitespace === "boundary" ||
+      raw.renderWhitespace === "selection" ||
+      raw.renderWhitespace === "all"
+        ? raw.renderWhitespace
+        : DEFAULT.renderWhitespace,
   };
 }
 
@@ -159,4 +171,12 @@ export function toggleFormatOnSave() {
   const next = !_settings.formatOnSave;
   setEditorSettings({ formatOnSave: next });
   toastInfo(`Format on save: ${next ? "on" : "off"}`);
+}
+// No toast on change — the editor's whitespace markers appearing /
+// disappearing is its own feedback, and four-state cycling would be
+// noisier than helpful. The setter is exposed for the settings modal.
+export function setRenderWhitespace(
+  v: EditorSettings["renderWhitespace"],
+) {
+  setEditorSettings({ renderWhitespace: v });
 }

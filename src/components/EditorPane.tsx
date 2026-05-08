@@ -216,12 +216,14 @@ export function EditorPane({ wsId, path }: Props) {
       wordWrap: settings.wordWrap,
       tabSize: settings.tabSize,
       minimap: { enabled: settings.minimap },
+      renderWhitespace: settings.renderWhitespace,
     });
   }, [
     settings.fontSize,
     settings.wordWrap,
     settings.tabSize,
     settings.minimap,
+    settings.renderWhitespace,
   ]);
 
   // Auto-save: debounce-save when contents change while auto-save is on.
@@ -420,7 +422,7 @@ export function EditorPane({ wsId, path }: Props) {
           minimap: { enabled: settings.minimap },
           scrollBeyondLastLine: false,
           tabSize: settings.tabSize,
-          renderWhitespace: "selection",
+          renderWhitespace: settings.renderWhitespace,
           smoothScrolling: true,
           automaticLayout: true,
           wordWrap: settings.wordWrap,
