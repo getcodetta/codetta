@@ -4,7 +4,12 @@ import { listen } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { startFsBusOnce } from "./fsBus";
 import { commands, runCommand } from "./actions";
-import { accelMatches } from "./accelMatch";
+import {
+  accelMatches,
+  isModifierOnly,
+  normalizeAccel,
+  parseChordAccel,
+} from "./accelMatch";
 import { bootstrapTheme } from "./theme";
 import { onPaletteOpen } from "./paletteBus";
 import { onFootprintOpen } from "./footprintBus";
@@ -81,6 +86,15 @@ const HANDLED_BY_MANUAL_BRANCHES = new Set<string>([
   // Alt+Z word wrap has its own handler (`onAltKey`).
   "edit.toggle_word_wrap",
 ]);
+
+// Two-step "chord" shortcut state, e.g. Ctrl+K Ctrl+0. The leading combo
+// arms `chordPending`; the follow-up combo within CHORD_TIMEOUT_MS commits
+// the action. Module-scope (not React state) because the keydown handler
+// already runs from a stable effect listener and we want zero re-render
+// churn when the chord is in flight. A stuck chord auto-clears so it can't
+// silently swallow later normal keystrokes.
+let chordPending: { leading: string; armedAt: number } | null = null;
+const CHORD_TIMEOUT_MS = 2000;
 
 function MainApp() {
   const hydrate = useStore((s) => s.hydrate);
@@ -288,6 +302,68 @@ function MainApp() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // ---- Chord pre-check ----
+      // Chords (e.g. Ctrl+K Ctrl+0) take a two-step path: a leading
+      // combo arms `chordPending`, then the follow-up combo commits.
+      // Modifier-only keydowns (Ctrl, Shift, Alt, Meta on their own)
+      // are skipped at this layer — otherwise just *holding* Ctrl
+      // before pressing K would clear/arm the state spuriously.
+      if (!isModifierOnly(e)) {
+        // Expire a stale pending chord before doing anything else, so
+        // a 5-minutes-later keystroke isn't reinterpreted as the second
+        // half of a forgotten chord.
+        if (
+          chordPending !== null &&
+          Date.now() - chordPending.armedAt > CHORD_TIMEOUT_MS
+        ) {
+          chordPending = null;
+        }
+
+        if (chordPending !== null) {
+          // Second half of a chord. Look for a command whose accel
+          // parses as a chord with a matching leading combo and whose
+          // follow-up matches this event.
+          const leading = chordPending.leading;
+          let matched = false;
+          for (const c of commands) {
+            if (!c.accel) continue;
+            const chord = parseChordAccel(c.accel);
+            if (!chord) continue;
+            if (normalizeAccel(chord.leading) !== leading) continue;
+            if (accelMatches(chord.followup, e)) {
+              e.preventDefault();
+              runCommand(c.id);
+              matched = true;
+              break;
+            }
+          }
+          // Whether or not we matched, the chord is consumed: a
+          // mis-typed second key cancels the chord and falls through
+          // to normal handling on the *next* keystroke (this one is
+          // dropped if matched, or treated as normal if not).
+          chordPending = null;
+          if (matched) return;
+          // Fall through: treat this keystroke as a regular shortcut.
+        } else {
+          // No chord pending — see if this event arms one. We walk
+          // every command with a chord accel; if any leading combo
+          // matches, set pending and swallow the event.
+          for (const c of commands) {
+            if (!c.accel) continue;
+            const chord = parseChordAccel(c.accel);
+            if (!chord) continue;
+            if (accelMatches(chord.leading, e)) {
+              chordPending = {
+                leading: normalizeAccel(chord.leading),
+                armedAt: Date.now(),
+              };
+              e.preventDefault();
+              return;
+            }
+          }
+        }
+      }
+
       // F11 toggles zen mode globally — no modifiers required so it
       // matches the platform convention and works even when no
       // workspace is open.

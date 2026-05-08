@@ -66,3 +66,90 @@ export function accelMatches(
   // matches on the letter (the wantShift check above already gates that).
   return e.key.toLowerCase() === keyPart.toLowerCase();
 }
+
+/**
+ * Canonicalize an accel string so two equivalent specs compare equal.
+ * Used by the chord dispatcher to compare a stored "leading combo"
+ * against the leading half parsed at lookup time. Lowercases, sorts
+ * modifiers in a fixed order (ctrl, shift, alt, meta), keeps the
+ * trailing key as-is (lowercased).
+ */
+export function normalizeAccel(s: string): string {
+  // Same Ctrl++ / trailing-+ split rule as accelMatches so a leading
+  // like "Ctrl++" round-trips through normalize and still matches.
+  const parts: string[] = [];
+  let buf = "";
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "+" && buf.length > 0 && i < s.length - 1) {
+      parts.push(buf);
+      buf = "";
+    } else {
+      buf += ch;
+    }
+  }
+  if (buf.length > 0) parts.push(buf);
+  const mods: string[] = [];
+  let key = "";
+  for (let i = 0; i < parts.length; i++) {
+    const isLast = i === parts.length - 1;
+    const lower = parts[i].toLowerCase();
+    if (
+      !isLast &&
+      (lower === "ctrl" ||
+        lower === "control" ||
+        lower === "cmd" ||
+        lower === "command" ||
+        lower === "meta")
+    ) {
+      if (!mods.includes("ctrl")) mods.push("ctrl");
+    } else if (!isLast && lower === "shift") {
+      if (!mods.includes("shift")) mods.push("shift");
+    } else if (!isLast && (lower === "alt" || lower === "option")) {
+      if (!mods.includes("alt")) mods.push("alt");
+    } else if (!isLast && (lower === "win" || lower === "super")) {
+      if (!mods.includes("meta")) mods.push("meta");
+    } else {
+      key = lower;
+    }
+  }
+  const order = ["ctrl", "shift", "alt", "meta"];
+  mods.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  return [...mods, key].filter(Boolean).join("+");
+}
+
+/**
+ * Two-step "chord" shortcut, e.g. "Ctrl+K Ctrl+0". Returns the leading
+ * combo and the follow-up combo when the accel contains a SPACE outside
+ * any parentheses with non-empty halves; otherwise null.
+ */
+export function parseChordAccel(
+  accel: string,
+): { leading: string; followup: string } | null {
+  let depth = 0;
+  for (let i = 0; i < accel.length; i++) {
+    const ch = accel[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (ch === " " && depth === 0) {
+      const leading = accel.slice(0, i).trim();
+      const followup = accel.slice(i + 1).trim();
+      if (!leading || !followup) return null;
+      return { leading, followup };
+    }
+  }
+  return null;
+}
+
+/** True when the event is just a modifier key being pressed on its own
+ *  (Ctrl, Alt, Shift, Meta). Such keydowns shouldn't arm a chord or
+ *  count as the second half of one — wait for the actual letter / number. */
+export function isModifierOnly(e: KeyboardEvent): boolean {
+  return (
+    e.key === "Control" ||
+    e.key === "Shift" ||
+    e.key === "Alt" ||
+    e.key === "Meta" ||
+    e.key === "OS"
+  );
+}
