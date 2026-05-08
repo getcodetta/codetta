@@ -22,6 +22,13 @@ import { dirname } from "../pathUtils";
 import { Icon } from "./Icon";
 import { EditorBreadcrumbs } from "./EditorBreadcrumbs";
 import { requestAIPrompt } from "../aiBus";
+import {
+  toggleLineBookmark,
+  getLineBookmarks,
+  nextLineBookmark,
+  prevLineBookmark,
+  subscribeLineBookmarks,
+} from "../lineBookmarks";
 
 // Right-click "Ask AI to …" actions registered with Monaco. Each one
 // grabs the current selection (or the whole file when nothing is
@@ -529,10 +536,96 @@ export function EditorPane({ wsId, path }: Props) {
               },
             }),
           );
+          // Line-level bookmarks: Ctrl+F2 toggles a bookmark on the
+          // current line, F2 / Shift+F2 jump to the next / previous
+          // bookmark in this file (wrapping). Session-scoped — see
+          // src/lineBookmarks.ts for the rationale.
+          const bookmarkDisposables = [
+            ed.addAction({
+              id: "bookmark.toggle",
+              label: "Toggle Bookmark on Line",
+              contextMenuGroupId: "bookmarks",
+              contextMenuOrder: 1,
+              keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F2],
+              run: (editor) => {
+                const pos = editor.getPosition();
+                if (!pos) return;
+                toggleLineBookmark(path, pos.lineNumber);
+              },
+            }),
+            ed.addAction({
+              id: "bookmark.next",
+              label: "Next Bookmark",
+              contextMenuGroupId: "bookmarks",
+              contextMenuOrder: 2,
+              keybindings: [monaco.KeyCode.F2],
+              run: (editor) => {
+                const pos = editor.getPosition();
+                const from = pos?.lineNumber ?? 0;
+                const target = nextLineBookmark(path, from);
+                if (target == null) return;
+                editor.setPosition({ lineNumber: target, column: 1 });
+                editor.revealLineInCenter(target);
+              },
+            }),
+            ed.addAction({
+              id: "bookmark.prev",
+              label: "Previous Bookmark",
+              contextMenuGroupId: "bookmarks",
+              contextMenuOrder: 3,
+              keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.F2],
+              run: (editor) => {
+                const pos = editor.getPosition();
+                const from = pos?.lineNumber ?? Number.MAX_SAFE_INTEGER;
+                const target = prevLineBookmark(path, from);
+                if (target == null) return;
+                editor.setPosition({ lineNumber: target, column: 1 });
+                editor.revealLineInCenter(target);
+              },
+            }),
+          ];
+          // Bookmark gutter decorations. We use an overview-ruler tick
+          // only (no glyph margin) because enabling glyphMargin would
+          // shift the editor's left padding for every file, which is a
+          // user-visible layout change that's overkill for an
+          // ephemeral session-scoped feature. The ruler tick on the
+          // right edge is enough to convey "this line is bookmarked".
+          // Kept in a separate collection from the git-diff gutter so
+          // the two don't trample each other on update.
+          let bookmarkDecorations:
+            | editor.IEditorDecorationsCollection
+            | null = null;
+          const applyBookmarkDecorations = () => {
+            const lines = getLineBookmarks(path);
+            const decos: editor.IModelDeltaDecoration[] = lines.map((l) => ({
+              range: new monaco.Range(l, 1, l, 1),
+              options: {
+                isWholeLine: true,
+                overviewRuler: {
+                  color: "var(--accent)",
+                  position: monaco.editor.OverviewRulerLane.Center,
+                },
+              },
+            }));
+            if (!bookmarkDecorations) {
+              bookmarkDecorations = ed.createDecorationsCollection(decos);
+            } else {
+              bookmarkDecorations.set(decos);
+            }
+          };
+          applyBookmarkDecorations();
+          const unsubBookmarks = subscribeLineBookmarks((changedPath) => {
+            if (changedPath !== path) return;
+            applyBookmarkDecorations();
+          });
           ed.onDidDispose(() => {
             off();
             offScroll.dispose();
             for (const d of disposables) d.dispose();
+            for (const d of bookmarkDisposables) d.dispose();
+            unsubBookmarks();
+            bookmarkDecorations?.clear();
+            bookmarkDecorations = null;
             setActiveEditor(null);
           });
         }}
