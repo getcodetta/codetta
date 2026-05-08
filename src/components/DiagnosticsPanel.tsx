@@ -48,6 +48,29 @@ const SEVERITY_CLASS: Record<DiagnosticEntry["severity"], string> = {
   hint: "diagnostics-row-hint",
 };
 
+// Border / accent colors for the severity filter chips. Kept inline so
+// this file stays self-contained and doesn't require an App.css edit.
+const SEVERITY_COLOR: Record<DiagnosticEntry["severity"], string> = {
+  error: "#f14c4c",
+  warning: "#cca700",
+  info: "var(--accent)",
+  hint: "var(--fg-muted)",
+};
+
+const SEVERITY_ORDER: DiagnosticEntry["severity"][] = [
+  "error",
+  "warning",
+  "info",
+  "hint",
+];
+
+const SEVERITY_LABEL: Record<DiagnosticEntry["severity"], string> = {
+  error: "Errors",
+  warning: "Warnings",
+  info: "Info",
+  hint: "Hints",
+};
+
 // Convert a Monaco URI string to a filesystem path the store can open.
 // Monaco URIs typically come in as "file:///c:/foo/bar.ts" on Windows or
 // "file:///home/u/foo.ts" on Unix; some are bare paths (inmemory:// or
@@ -104,6 +127,10 @@ export function DiagnosticsPanel({ wsId, root: _root }: Props) {
   const [entries, setEntries] = useState<DiagnosticEntry[]>(() =>
     getDiagnostics(),
   );
+  // Severities the user has toggled OFF. Default empty = everything visible.
+  const [hiddenSev, setHiddenSev] = useState<
+    Set<DiagnosticEntry["severity"]>
+  >(() => new Set());
 
   useEffect(() => {
     const unsub = subscribeDiagnostics(setEntries);
@@ -113,10 +140,44 @@ export function DiagnosticsPanel({ wsId, root: _root }: Props) {
     return unsub;
   }, []);
 
-  const groups = useMemo(() => groupByFile(entries), [entries]);
+  // Per-severity counts come from the unfiltered entries so chip badges
+  // and the header counts always reflect reality (the filter only hides
+  // rows in the list below).
+  const sevCounts = useMemo(() => {
+    const c: Record<DiagnosticEntry["severity"], number> = {
+      error: 0,
+      warning: 0,
+      info: 0,
+      hint: 0,
+    };
+    for (const e of entries) c[e.severity]++;
+    return c;
+  }, [entries]);
 
-  const errorCount = entries.filter((e) => e.severity === "error").length;
-  const warningCount = entries.filter((e) => e.severity === "warning").length;
+  // Apply the severity filter, then group. Empty groups (all rows hidden)
+  // are dropped so we don't render bare file headers.
+  const groups = useMemo(() => {
+    const visible = entries.filter((e) => !hiddenSev.has(e.severity));
+    return groupByFile(visible);
+  }, [entries, hiddenSev]);
+
+  const errorCount = sevCounts.error;
+  const warningCount = sevCounts.warning;
+  const totalVisible = entries.length - (
+    (hiddenSev.has("error") ? sevCounts.error : 0) +
+    (hiddenSev.has("warning") ? sevCounts.warning : 0) +
+    (hiddenSev.has("info") ? sevCounts.info : 0) +
+    (hiddenSev.has("hint") ? sevCounts.hint : 0)
+  );
+
+  const toggleSev = (sev: DiagnosticEntry["severity"]) => {
+    setHiddenSev((prev) => {
+      const next = new Set(prev);
+      if (next.has(sev)) next.delete(sev);
+      else next.add(sev);
+      return next;
+    });
+  };
 
   const onOpen = (path: string, line: number, col: number) => {
     void useStore
@@ -149,10 +210,73 @@ export function DiagnosticsPanel({ wsId, root: _root }: Props) {
         </span>
       </div>
 
+      {entries.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            padding: "6px 10px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          {SEVERITY_ORDER.map((sev) => {
+            const active = !hiddenSev.has(sev);
+            const color = SEVERITY_COLOR[sev];
+            return (
+              <button
+                key={sev}
+                type="button"
+                onClick={() => toggleSev(sev)}
+                title={
+                  active
+                    ? `Hide ${SEVERITY_LABEL[sev].toLowerCase()}`
+                    : `Show ${SEVERITY_LABEL[sev].toLowerCase()}`
+                }
+                aria-pressed={active}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  border: `1px solid ${active ? color : "var(--border)"}`,
+                  background: active ? `${color}22` : "transparent",
+                  color: active ? "var(--fg)" : "var(--fg-muted)",
+                  font: "inherit",
+                  fontSize: 11,
+                  lineHeight: 1.4,
+                  cursor: "pointer",
+                  opacity: active ? 1 : 0.7,
+                }}
+              >
+                <Icon name={SEVERITY_ICON[sev]} size={11} />
+                <span>{SEVERITY_LABEL[sev]}</span>
+                <span
+                  style={{
+                    fontVariantNumeric: "tabular-nums",
+                    opacity: 0.85,
+                  }}
+                >
+                  {sevCounts[sev]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {entries.length === 0 && (
         <div className="diagnostics-empty">
           No problems detected. Markers come from Monaco's language services
           (TypeScript / JavaScript out of the box).
+        </div>
+      )}
+
+      {entries.length > 0 && totalVisible === 0 && (
+        <div className="diagnostics-empty">
+          All {entries.length} problem{entries.length === 1 ? "" : "s"} hidden
+          by filters.
         </div>
       )}
 
