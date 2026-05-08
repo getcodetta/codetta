@@ -6,6 +6,7 @@ import { startFsBusOnce } from "./fsBus";
 import { runCommand } from "./actions";
 import { bootstrapTheme } from "./theme";
 import { onPaletteOpen } from "./paletteBus";
+import { onFootprintOpen } from "./footprintBus";
 import { basename } from "./pathUtils";
 import { WorkspacePicker } from "./components/WorkspacePicker";
 import { WorkspaceShell } from "./components/WorkspaceShell";
@@ -23,6 +24,7 @@ import { useEditorState } from "./editorState";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Dialog } from "./components/Dialog";
 import { SettingsModal } from "./components/SettingsModal";
+import { FootprintModal } from "./components/FootprintModal";
 import { TerminalPopoutWindow } from "./components/TerminalPopoutWindow";
 import { useZenMode } from "./zenMode";
 import "./App.css";
@@ -54,6 +56,7 @@ function MainApp() {
   useEffect(() => {
     paletteOpenRef.current = paletteOpen;
   }, [paletteOpen]);
+  const [footprintOpen, setFootprintOpen] = useState(false);
   const [recentOverlayOpen, setRecentOverlayOpen] = useState(false);
   const [recentSelected, setRecentSelected] = useState(0);
   const [recentList, setRecentList] = useState<string[]>([]);
@@ -96,6 +99,10 @@ function MainApp() {
       setPaletteInitial(initial);
       setPaletteOpen(true);
     });
+  }, []);
+
+  useEffect(() => {
+    return onFootprintOpen(() => setFootprintOpen(true));
   }, []);
 
   // Native OS drag-and-drop into the window. Tauri intercepts HTML
@@ -453,6 +460,10 @@ function MainApp() {
       <DiffModal />
       <Dialog />
       <SettingsModal />
+      <FootprintModal
+        open={footprintOpen}
+        onClose={() => setFootprintOpen(false)}
+      />
       {/* ClaudePermissionOverlay now mounts inline inside AIChatPanel
           so the request appears in the chat next to the agent text
           that triggered it, not as a full-screen modal. */}
