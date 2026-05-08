@@ -6,6 +6,7 @@ declare const __APP_VERSION__: string;
 import { findPaneById, parseKey, useStore } from "./store";
 import { openPalette } from "./paletteBus";
 import { openSettings } from "./settingsBus";
+import { openShortcuts } from "./shortcutsBus";
 import { getActiveEditor, requestDiff } from "./editorState";
 import { alert as dialogAlert, confirm as dialogConfirm } from "./dialog";
 import { fs } from "./ipc";
@@ -684,6 +685,13 @@ export const commands: CommandSpec[] = [
     label: "Claude Code: Open user CLAUDE.md (~/.claude/CLAUDE.md)",
     category: "AI",
     run: () => void openUserClaudeMd(),
+  },
+  {
+    id: "help.shortcuts",
+    label: "Keyboard Shortcuts",
+    category: "Help",
+    accel: "F1",
+    run: () => openShortcuts(),
   },
   {
     id: "help.repo",

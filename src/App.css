@@ -7076,6 +7076,120 @@ input {
   z-index: 999;
 }
 
+/* Keyboard-shortcut reference modal */
+.shortcut-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.shortcut-modal {
+  width: min(720px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.shortcut-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.shortcut-modal-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.shortcut-modal-close {
+  background: transparent;
+  border: 0;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 3px;
+}
+.shortcut-modal-close:hover {
+  background: var(--bg);
+  color: var(--fg);
+}
+.shortcut-modal-filter {
+  margin: 10px 16px;
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+.shortcut-modal-filter:focus {
+  border-color: var(--accent);
+}
+.shortcut-modal-body {
+  padding: 4px 16px 16px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.shortcut-modal-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--fg-muted);
+}
+.shortcut-modal-group {
+  margin-top: 14px;
+}
+.shortcut-modal-group-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.shortcut-modal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.shortcut-modal-table tr {
+  border-bottom: 1px solid var(--border);
+}
+.shortcut-modal-table tr:last-child {
+  border-bottom: 0;
+}
+.shortcut-modal-label {
+  padding: 6px 0;
+  color: var(--fg);
+}
+.shortcut-modal-accel {
+  padding: 6px 0;
+  text-align: right;
+  white-space: nowrap;
+}
+.shortcut-modal-accel kbd {
+  display: inline-block;
+  padding: 1px 8px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg);
+}
+.shortcut-modal-noaccel {
+  color: var(--fg-muted);
+  opacity: 0.5;
+}
+
 /* Zen mode escape hatch — appears only when the global zen flag is on
    (App.tsx renders the button conditionally). 0.18 opacity at rest so
    it doesn't draw the eye in a "distraction-free" view, but lifts to

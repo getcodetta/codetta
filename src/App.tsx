@@ -24,6 +24,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Dialog } from "./components/Dialog";
 import { SettingsModal } from "./components/SettingsModal";
 import { TerminalPopoutWindow } from "./components/TerminalPopoutWindow";
+import { ShortcutReferenceModal } from "./components/ShortcutReferenceModal";
+import { onShortcutsOpen } from "./shortcutsBus";
 import { useZenMode } from "./zenMode";
 import "./App.css";
 
@@ -44,6 +46,8 @@ function MainApp() {
   const activeId = useStore((s) => s.activeId);
   const loaded = useStore((s) => s.loaded);
   const zen = useZenMode();
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  useEffect(() => onShortcutsOpen(() => setShortcutsOpen(true)), []);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteInitial, setPaletteInitial] = useState("");
   // Mirror paletteOpen into a ref so the keyboard-shortcut effect below
@@ -242,6 +246,14 @@ function MainApp() {
       if (e.key === "F11" && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         runCommand("view.toggle_zen");
+        return;
+      }
+      // F1 opens the keyboard-shortcut reference. Conventional Help
+      // key; we own it because there's no native browser/OS Help
+      // dialog worth deferring to in a Tauri app.
+      if (e.key === "F1" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        runCommand("help.shortcuts");
         return;
       }
       const ctrl = e.ctrlKey || e.metaKey;
@@ -453,6 +465,10 @@ function MainApp() {
       <DiffModal />
       <Dialog />
       <SettingsModal />
+      <ShortcutReferenceModal
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+      />
       {/* ClaudePermissionOverlay now mounts inline inside AIChatPanel
           so the request appears in the chat next to the agent text
           that triggered it, not as a full-screen modal. */}
