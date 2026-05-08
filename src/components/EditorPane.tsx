@@ -33,6 +33,10 @@ import {
   prevLineBookmark,
   subscribeLineBookmarks,
 } from "../lineBookmarks";
+import {
+  loadEditorConfig,
+  type EditorConfigResolved,
+} from "../editorConfig";
 
 // Right-click "Ask AI to …" actions registered with Monaco. Each one
 // grabs the current selection (or the whole file when nothing is
@@ -206,6 +210,24 @@ export function EditorPane({ wsId, path }: Props) {
     null,
   );
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Per-file `.editorconfig` overlay. Loaded async whenever the file
+  // path or workspace root changes; while it's resolving, the editor
+  // shows the global settings — see src/editorConfig.ts for the
+  // intended UX caveats.
+  const [ec, setEc] = useState<EditorConfigResolved>({});
+  useEffect(() => {
+    if (!path || !wsRoot) {
+      setEc({});
+      return;
+    }
+    let cancelled = false;
+    void loadEditorConfig(path, wsRoot).then((r) => {
+      if (!cancelled) setEc(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [path, wsRoot]);
   // Mirror of "the markdown split preview is currently active" so the
   // editor's scroll listener (registered once in onMount) can read
   // the current value without re-registering on every state change.
@@ -220,12 +242,17 @@ export function EditorPane({ wsId, path }: Props) {
   }, [isMarkdown, previewOpen]);
 
   // Apply runtime settings changes (font size, word wrap) without remounting.
+  // The .editorconfig overlay (`ec`) wins for tabSize / insertSpaces when
+  // present; everything else stays driven by the global settings.
   useEffect(() => {
     if (!editorRef.current) return;
     editorRef.current.updateOptions({
       fontSize: settings.fontSize,
       wordWrap: settings.wordWrap,
-      tabSize: settings.tabSize,
+      tabSize: ec.tab_width ?? ec.indent_size ?? settings.tabSize,
+      insertSpaces: ec.indent_style
+        ? ec.indent_style === "space"
+        : undefined,
       minimap: { enabled: settings.minimap },
       autoClosingBrackets: settings.autoClosingBrackets,
       renderWhitespace: settings.renderWhitespace,
@@ -237,6 +264,7 @@ export function EditorPane({ wsId, path }: Props) {
     settings.minimap,
     settings.autoClosingBrackets,
     settings.renderWhitespace,
+    ec,
   ]);
 
   // Per-file view-state preservation. When the editor's model swaps
@@ -486,7 +514,10 @@ export function EditorPane({ wsId, path }: Props) {
           fontSize: settings.fontSize,
           minimap: { enabled: settings.minimap },
           scrollBeyondLastLine: false,
-          tabSize: settings.tabSize,
+          tabSize: ec.tab_width ?? ec.indent_size ?? settings.tabSize,
+          insertSpaces: ec.indent_style
+            ? ec.indent_style === "space"
+            : undefined,
           renderWhitespace: settings.renderWhitespace,
           smoothScrolling: true,
           automaticLayout: true,
