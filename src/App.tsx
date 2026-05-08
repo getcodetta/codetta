@@ -3,7 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { startFsBusOnce } from "./fsBus";
-import { runCommand } from "./actions";
+import { commands, runCommand } from "./actions";
+import { accelMatches } from "./accelMatch";
 import { bootstrapTheme } from "./theme";
 import { onPaletteOpen } from "./paletteBus";
 import { basename } from "./pathUtils";
@@ -38,6 +39,46 @@ const IS_POPOUT = (() => {
     return false;
   }
 })();
+
+// Command ids whose accelerators are dispatched by the bespoke `if/else`
+// chain in `onKey` below. Anything in this set is INTENTIONALLY skipped by
+// the generic accel-fallthrough loop further down, because the manual
+// branch does something the generic dispatcher can't (palette toggle,
+// recent-files cycling, dirty-buffer guards inline, etc). New accels that
+// just want "press this, run that command" should NOT be added here —
+// that's the whole point of the fallthrough.
+const HANDLED_BY_MANUAL_BRANCHES = new Set<string>([
+  "file.save",
+  "file.save_all",
+  "file.open_folder",
+  "file.close_workspace",
+  "view.toggle_sidebar",
+  "view.toggle_panel",
+  "view.files",
+  "view.source_control",
+  "view.search",
+  "view.search_palette",
+  "view.todos",
+  "view.goto_symbol",
+  "edit.goto_symbol",
+  "view.reload",
+  "edit.goto_line",
+  "view.zoom_in",
+  "view.zoom_out",
+  "view.zoom_reset",
+  "edit.format_document",
+  "view.settings",
+  "edit.reopen_closed_tab",
+  "terminal.new_bottom",
+  // view.quick_open (Ctrl+P) is handled inline by the palette toggle
+  // branch — leave it manual so the toggle behaviour survives.
+  "view.quick_open",
+  // F11 zen toggle is dispatched at the top of onKey before the Ctrl
+  // gate, so it's also a manual branch.
+  "view.toggle_zen",
+  // Alt+Z word wrap has its own handler (`onAltKey`).
+  "edit.toggle_word_wrap",
+]);
 
 function MainApp() {
   const hydrate = useStore((s) => s.hydrate);
@@ -335,6 +376,28 @@ function MainApp() {
       } else if (k === ",") {
         e.preventDefault();
         runCommand("view.settings");
+      }
+
+      // Generic accelerator fallthrough.
+      //
+      // Every command above is handled with bespoke logic (palette toggle,
+      // recent-files cycling, etc) — those branches stay. But for any NEW
+      // command that just wants "press this accel, run my command" we
+      // dispatch by walking the registry. That way adding `accel: "Ctrl+M"`
+      // to a command in actions.ts is enough; no second edit here.
+      //
+      // We skip ids that are already handled explicitly above so the
+      // dedicated branches keep ownership of their accel (e.g. file.save
+      // also runs format-on-save inline; we don't want to double-fire).
+      const handledAbove = HANDLED_BY_MANUAL_BRANCHES;
+      for (const c of commands) {
+        if (!c.accel) continue;
+        if (handledAbove.has(c.id)) continue;
+        if (accelMatches(c.accel, e)) {
+          e.preventDefault();
+          runCommand(c.id);
+          return;
+        }
       }
     }
     // Alt+Z: word wrap toggle (no Ctrl).
