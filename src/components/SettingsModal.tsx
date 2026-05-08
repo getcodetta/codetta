@@ -499,6 +499,17 @@ export function SettingsModal() {
               value={settings.stickyScroll}
               onChange={(v) => setEditorSettings({ stickyScroll: v })}
             />
+            <Toggle
+              label="Format on type and paste"
+              value={settings.formatOnTypePaste}
+              onChange={(v) =>
+                setEditorSettings({ formatOnTypePaste: v })
+              }
+            />
+            <div className="settings-row settings-row-note">
+              Reindent surrounding code as you type ; or {"}"}; auto-format
+              pasted code. Off by default.
+            </div>
           </Section>
 
           <Section title="On save">
