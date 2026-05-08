@@ -7,7 +7,11 @@ import { findPaneById, parseKey, useStore } from "./store";
 import { openPalette } from "./paletteBus";
 import { openSettings } from "./settingsBus";
 import { getActiveEditor, requestDiff } from "./editorState";
-import { alert as dialogAlert, confirm as dialogConfirm } from "./dialog";
+import {
+  alert as dialogAlert,
+  confirm as dialogConfirm,
+  prompt as dialogPrompt,
+} from "./dialog";
 import { fs } from "./ipc";
 import {
   error as toastError,
@@ -119,6 +123,31 @@ export const commands: CommandSpec[] = [
     run: () => {
       const wsId = s().activeId;
       if (wsId) void s().closeWorkspace(wsId);
+    },
+  },
+  {
+    id: "workspace.open_recent",
+    label: "Open Recent Workspace…",
+    category: "Workspace",
+    run: async () => {
+      const recent = s().recent ?? [];
+      if (recent.length === 0) {
+        toastInfo("No recent workspaces yet — open a folder with Ctrl+O.");
+        return;
+      }
+      const list = recent
+        .slice(0, 20)
+        .map((w, i) => `${i + 1}. ${w.name}  —  ${w.root}`)
+        .join("\n");
+      const choice = await dialogPrompt(
+        `Pick a recent workspace (1-${Math.min(recent.length, 20)}):\n${list}`,
+        "1",
+        { title: "Open Recent", okLabel: "Open" },
+      );
+      const idx = parseInt(choice ?? "", 10) - 1;
+      const target = recent[idx];
+      if (!target) return;
+      void s().openWorkspace(target.root);
     },
   },
   {
