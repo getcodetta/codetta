@@ -8479,3 +8479,139 @@ input {
   white-space: pre;
   word-break: normal;
 }
+
+/* Workspace Footprint modal.
+
+   Visual debt: FootprintModal piggy-backs on `.settings-modal` +
+   `.shortcut-modal` for the chrome and inline-styles its table layout.
+   That gets the box right but leaves the table rows, action buttons
+   and filter input looking like raw browser defaults — no hover,
+   unthemed buttons, unfocused filter input. The fix is to scope a
+   small block of styles to the modal via its stable `aria-labelledby`
+   hook (the component does not expose dedicated `.fp-*` classes for
+   us to hang things off, and we're constrained to App.css only). The
+   selectors mirror the visual vocabulary of `.shortcut-modal-table`
+   (small fonts, uppercase muted headers, full-row hover) and
+   `.bookmarks-row` (`var(--bg-hi)` highlight). */
+[aria-labelledby="footprint-modal-title"] table {
+  font-size: 12px;
+}
+[aria-labelledby="footprint-modal-title"] thead tr {
+  background: var(--bg-alt);
+}
+[aria-labelledby="footprint-modal-title"] th {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+[aria-labelledby="footprint-modal-title"] tbody tr {
+  transition: background-color 0.08s ease-out;
+}
+[aria-labelledby="footprint-modal-title"] tbody tr:hover {
+  background: var(--bg-hi);
+}
+/* The Path / Title cell — first column. The component sets an inline
+   `font-family` on the path cell only, but every name cell benefits
+   from ellipsis-on-overflow so long titles do not blow the modal
+   width out. `min-width: 0` is the standard flex/table ellipsis
+   escape hatch. */
+[aria-labelledby="footprint-modal-title"] tbody td:first-child {
+  min-width: 0;
+  color: var(--fg);
+}
+/* Size column — monospace so 8-digit byte counts line up vertically
+   under the right-aligned header. Inline style only sets alignment;
+   we add the font-family + dim color here. */
+[aria-labelledby="footprint-modal-title"] tbody td:nth-child(2) {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* Filter input. The component reuses `.settings-num` (which is sized
+   for a 90px number field) and then overrides width+padding inline.
+   The base rule has no focus state, so type-ahead feels dead. Scope a
+   focus ring to just this modal's filters. */
+[aria-labelledby="footprint-modal-title"] input.settings-num {
+  background: var(--bg);
+  color: var(--fg);
+  text-align: left;
+}
+[aria-labelledby="footprint-modal-title"] input.settings-num:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+[aria-labelledby="footprint-modal-title"] input.settings-num::placeholder {
+  color: var(--fg-muted);
+}
+/* Action buttons inside the table (Unload / Close). The component
+   sets only font-size + padding inline, leaving the browser default
+   chrome button look. Theme them as small, transparent-with-border
+   chips; lift to accent on hover, danger on hover for Close. There is
+   no class to distinguish destructive from non-destructive buttons,
+   so we pick destructive-on-hover semantics from the title attribute
+   (the Close button's title contains "Kill"). */
+[aria-labelledby="footprint-modal-title"] tbody button {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: inherit;
+  line-height: 1.4;
+  transition:
+    border-color 0.1s ease-out,
+    color 0.1s ease-out,
+    background-color 0.1s ease-out;
+}
+[aria-labelledby="footprint-modal-title"] tbody button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+[aria-labelledby="footprint-modal-title"] tbody button[title*="Kill"]:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+[aria-labelledby="footprint-modal-title"] tbody button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* Footer "Done" button picks up the standard themed-button look so it
+   does not look like a stray browser default next to the themed body.
+   The footer ".settings-foot button" selector is otherwise unstyled
+   project-wide, so we scope this one to the footprint modal. */
+[aria-labelledby="footprint-modal-title"] .settings-foot button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color 0.1s ease-out,
+    background-color 0.1s ease-out;
+}
+[aria-labelledby="footprint-modal-title"] .settings-foot button:hover {
+  border-color: var(--accent);
+  background: var(--bg-hi);
+}
+/* Section headers (File buffers / Terminals). The component renders
+   plain `<header><strong>…</strong></header>` with inline flex; the
+   "strong" loses some weight in the dim modal palette. Bump the
+   uppercase-letter-spacing treatment used elsewhere so the two
+   sections read as titled bands rather than bold paragraphs. */
+[aria-labelledby="footprint-modal-title"] .settings-body section > header strong {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+}
+/* Dirty indicator inside the State column. The component inlines a
+   `var(--warn, #d4a017)` color, but the project does not define
+   `--warn` anywhere so it falls back to a muddy yellow. Provide the
+   missing custom property at modal scope so the existing inline rule
+   resolves to the brighter amber the sidebar `.sb-dirty` chip uses,
+   without us having to fight the inline style with !important. */
+[aria-labelledby="footprint-modal-title"] {
+  --warn: #ffd54f;
+}
