@@ -444,8 +444,17 @@ export function renderMarkdown(md: string): string {
         break;
       }
       case "code": {
+        // Wrap the <pre><code> in a relatively-positioned container so a
+        // hover-revealed Copy button can be absolutely positioned in the
+        // top-right corner. The `data-source-line` attribute moves from
+        // <pre> onto the wrapper — the preview's click-to-jump handler
+        // uses `target.closest("[data-source-line]")` so the wrapper
+        // satisfies that lookup just as well as <pre> did. The button
+        // is tagged `data-md-copy="true"` so the click handler can
+        // intercept copy clicks before they fall through to the jump
+        // handler.
         parts.push(
-          `<pre${lineAttr(b)}><code class="lang-${b.lang ?? ""}">${escapeHtml(b.text ?? "")}</code></pre>`,
+          `<div class="md-code-block"${lineAttr(b)}><button class="md-code-copy" type="button" aria-label="Copy code" title="Copy code" data-md-copy="true">Copy</button><pre><code class="lang-${b.lang ?? ""}">${escapeHtml(b.text ?? "")}</code></pre></div>`,
         );
         break;
       }

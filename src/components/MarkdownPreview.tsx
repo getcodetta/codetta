@@ -58,28 +58,83 @@ export function MarkdownPreview({ content, interactive = false }: Props) {
     });
   }, [interactive]);
 
-  // Headings are flagged with .md-anchor as the primary jump targets;
-  // every block carries data-source-line so users can also click into
-  // paragraphs / code blocks. Links + checkboxes keep their native
-  // behaviour.
-  const handleClick = interactive
-    ? (e: React.MouseEvent<HTMLDivElement>) => {
-        const target = e.target as HTMLElement | null;
-        if (!target) return;
-        if (target.closest("a") || target.closest("input")) return;
-        const el = target.closest<HTMLElement>("[data-source-line]");
-        if (!el) return;
-        const line = parseInt(el.dataset.sourceLine ?? "0", 10);
-        if (line > 0) setEditorGoto(line, 1);
+  // Copy-button click runs on every preview (chat bubbles + split mode);
+  // the click-to-jump path is gated on `interactive`. Both share the
+  // same delegated listener so we don't pay a per-render listener tax
+  // per code block.
+  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    // Copy button: intercept BEFORE the data-source-line walk so a
+    // click on the button doesn't also jump the editor to that block.
+    const copyBtn = target.closest<HTMLButtonElement>("[data-md-copy]");
+    if (copyBtn) {
+      const wrapper = copyBtn.closest(".md-code-block");
+      const code = wrapper?.querySelector("code");
+      const text = code?.textContent ?? "";
+      // navigator.clipboard is async; we don't await — we just flip the
+      // label optimistically. If the write fails (no permission, no
+      // secure context), the worst case is a visual "Copied" with
+      // nothing on the clipboard, which beats blocking the UI on a
+      // promise we have no recovery path for.
+      try {
+        void navigator.clipboard?.writeText(text);
+      } catch {
+        // Older / restricted environments — silently no-op.
       }
-    : undefined;
+      const original = copyBtn.textContent;
+      copyBtn.textContent = "Copied";
+      window.setTimeout(() => {
+        // Guard against the node being unmounted/re-rendered: if the
+        // text already changed back, leave it alone.
+        if (copyBtn.isConnected && copyBtn.textContent === "Copied") {
+          copyBtn.textContent = original ?? "Copy";
+        }
+      }, 1500);
+      return;
+    }
+    if (!interactive) return;
+    // Headings are flagged with .md-anchor as the primary jump targets;
+    // every block carries data-source-line so users can also click into
+    // paragraphs / code blocks. Links + checkboxes keep their native
+    // behaviour.
+    if (target.closest("a") || target.closest("input")) return;
+    const el = target.closest<HTMLElement>("[data-source-line]");
+    if (!el) return;
+    const line = parseInt(el.dataset.sourceLine ?? "0", 10);
+    if (line > 0) setEditorGoto(line, 1);
+  };
 
   return (
-    <div
-      ref={ref}
-      className={`md-preview${interactive ? " md-preview-interactive" : ""}`}
-      onClick={handleClick}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <>
+      <style>{`
+        .md-code-block { position: relative; margin-bottom: 14px; }
+        .md-code-copy {
+          position: absolute;
+          top: 6px;
+          right: 8px;
+          padding: 2px 8px;
+          font-size: 11px;
+          line-height: 1.4;
+          color: var(--accent, #4ea1ff);
+          background: transparent;
+          border: 1px solid var(--accent, #4ea1ff);
+          border-radius: 3px;
+          cursor: pointer;
+          opacity: 0;
+          transition: opacity 120ms ease;
+          font-family: inherit;
+        }
+        .md-code-block:hover .md-code-copy { opacity: 0.85; }
+        .md-code-copy:hover { opacity: 1; }
+        .md-code-copy:focus-visible { opacity: 1; outline: none; }
+      `}</style>
+      <div
+        ref={ref}
+        className={`md-preview${interactive ? " md-preview-interactive" : ""}`}
+        onClick={handleClick}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </>
   );
 }
