@@ -12,6 +12,7 @@ import { TodosPanel } from "./TodosPanel";
 import { AIChatPanel } from "./AIChatPanel";
 import { OutlinePanel } from "./OutlinePanel";
 import { BookmarksPanel } from "./BookmarksPanel";
+import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { RemoteSftpPanel } from "./RemoteSftpPanel";
 import { Icon } from "./Icon";
 
@@ -131,7 +132,17 @@ export function SidebarStack({ wsId, ws }: Props) {
       case "todos":
         return <TodosPanel wsId={wsId} root={ws.meta.root} />;
       case "outline":
-        return <OutlinePanel wsId={wsId} root={ws.meta.root} />;
+        // Outline + Diagnostics share the "navigate to a line in the
+        // workspace" purpose, so the Problems panel rides inside the
+        // Outline section. Adding a top-level "diagnostics" SidebarView
+        // would require extending the union in store.ts — out of scope
+        // for this change — so the two stack vertically here instead.
+        return (
+          <>
+            <OutlinePanel wsId={wsId} root={ws.meta.root} />
+            <DiagnosticsPanel wsId={wsId} root={ws.meta.root} />
+          </>
+        );
       case "bookmarks":
         return <BookmarksPanel wsId={wsId} root={ws.meta.root} />;
       case "ai":
