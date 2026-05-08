@@ -9,7 +9,7 @@
 // must NOT show up in this editor — they'd let a typo wipe the user's
 // open tabs and conversation log.
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { confirm as dialogConfirm } from "../dialog";
 import { errMsg } from "../notify";
 import { confirmDiscardUnsaved } from "../actions";
@@ -60,6 +60,66 @@ export function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
     | { kind: "ok"; count: number }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
+  // Filter is purely a view-level concern — never persisted, never
+  // changes what gets written on Apply. The textarea still owns the
+  // full JSON blob; the filter just helps the user find a key.
+  const [filter, setFilter] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Which top-level keys currently exist in the JSON blob — parsed
+  // best-effort so we can show an accurate "N of M" without forcing
+  // valid JSON while editing. Falls back to the SETTINGS_KEYS allowlist
+  // (filtered to keys actually present as substrings) if the blob is
+  // mid-edit and unparseable.
+  const presentKeys = useMemo<string[]>(() => {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return Object.keys(parsed as Record<string, unknown>);
+      }
+    } catch {
+      // fall through
+    }
+    return SETTINGS_KEYS.filter((k) => text.includes(`"${k}"`));
+  }, [text]);
+
+  const trimmedFilter = filter.trim().toLowerCase();
+  const matchingKeys = useMemo(() => {
+    if (!trimmedFilter) return presentKeys;
+    return presentKeys.filter((k) =>
+      k.toLowerCase().includes(trimmedFilter),
+    );
+  }, [presentKeys, trimmedFilter]);
+
+  // Scroll the textarea to the first match. We locate the literal
+  // `"key":` token in the source text — that's how snapshotSettingsJson
+  // emits each entry — then approximate the scroll offset from the
+  // line index so we land near the match without fancy measurement.
+  const jumpToFirstMatch = (key: string) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const needle = `"${key}":`;
+    const idx = text.indexOf(needle);
+    if (idx < 0) return;
+    const lineNo = text.slice(0, idx).split("\n").length - 1;
+    // Approximate per-line height from the textarea's font/line metrics.
+    const cs = window.getComputedStyle(ta);
+    const lineH =
+      parseFloat(cs.lineHeight) ||
+      parseFloat(cs.fontSize) * 1.4 ||
+      18;
+    ta.focus();
+    ta.setSelectionRange(idx, idx + needle.length);
+    ta.scrollTop = Math.max(0, lineNo * lineH - lineH * 2);
+  };
+
+  const onFilterChange = (next: string) => {
+    setFilter(next);
+    const q = next.trim().toLowerCase();
+    if (!q) return;
+    const first = presentKeys.find((k) => k.toLowerCase().includes(q));
+    if (first) jumpToFirstMatch(first);
+  };
 
   const reload = () => {
     setText(snapshotSettingsJson());
@@ -172,7 +232,51 @@ export function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
             : "Copied to clipboard."}
         </div>
       )}
+      <div
+        className="settings-row"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          margin: "6px 0",
+        }}
+      >
+        <input
+          type="text"
+          placeholder="Filter keys… (jumps to first match)"
+          value={filter}
+          onChange={(e) => onFilterChange(e.target.value)}
+          aria-label="Filter settings keys"
+          style={{ flex: 1, minWidth: 0 }}
+        />
+        {trimmedFilter && (
+          <span
+            style={{ fontSize: 12, opacity: 0.75, whiteSpace: "nowrap" }}
+          >
+            {matchingKeys.length} of {presentKeys.length} matches
+          </span>
+        )}
+        {filter && (
+          <button
+            className="sftp-btn"
+            onClick={() => setFilter("")}
+            title="Clear filter"
+            aria-label="Clear filter"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {trimmedFilter && matchingKeys.length === 0 && (
+        <div
+          className="settings-row settings-row-note"
+          style={{ opacity: 0.75 }}
+        >
+          No keys match the filter.
+        </div>
+      )}
       <textarea
+        ref={textareaRef}
         className="settings-json-textarea"
         value={text}
         spellCheck={false}
