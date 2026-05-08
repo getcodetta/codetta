@@ -68,63 +68,6 @@ function inlineMd(s: string): string {
       return `<a href="${safe}"${title ? ` title="${title}"` : ""} target="_blank" rel="noopener noreferrer">${text}</a>`;
     },
   );
-  // Auto-linkify bare URLs (http/https/mailto) and bare email addresses
-  // that aren't already wrapped in an explicit [text](url) link. Code
-  // spans are still tucked behind <<CODEn>> placeholders so this pass
-  // can never reach inside <code>…</code>. We split on existing <a …>…
-  // </a> spans (created by the [text](url) pass above) so URLs already
-  // inside an anchor's href or visible text are not re-wrapped.
-  //
-  // URL match runs greedily up to the next whitespace, `<`, or `)`, then
-  // strips trailing sentence punctuation `.,!?;:` so "see foo.com." does
-  // not swallow the period. Stripped punctuation re-emits as plain text
-  // after the closing </a> tag.
-  const URL_RE = /\b(?:https?:\/\/|mailto:)[^\s<)]+/g;
-  const trimUrl = (u: string): string => u.replace(/[.,!?;:]+$/, "");
-  const EMAIL_RE = /\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b/gi;
-  const ANCHOR_RE = /<a\s[^>]*>[\s\S]*?<\/a>/g;
-  const linkifySegment = (seg: string): string => {
-    let s = seg.replace(URL_RE, (raw) => {
-      const url = trimUrl(raw);
-      const tail = raw.slice(url.length);
-      const safe = safeHrefUrl(url);
-      return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${url}</a>${tail}`;
-    });
-    // Re-split on the anchors we just created so the email pass doesn't
-    // touch addresses sitting inside a URL we already linkified.
-    const innerPieces: string[] = [];
-    let innerLast = 0;
-    for (const am of s.matchAll(ANCHOR_RE)) {
-      const idx = am.index ?? 0;
-      innerPieces.push(
-        s.slice(innerLast, idx).replace(EMAIL_RE, (addr) => {
-          const safe = safeHrefUrl(`mailto:${addr}`);
-          return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${addr}</a>`;
-        }),
-      );
-      innerPieces.push(am[0]);
-      innerLast = idx + am[0].length;
-    }
-    innerPieces.push(
-      s.slice(innerLast).replace(EMAIL_RE, (addr) => {
-        const safe = safeHrefUrl(`mailto:${addr}`);
-        return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${addr}</a>`;
-      }),
-    );
-    return innerPieces.join("");
-  };
-  {
-    const pieces: string[] = [];
-    let last = 0;
-    for (const m of out.matchAll(ANCHOR_RE)) {
-      const idx = m.index ?? 0;
-      pieces.push(linkifySegment(out.slice(last, idx)));
-      pieces.push(m[0]);
-      last = idx + m[0].length;
-    }
-    pieces.push(linkifySegment(out.slice(last)));
-    out = pieces.join("");
-  }
   // Bold (strong) — both ** and __
   out = out.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
   out = out.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
