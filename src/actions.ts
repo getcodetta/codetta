@@ -8,7 +8,8 @@ import { openPalette } from "./paletteBus";
 import { openSettings } from "./settingsBus";
 import { getActiveEditor, requestDiff } from "./editorState";
 import { alert as dialogAlert, confirm as dialogConfirm } from "./dialog";
-import { fs } from "./ipc";
+import { fs, git as gitApi } from "./ipc";
+import { requestAIPrompt } from "./aiBus";
 import {
   error as toastError,
   errMsg,
@@ -684,6 +685,49 @@ export const commands: CommandSpec[] = [
     label: "Claude Code: Open user CLAUDE.md (~/.claude/CLAUDE.md)",
     category: "AI",
     run: () => void openUserClaudeMd(),
+  },
+  {
+    id: "ai.generate_commit_message",
+    label: "Generate Commit Message from Staged Diff",
+    category: "AI",
+    run: async () => {
+      const wsId = s().activeId;
+      if (!wsId) return;
+      const ws = s().loaded[wsId];
+      if (!ws) return;
+      let diff = "";
+      try {
+        diff = await gitApi.diffStaged(ws.meta.root);
+      } catch (e) {
+        toastError(`Couldn't read staged diff: ${errMsg(e)}`);
+        return;
+      }
+      const trimmed = diff.trim();
+      if (!trimmed) {
+        toastInfo("No staged changes — git add some files first.");
+        return;
+      }
+      // Cap the diff at 60 KB so a giant rebase doesn't blow up the
+      // context window. The model gets a hint that more was elided
+      // so it can reason about partiality.
+      const MAX_BYTES = 60 * 1024;
+      const elided = trimmed.length > MAX_BYTES;
+      const sample = elided ? trimmed.slice(0, MAX_BYTES) : trimmed;
+      const text = `Draft a Conventional Commits-style commit message for these staged changes. Use this format:
+
+  <type>: <terse summary, ~60 chars max>
+
+  <body bullets explaining WHY, not WHAT — the diff already shows the what>
+
+Type vocabulary: feat, fix, refactor, docs, test, chore, style, perf, build, ci. Pick the one that matches the dominant change.
+
+${elided ? "(Diff truncated to ~60 KB — full diff is larger.)\n\n" : ""}Staged diff:
+
+\`\`\`diff
+${sample}
+\`\`\``;
+      requestAIPrompt({ wsId, text, send: true });
+    },
   },
   {
     id: "help.repo",
