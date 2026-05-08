@@ -131,10 +131,203 @@ function inlineMd(s: string): string {
   // Italic (em) — both * and _
   out = out.replace(/(^|[^*])\*([^*\n]+)\*([^*]|$)/g, "$1<em>$2</em>$3");
   out = out.replace(/(^|[^_])_([^_\n]+)_([^_]|$)/g, "$1<em>$2</em>$3");
+  // Auto-linkify bare URLs and email addresses. Runs late so existing
+  // <a> tags from [text](url) markdown links and <code>…</code>
+  // restored placeholders are present and skippable.
+  //
+  // Important context: by this point escapeHtml has already converted
+  //   &  →  &amp;
+  //   <  →  &lt;
+  //   >  →  &gt;
+  //   "  →  &quot;
+  // and code-span placeholders <<CODE0>> have become &lt;&lt;CODE0&gt;&gt;.
+  // The URL/email regexes must therefore tolerate "&amp;" inside URLs
+  // (real query strings get escaped this way) and must NOT cross HTML
+  // tag boundaries or re-linkify URLs already inside an <a>.
+  //
+  // Trace table (input → produced anchor tag):
+  //   https://example.com/foo?bar=1&baz=2#hash
+  //     → after escape: https://example.com/foo?bar=1&amp;baz=2#hash
+  //     → href: https://example.com/foo?bar=1&amp;baz=2#hash (kept as-is)
+  //     → visible: https://example.com/foo?bar=1&baz=2#hash (decoded)
+  //   (see https://example.com) → ) excluded by char class, paren stays outside
+  //   before:https://example.com,after → trailing ',' stripped, link stops there
+  //   support@ → no TLD → does NOT match
+  //   dev+tag@sub.example.co.uk → matches as email
+  //   <<CODE0>> (placeholder) → ` becomes &lt;&lt;CODE0&gt;&gt; →
+  //     URL pattern requires scheme so won't match; email pattern
+  //     forbids '&' immediately before the local part so the trailing
+  //     '0' inside the placeholder cannot be glued onto a preceding
+  //     "@".
+  out = autoLinkify(out);
   // Restore code spans. Match the post-escape form so a literal
   // "<<CODE0>>" the user happens to write goes through the escape
   // pipeline first and won't trigger the restore.
   out = out.replace(/&lt;&lt;CODE(\d+)&gt;&gt;/g, (_m, idx: string) => codes[+idx]);
+  return out;
+}
+
+// Decode the subset of HTML entities escapeHtml emits, so a URL whose
+// query string contains "&amp;" becomes user-readable "&" in the
+// link's visible text. Conservative: only the four entities we
+// produce. The href attribute keeps the encoded form (browsers
+// resolve entities in attribute values too).
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"');
+}
+
+// Strip trailing punctuation that's almost certainly NOT part of the
+// URL: sentence-enders and a closing paren when the URL itself
+// doesn't contain a balancing open paren. Also handles a trailing
+// "&amp;" left over from escaping (rare but avoids dangling href).
+function trimUrlTrail(url: string): { url: string; trail: string } {
+  let trail = "";
+  // Repeatedly peel one offender at a time so combinations like
+  // "https://x.com/." or "https://x.com)." all collapse cleanly.
+  // Cap iterations defensively.
+  for (let i = 0; i < 8; i++) {
+    const last = url[url.length - 1];
+    if (last === "." || last === "," || last === "!" || last === "?" ||
+        last === ";" || last === ":") {
+      trail = last + trail;
+      url = url.slice(0, -1);
+      continue;
+    }
+    if (last === ")" && !url.includes("(")) {
+      trail = last + trail;
+      url = url.slice(0, -1);
+      continue;
+    }
+    if (url.endsWith("&amp;")) {
+      trail = "&amp;" + trail;
+      url = url.slice(0, -"&amp;".length);
+      continue;
+    }
+    break;
+  }
+  return { url, trail };
+}
+
+function autoLinkify(html: string): string {
+  // Walk the html string, copying through anything inside an existing
+  // tag (<a …>…</a> in particular) untouched. We only linkify text
+  // segments that fall *between* tags. The HTML we generate above is
+  // well-formed enough for a tiny tokenizer: split on '<' boundaries.
+  //
+  // To avoid re-linkifying URLs inside an existing <a>…</a>, track an
+  // "in anchor" depth. We don't need a full HTML parser — just match
+  // <a …> opens and </a> closes case-insensitively.
+  const parts: string[] = [];
+  let i = 0;
+  let inAnchor = 0;
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt === -1) {
+      const tail = html.slice(i);
+      parts.push(inAnchor > 0 ? tail : linkifyTextSegment(tail));
+      break;
+    }
+    const text = html.slice(i, lt);
+    parts.push(inAnchor > 0 ? text : linkifyTextSegment(text));
+    // Find end of the tag. Tags here are simple — no quoted '>' inside
+    // attributes for the markup we generate.
+    const gt = html.indexOf(">", lt);
+    if (gt === -1) {
+      // Malformed; emit the rest verbatim.
+      parts.push(html.slice(lt));
+      break;
+    }
+    const tag = html.slice(lt, gt + 1);
+    parts.push(tag);
+    if (/^<a\b/i.test(tag)) inAnchor++;
+    else if (/^<\/a\s*>/i.test(tag)) inAnchor = Math.max(0, inAnchor - 1);
+    i = gt + 1;
+  }
+  return parts.join("");
+}
+
+function linkifyTextSegment(text: string): string {
+  // URL pattern: scheme + non-space, non-'<', non-')', non-',' run.
+  // - We exclude '<' so we never grab into a tag boundary (defensive
+  //   even though the caller already split on '<').
+  // - We exclude ')' so "(see https://x.com)" leaves the paren outside.
+  // - We exclude '"' / "'" so URLs inside attributes (shouldn't happen
+  //   here, but defensive) won't be re-eaten.
+  // - We exclude ',' so "before:https://x.com,after" doesn't glue
+  //   ",after" onto the URL. Real URLs basically never use unescaped
+  //   commas; encoded commas (%2C) still match.
+  // - We allow '&' because escapeHtml has already turned literal '&'
+  //   into '&amp;' and we want those captured.
+  const URL_RE = /\b(https?:\/\/|mailto:)[^\s<>"'),]+/g;
+
+  // Email pattern: tighter. Local part is word chars plus a few marks;
+  // domain requires at least one dot and a 2+ letter TLD. Negative
+  // lookbehind for ';' or '&' immediately before so we don't grab the
+  // tail of a stray HTML entity (e.g. "&lt;" -> after escape, won't
+  // match anyway since '<' is gone, but stay conservative).
+  const EMAIL_RE = /(?<![A-Za-z0-9._%+\-&;])[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g;
+
+  // Two-pass strategy: collect non-overlapping matches from both
+  // patterns ordered by index, then rebuild the string. Doing them in
+  // one pass with alternation works too, but separate regexes keep
+  // each pattern simpler.
+  type Hit = { start: number; end: number; href: string; visible: string };
+  const hits: Hit[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = URL_RE.exec(text)) !== null) {
+    const raw = m[0];
+    const { url, trail } = trimUrlTrail(raw);
+    if (!url) continue;
+    const safe = safeHrefUrl(url);
+    if (safe === "#") continue; // unknown scheme — leave text alone
+    hits.push({
+      start: m.index,
+      end: m.index + url.length,
+      href: safe,
+      visible: decodeEntities(url),
+    });
+    // The trailing punctuation is left in `text` and will be emitted
+    // by the gap copy below — no need to advance past it.
+    void trail;
+  }
+  while ((m = EMAIL_RE.exec(text)) !== null) {
+    const raw = m[0];
+    // Strip trailing punctuation that the domain class might over-eat
+    // (e.g. "user@example.com." → email is everything before the
+    // dot). Word boundary already handles most cases; this is belt
+    // and braces.
+    let addr = raw;
+    while (addr.length > 0 && /[.,!?;:]$/.test(addr)) addr = addr.slice(0, -1);
+    if (!addr.includes("@")) continue;
+    // After trimming the domain must still end in a 2+ letter TLD.
+    if (!/\.[A-Za-z]{2,}$/.test(addr)) continue;
+    hits.push({
+      start: m.index,
+      end: m.index + addr.length,
+      href: `mailto:${addr}`,
+      visible: addr,
+    });
+  }
+  if (hits.length === 0) return text;
+  // Sort and drop overlaps (URL match wins over an email substring).
+  hits.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged: Hit[] = [];
+  for (const h of hits) {
+    if (merged.length && h.start < merged[merged.length - 1].end) continue;
+    merged.push(h);
+  }
+  let out = "";
+  let cursor = 0;
+  for (const h of merged) {
+    out += text.slice(cursor, h.start);
+    out += `<a href="${h.href}" target="_blank" rel="noopener noreferrer">${h.visible}</a>`;
+    cursor = h.end;
+  }
+  out += text.slice(cursor);
   return out;
 }
 
