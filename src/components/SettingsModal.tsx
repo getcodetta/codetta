@@ -17,7 +17,6 @@ import { useTheme, type ThemeMode } from "../theme";
 import { onSettingsOpen } from "../settingsBus";
 import { useStore } from "../store";
 import { PROVIDERS } from "../providers";
-import { getJson, setJson } from "../localStore";
 import { McpServerBrowser } from "./McpServerBrowser";
 import { SettingsJsonEditor } from "./settingsJsonEditor";
 import {
@@ -38,79 +37,16 @@ import {
 } from "./claudeCodeSettings";
 import { SftpProfilesEditor } from "./sftpProfilesEditor";
 import { Icon } from "./Icon";
-
-// ─── AI Templates store ────────────────────────────────────────────────
-// Saved AI prompt templates the user reuses across chats. Persisted in
-// localStorage under "lcp.aiTemplates" as a JSON array. The store is
-// kept inline here (rather than in a separate module) because the
-// editor below is currently the sole consumer; the palette commands
-// `ai.save_template` / `ai.run_template` will gain matching helpers
-// when that wiring lands. The shape and helper names are kept simple
-// so a future split into `src/aiTemplates.ts` is a copy-paste move.
-
-interface AITemplate {
-  id: string;
-  label: string;
-  prompt: string;
-  createdAt: number;
-}
-
-const TEMPLATES_KEY = "lcp.aiTemplates";
-
-type TemplatesListener = () => void;
-const templatesListeners = new Set<TemplatesListener>();
-let templatesCache: AITemplate[] | null = null;
-
-function isTemplate(v: unknown): v is AITemplate {
-  if (!v || typeof v !== "object") return false;
-  const t = v as Partial<AITemplate>;
-  return (
-    typeof t.id === "string" &&
-    typeof t.label === "string" &&
-    typeof t.prompt === "string" &&
-    typeof t.createdAt === "number"
-  );
-}
-
-function loadTemplates(): AITemplate[] {
-  if (templatesCache) return templatesCache;
-  const parsed = getJson<unknown[]>(TEMPLATES_KEY, [], Array.isArray);
-  templatesCache = parsed.filter(isTemplate);
-  return templatesCache;
-}
-
-function persistTemplates(list: AITemplate[]) {
-  templatesCache = list;
-  setJson(TEMPLATES_KEY, list);
-  for (const l of templatesListeners) l();
-}
-
-function getTemplates(): AITemplate[] {
-  return loadTemplates();
-}
-
-function addTemplate(label: string, prompt: string): AITemplate {
-  const t: AITemplate = {
-    id: `tpl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-    label,
-    prompt,
-    createdAt: Date.now(),
-  };
-  persistTemplates([t, ...loadTemplates()]);
-  return t;
-}
-
-function removeTemplate(id: string) {
-  const next = loadTemplates().filter((t) => t.id !== id);
-  persistTemplates(next);
-}
-
-function subscribeTemplates(fn: TemplatesListener): () => void {
-  templatesListeners.add(fn);
-  return () => {
-    templatesListeners.delete(fn);
-  };
-}
+// Canonical templates store — same module the palette commands
+// (`ai.save_template` / `ai.run_template`) read from, so saves here
+// surface there and vice versa.
+import {
+  type AITemplate,
+  addTemplate,
+  getTemplates,
+  removeTemplate,
+  subscribeTemplates,
+} from "../aiTemplates";
 
 // Per-row local draft state. Edits commit on blur (or on Enter for the
 // label input). We can't mutate templates in place — the underlying
@@ -214,10 +150,10 @@ function AITemplatesEditor() {
     });
   };
 
-  const sorted = useMemo(
-    () => templates.slice().sort((a, b) => b.createdAt - a.createdAt),
-    [templates],
-  );
+  // Canonical store has no createdAt — preserve the array order it
+  // returns (newest at the END since addTemplate pushes; reverse so
+  // the freshest entry stays on top of the editor list).
+  const sorted = useMemo(() => templates.slice().reverse(), [templates]);
 
   if (sorted.length === 0) {
     return (
