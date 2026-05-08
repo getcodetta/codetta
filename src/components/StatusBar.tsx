@@ -138,9 +138,35 @@ export function StatusBar({ onOpenPalette }: Props) {
       <div className="sb-section sb-right">
         {editorState.filePath && (
           <>
-            <span className="sb-item">
-              Ln {editorState.line}, Col {editorState.col}
-            </span>
+            {editorState.selectionText.length > 0 ? (() => {
+              const sel = editorState.selectionText;
+              const chars = sel.length;
+              const trimmed = sel.trim();
+              const words = trimmed.length === 0
+                ? 0
+                : trimmed.split(/\s+/).filter(Boolean).length;
+              const lines = editorState.selectionLines;
+              const bytes = new Blob([sel]).size;
+              return (
+                <button
+                  type="button"
+                  className="sb-item sb-git"
+                  title={`Selection: ${lines} line${lines === 1 ? "" : "s"}, ${words} word${words === 1 ? "" : "s"}, ${chars} char${chars === 1 ? "" : "s"}, ${bytes} byte${bytes === 1 ? "" : "s"} (UTF-8) — click to Go to Line`}
+                  onClick={() => runCommand("edit.goto_line")}
+                >
+                  {lines}L · {words}W · {chars}C
+                </button>
+              );
+            })() : (
+              <button
+                type="button"
+                className="sb-item sb-git"
+                title="Go to Line (Ctrl+G)"
+                onClick={() => runCommand("edit.goto_line")}
+              >
+                Ln {editorState.line}, Col {editorState.col}
+              </button>
+            )}
             {editorState.language && (
               <span className="sb-item">{editorState.language}</span>
             )}
