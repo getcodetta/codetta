@@ -6,6 +6,7 @@ declare const __APP_VERSION__: string;
 import { findPaneById, parseKey, useStore } from "./store";
 import { openPalette } from "./paletteBus";
 import { openSettings } from "./settingsBus";
+import { requestAIPrompt } from "./aiBus";
 import { getActiveEditor, requestDiff } from "./editorState";
 import { alert as dialogAlert, confirm as dialogConfirm } from "./dialog";
 import { fs } from "./ipc";
@@ -665,6 +666,69 @@ export const commands: CommandSpec[] = [
     run: () => {
       const wsId = s().activeId;
       if (wsId) s().addAIChat(wsId, "editor");
+    },
+  },
+  {
+    id: "ai.review_file",
+    label: "Ask AI to Review This File",
+    category: "AI",
+    run: () => {
+      const wsId = s().activeId;
+      const path = activeFilePath(wsId);
+      if (!wsId || !path) {
+        toastError("Open a file first");
+        return;
+      }
+      const ws = s().loaded[wsId];
+      const file = ws?.files[path];
+      if (!file) {
+        toastError("Open a file first");
+        return;
+      }
+      const filename = path.split(/[\\/]/).pop() || path;
+      const ed = getActiveEditor();
+      const lang = ed?.getModel()?.getLanguageId() || "";
+      const text = `Review this entire file. Call out bugs, edge cases, naming issues, and architectural smells. Be specific — quote the lines you're commenting on.\n\n\`\`\`${lang} ${filename}\n${file.contents}\n\`\`\``;
+      // Mirror EditorPane's askAI.* pattern: make sure the chat panel
+      // is mounted before dispatching, otherwise the bus event lands
+      // before any subscriber and only the 1.5s replay buffer saves us.
+      const store = useStore.getState();
+      if (!store.loaded[wsId]?.layout?.aiPanelVisible) {
+        store.setAIPanelVisible(wsId, true);
+      }
+      requestAnimationFrame(() => {
+        requestAIPrompt({ wsId, text, send: true });
+      });
+    },
+  },
+  {
+    id: "ai.summarize_file",
+    label: "Ask AI to Summarize This File",
+    category: "AI",
+    run: () => {
+      const wsId = s().activeId;
+      const path = activeFilePath(wsId);
+      if (!wsId || !path) {
+        toastError("Open a file first");
+        return;
+      }
+      const ws = s().loaded[wsId];
+      const file = ws?.files[path];
+      if (!file) {
+        toastError("Open a file first");
+        return;
+      }
+      const filename = path.split(/[\\/]/).pop() || path;
+      const ed = getActiveEditor();
+      const lang = ed?.getModel()?.getLanguageId() || "";
+      const text = `Give a concise summary of what this file does. Lead with the one-sentence purpose, then list the key exports / functions.\n\n\`\`\`${lang} ${filename}\n${file.contents}\n\`\`\``;
+      const store = useStore.getState();
+      if (!store.loaded[wsId]?.layout?.aiPanelVisible) {
+        store.setAIPanelVisible(wsId, true);
+      }
+      requestAnimationFrame(() => {
+        requestAIPrompt({ wsId, text, send: true });
+      });
     },
   },
   {
