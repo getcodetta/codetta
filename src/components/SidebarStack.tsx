@@ -12,6 +12,7 @@ import { TodosPanel } from "./TodosPanel";
 import { AIChatPanel } from "./AIChatPanel";
 import { OutlinePanel } from "./OutlinePanel";
 import { BookmarksPanel } from "./BookmarksPanel";
+import { LineBookmarksPanel } from "./LineBookmarksPanel";
 import { RemoteSftpPanel } from "./RemoteSftpPanel";
 import { Icon } from "./Icon";
 
@@ -133,7 +134,26 @@ export function SidebarStack({ wsId, ws }: Props) {
       case "outline":
         return <OutlinePanel wsId={wsId} root={ws.meta.root} />;
       case "bookmarks":
-        return <BookmarksPanel wsId={wsId} root={ws.meta.root} />;
+        // The "bookmarks" section hosts two stacked lists: file-level
+        // bookmarks (pinned files) and line-level bookmarks. They share
+        // the same .bookmarks-panel visual vocabulary so they read as
+        // one continuous surface with two headers — and embedding the
+        // second list here avoids growing the SidebarView union for what
+        // is conceptually the same feature.
+        return (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              flex: 1,
+              minHeight: 0,
+              overflow: "hidden",
+            }}
+          >
+            <BookmarksPanel wsId={wsId} root={ws.meta.root} />
+            <LineBookmarksPanel wsId={wsId} root={ws.meta.root} />
+          </div>
+        );
       case "ai":
         return <AIChatPanel wsId={wsId} root={ws.meta.root} />;
       case "remote":
