@@ -1,10 +1,35 @@
 import { useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IDisposable, type ILink } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { pty } from "../ipc";
 import { useResolvedTheme } from "../theme";
+import { useStore } from "../store";
+import { setEditorGoto } from "../editorState";
+
+/**
+ * Match `path:line` and `path:line:col` patterns in terminal output so the
+ * user can click a compiler error / stack-trace frame / `grep -n` hit and
+ * jump to the source location.
+ *
+ * Coverage:
+ *   - Windows absolute: `C:\foo\bar.ts:12:5` / `C:/foo/bar.ts:12`
+ *   - POSIX absolute:   `/home/x/file.rs:42`
+ *   - POSIX relative:   `./src/foo.tsx:10:3` / `../lib/x.js:7`
+ *   - Bare relative:    `src/foo.tsx:8` / `Cargo.toml:14`
+ *
+ * Capture groups: [1] = line, [2] = optional column. The full match is the
+ * `path:line(:col)?` substring; we strip the trailing `:line(:col)?` to get
+ * the path itself.
+ *
+ * The leading optional prefix excludes anything starting with a URL scheme
+ * (the engine's longest-match would never produce one anyway because `://`
+ * doesn't fit our shape, but we also reject hits whose path starts with
+ * `http` defensively further below).
+ */
+const PATH_LINE_COL_RE =
+  /(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|\/)?(?:[\w.\-]+[\\/])*[\w.\-]+\.\w+:(\d+)(?::(\d+))?/g;
 
 const xtermDark = {
   background: "#1e1e1e",
@@ -85,6 +110,13 @@ export function TerminalCore({
   const fitRef = useRef<FitAddon | null>(null);
   const ptyIdRef = useRef<string | null>(null);
   const hostNodeRef = useRef<HTMLDivElement | null>(null);
+  // The link provider's `provideLinks` closure runs for the lifetime of the
+  // terminal — keep cwd in a ref so we always resolve relative paths against
+  // the *current* workspace root if the terminal is later re-bound.
+  const cwdRef = useRef(cwd);
+  useEffect(() => {
+    cwdRef.current = cwd;
+  }, [cwd]);
   const resolvedTheme = useResolvedTheme();
 
   // Update xterm theme when app theme changes.
@@ -168,6 +200,95 @@ export function TerminalCore({
         return false;
       }
       return true;
+    });
+
+    // Make `path:line[:col]` substrings clickable so the user can jump from
+    // a compiler error / stack-trace frame / `grep -n` hit straight to the
+    // source location in the editor. Uses xterm's built-in link provider —
+    // no addon needed.
+    const linkDisposable: IDisposable = term.registerLinkProvider({
+      provideLinks(bufferLineNumber, callback) {
+        const buf = term.buffer.active;
+        // xterm hands us 1-based line numbers; the buffer API is 0-based.
+        const line = buf.getLine(bufferLineNumber - 1);
+        if (!line) {
+          callback(undefined);
+          return;
+        }
+        const text = line.translateToString(true);
+        if (!text) {
+          callback(undefined);
+          return;
+        }
+        const links: ILink[] = [];
+        // Reset lastIndex defensively — the regex is shared & /g.
+        PATH_LINE_COL_RE.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = PATH_LINE_COL_RE.exec(text)) !== null) {
+          const matchText = m[0];
+          const lineNum = parseInt(m[1] ?? "0", 10);
+          const colNum = m[2] ? parseInt(m[2], 10) : 1;
+          if (!Number.isFinite(lineNum) || lineNum < 1) continue;
+          // Strip the `:line(:col)?` suffix to recover the path itself.
+          const suffixLen =
+            1 + m[1]!.length + (m[2] ? 1 + m[2].length : 0);
+          const pathText = matchText.slice(0, matchText.length - suffixLen);
+          // Defensive: skip URLs (xterm's URL link addon isn't loaded here,
+          // so this is mainly future-proofing).
+          if (/^[a-z]+:\/\//i.test(pathText)) continue;
+          // xterm's IBufferRange uses 1-based, inclusive cell positions on
+          // the *current* buffer line. translateToString collapses double-
+          // width cells, so column-from-string-index matches cell index for
+          // the common case of ASCII compiler output. That's good enough
+          // here — at worst the underline is slightly off for CJK runs.
+          const startCol = m.index + 1;
+          const endCol = m.index + matchText.length; // inclusive
+          links.push({
+            range: {
+              start: { x: startCol, y: bufferLineNumber },
+              end: { x: endCol, y: bufferLineNumber },
+            },
+            text: matchText,
+            decorations: { underline: true, pointerCursor: true },
+            activate: () => {
+              void (async () => {
+                const root = cwdRef.current;
+                const isWindowsAbs = /^[A-Za-z]:[\\/]/.test(pathText);
+                const isPosixAbs = pathText.startsWith("/");
+                const abs =
+                  isWindowsAbs || isPosixAbs
+                    ? pathText
+                    : root
+                      ? // joinPath duplicated here to avoid widening this
+                        // file's import surface; mirrors src/pathUtils.ts.
+                        root.replace(/[\\/]+$/, "") +
+                        "/" +
+                        pathText.replace(/^[\\/]+/, "")
+                      : null;
+                if (!abs) return;
+                // Find the workspace this terminal belongs to by matching
+                // its cwd against loaded workspace roots. `cwd` is set by
+                // WorkspaceShell to `ws.meta.root`, so the lookup is
+                // unambiguous.
+                const state = useStore.getState();
+                const norm = (p: string) =>
+                  p.replace(/\\/g, "/").replace(/\/+$/, "");
+                const wsId = Object.keys(state.loaded).find(
+                  (id) => norm(state.loaded[id]!.meta.root) === norm(root),
+                );
+                if (!wsId) return;
+                try {
+                  await state.openFile(wsId, abs);
+                  setEditorGoto(lineNum, colNum);
+                } catch {
+                  // openFile already toasts / logs on read failure.
+                }
+              })();
+            },
+          });
+        }
+        callback(links.length > 0 ? links : undefined);
+      },
     });
 
     let unlistenOut: (() => void) | undefined;
@@ -266,6 +387,11 @@ export function TerminalCore({
       cancelled = true;
       unlistenOut?.();
       unlistenExit?.();
+      try {
+        linkDisposable.dispose();
+      } catch {
+        /* ignore */
+      }
       // Intentionally NOT killing the PTY here. The store's closeTerminal
       // and closeWorkspace explicitly kill PTYs they own; everything else
       // (hot reload, page reload, terminal-tab unmount during workspace
