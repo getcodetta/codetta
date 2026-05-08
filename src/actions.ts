@@ -10,7 +10,12 @@ import { openShortcuts } from "./shortcutsBus";
 import { openFootprint } from "./footprintBus";
 import { requestAIPrompt } from "./aiBus";
 import { getActiveEditor, requestDiff } from "./editorState";
-import { alert as dialogAlert, confirm as dialogConfirm } from "./dialog";
+import {
+  alert as dialogAlert,
+  confirm as dialogConfirm,
+  prompt as dialogPrompt,
+} from "./dialog";
+import { addTemplate, getTemplates } from "./aiTemplates";
 import { fs } from "./ipc";
 import {
   error as toastError,
@@ -800,6 +805,57 @@ export const commands: CommandSpec[] = [
     label: "Show Workspace Footprint",
     category: "View",
     run: () => openFootprint(),
+  },
+  {
+    id: "ai.run_template",
+    label: "Run AI Template…",
+    category: "AI",
+    run: async () => {
+      // Open a tiny custom prompt UI: re-use the existing dialogPrompt
+      // pattern (src/dialog.ts) twice — first to PICK the template, then
+      // to confirm/edit before sending.
+      const tpls = getTemplates();
+      if (tpls.length === 0) {
+        toastInfo(
+          "No AI templates yet. Use 'AI: Save AI Template…' to add one.",
+        );
+        return;
+      }
+      // Build a "1. Label\n2. Label\n…" picker via dialogPrompt and let
+      // the user type a number. Cheap UI but no new component to ship.
+      const list = tpls.map((t, i) => `${i + 1}. ${t.label}`).join("\n");
+      const choice = await dialogPrompt(
+        `Pick a template (1-${tpls.length}):\n${list}`,
+        "1",
+        { title: "AI Templates", okLabel: "Pick" },
+      );
+      const idx = parseInt(choice ?? "", 10) - 1;
+      const t = tpls[idx];
+      if (!t) return;
+      const wsId = s().activeId;
+      if (!wsId) return;
+      requestAIPrompt({ wsId, text: t.prompt, send: false });
+    },
+  },
+  {
+    id: "ai.save_template",
+    label: "Save AI Template…",
+    category: "AI",
+    run: async () => {
+      const label = await dialogPrompt("Template name", "", {
+        title: "Save AI Template",
+        okLabel: "Save",
+      });
+      if (!label || !label.trim()) return;
+      const prompt = await dialogPrompt(
+        "Template body — the AI prompt that this template will send",
+        "",
+        { title: "Save AI Template", okLabel: "Save" },
+      );
+      if (!prompt || !prompt.trim()) return;
+      addTemplate(label.trim(), prompt.trim());
+      toastSuccess(`Saved template "${label.trim()}"`);
+    },
   },
 ];
 
