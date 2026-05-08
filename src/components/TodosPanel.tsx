@@ -40,6 +40,8 @@ export function TodosPanel({ wsId, root }: Props) {
   const [scanning, setScanning] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState("");
+  // Tags toggled OFF by user. ON by default; absence = visible.
+  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
   const [scannedAt, setScannedAt] = useState<number | null>(
     cached?.scannedAt ?? null,
   );
@@ -85,6 +87,7 @@ export function TodosPanel({ wsId, root }: Props) {
   useEffect(() => {
     setExpanded(false);
     setFilter("");
+    setHiddenKinds(new Set());
     setError(null);
     if (!root) {
       setHits([]);
@@ -104,16 +107,43 @@ export function TodosPanel({ wsId, root }: Props) {
     void refresh();
   }, [root, refresh]);
 
-  const filteredHits = useMemo(() => {
+  // Text filter: case-insensitive substring match against the comment text.
+  const textFilteredHits = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return hits;
-    return hits.filter(
-      (h) =>
-        h.text.toLowerCase().includes(q) ||
-        h.kind.toLowerCase().includes(q) ||
-        h.path.toLowerCase().includes(q),
-    );
+    return hits.filter((h) => h.text.toLowerCase().includes(q));
   }, [hits, filter]);
+
+  // Distinct tags present in the current text-filtered results — drives
+  // the chip row. Stable order: first-seen.
+  const kindsInResults = useMemo(() => {
+    const seen: string[] = [];
+    const set = new Set<string>();
+    for (const h of textFilteredHits) {
+      if (!set.has(h.kind)) {
+        set.add(h.kind);
+        seen.push(h.kind);
+      }
+    }
+    return seen;
+  }, [textFilteredHits]);
+
+  // Apply tag toggles on top of the text filter.
+  const filteredHits = useMemo(() => {
+    if (hiddenKinds.size === 0) return textFilteredHits;
+    return textFilteredHits.filter((h) => !hiddenKinds.has(h.kind));
+  }, [textFilteredHits, hiddenKinds]);
+
+  const isFiltering = filter.trim().length > 0 || hiddenKinds.size > 0;
+
+  const toggleKind = (kind: string) => {
+    setHiddenKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  };
 
   const groups = useMemo(() => {
     const m = new Map<string, TodoHit[]>();
@@ -142,7 +172,10 @@ export function TodosPanel({ wsId, root }: Props) {
           Tasks &amp; TODOs
           {hits.length > 0 && (
             <span className="todos-count">
-              {" "}· {filter ? `${filteredHits.length}/${hits.length}` : hits.length}
+              {" "}·{" "}
+              {isFiltering
+                ? `${filteredHits.length} of ${hits.length}`
+                : hits.length}
             </span>
           )}
         </span>
@@ -163,7 +196,7 @@ export function TodosPanel({ wsId, root }: Props) {
         <div className="todos-filter">
           <input
             type="text"
-            placeholder="Filter by text, kind, or path…"
+            placeholder="Filter comments…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             aria-label="Filter TODOs"
@@ -180,6 +213,54 @@ export function TodosPanel({ wsId, root }: Props) {
           )}
         </div>
       )}
+      {hits.length > 0 && kindsInResults.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 4,
+            padding: "4px 8px 6px",
+          }}
+        >
+          {kindsInResults.map((kind) => {
+            const active = !hiddenKinds.has(kind);
+            return (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => toggleKind(kind)}
+                aria-pressed={active}
+                title={
+                  active ? `Hide ${kind} entries` : `Show ${kind} entries`
+                }
+                style={{
+                  fontSize: 10,
+                  lineHeight: 1,
+                  padding: "3px 7px",
+                  borderRadius: 999,
+                  border: `1px solid ${
+                    active
+                      ? "var(--accent, #4ea1ff)"
+                      : "var(--border, #444)"
+                  }`,
+                  background: active
+                    ? "color-mix(in srgb, var(--accent, #4ea1ff) 18%, transparent)"
+                    : "transparent",
+                  color: active
+                    ? "var(--fg, #ddd)"
+                    : "var(--fg-muted, #888)",
+                  cursor: "pointer",
+                  textTransform: "uppercase",
+                  letterSpacing: 0.4,
+                  fontWeight: 600,
+                }}
+              >
+                {kind}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {scanning && hits.length === 0 && (
         <div className="todos-group todos-empty">Scanning workspace…</div>
       )}
@@ -189,9 +270,7 @@ export function TodosPanel({ wsId, root }: Props) {
         </div>
       )}
       {!scanning && !error && hits.length > 0 && filteredHits.length === 0 && (
-        <div className="todos-group todos-empty">
-          No matches for “{filter}”.
-        </div>
+        <div className="todos-group todos-empty">No matches for filter.</div>
       )}
       {error && <div className="todos-group todos-error">{error}</div>}
       {visibleGroups.map(([path, items]) => (
