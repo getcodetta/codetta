@@ -7,6 +7,7 @@ import { findPaneById, parseKey, useStore } from "./store";
 import { openPalette } from "./paletteBus";
 import { openSettings } from "./settingsBus";
 import { openShortcuts } from "./shortcutsBus";
+import { openFootprint } from "./footprintBus";
 import { getActiveEditor, requestDiff } from "./editorState";
 import { alert as dialogAlert, confirm as dialogConfirm } from "./dialog";
 import { fs } from "./ipc";
@@ -722,6 +723,12 @@ export const commands: CommandSpec[] = [
         `Codetta v${__APP_VERSION__} — a lightweight Tauri-based code editor with first-class AI.\n\nMulti-workspace · multi-terminal (with pop-out) · integrated git · drag-and-drop splits · BYOK AI (Anthropic, OpenAI, Ollama, Claude Code).\n\nhttps://codetta.dev`,
         { title: "About Codetta" },
       ),
+  },
+  {
+    id: "view.footprint",
+    label: "Show Workspace Footprint",
+    category: "View",
+    run: () => openFootprint(),
   },
 ];
 
