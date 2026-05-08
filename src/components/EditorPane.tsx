@@ -749,6 +749,63 @@ export function EditorPane({ wsId, path }: Props) {
               },
             }),
           ];
+          // Multi-cursor shortcuts. Thin wrappers around Monaco built-ins.
+          const multicursorDisposables = [
+            ed.addAction({
+              id: "multicursor.addAbove",
+              label: "Add Cursor Above",
+              contextMenuGroupId: "multicursor",
+              contextMenuOrder: 1,
+              keybindings: [
+                monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.UpArrow,
+              ],
+              run: (editor) => {
+                editor.trigger("source", "editor.action.insertCursorAbove", null);
+              },
+            }),
+            ed.addAction({
+              id: "multicursor.addBelow",
+              label: "Add Cursor Below",
+              contextMenuGroupId: "multicursor",
+              contextMenuOrder: 2,
+              keybindings: [
+                monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
+              ],
+              run: (editor) => {
+                editor.trigger("source", "editor.action.insertCursorBelow", null);
+              },
+            }),
+            ed.addAction({
+              id: "multicursor.addLineEnds",
+              label: "Add Cursors to Line Ends",
+              contextMenuGroupId: "multicursor",
+              contextMenuOrder: 3,
+              keybindings: [
+                monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyI,
+              ],
+              run: (editor) => {
+                editor.trigger(
+                  "source",
+                  "editor.action.insertCursorAtEndOfEachLineSelected",
+                  null,
+                );
+              },
+            }),
+            ed.addAction({
+              id: "multicursor.selectNext",
+              label: "Add Selection to Next Find Match",
+              contextMenuGroupId: "multicursor",
+              contextMenuOrder: 4,
+              keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyD],
+              run: (editor) => {
+                editor.trigger(
+                  "source",
+                  "editor.action.addSelectionToNextFindMatch",
+                  null,
+                );
+              },
+            }),
+          ];
           ed.onDidDispose(() => {
             off();
             offScroll.dispose();
@@ -758,6 +815,7 @@ export function EditorPane({ wsId, path }: Props) {
             bookmarkDecorations?.clear();
             bookmarkDecorations = null;
             for (const d of navDisposables) d.dispose();
+            for (const d of multicursorDisposables) d.dispose();
             setActiveEditor(null);
           });
         }}
