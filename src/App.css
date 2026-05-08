@@ -31,6 +31,52 @@
   --term-fg: #2d2d2d;
 }
 
+/* Themed scrollbars across the app. Default Chromium / Windows
+   scrollbars look out of place against the dark/light theme — the
+   thumb is too bright on dark and too dark on light. We define one
+   set of webkit rules + Firefox `scrollbar-color` driven by the
+   theme variables so every scroller (file tree, sidebar panels,
+   tab overflow, editor extras, etc.) blends in without each callsite
+   having to opt in. Native Monaco scrollbars still override us
+   inside the editor via Monaco's own renderer — that's intentional. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+:root[data-theme="dark"] {
+  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+}
+:root[data-theme="light"] {
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.32);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+  background: transparent;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 6px;
+  /* Inset border tightens the thumb so it doesn't fill the full
+     gutter — looks more like a slim modern scrollbar than the chunky
+     default. */
+  border: 2px solid transparent;
+  background-clip: content-box;
+  min-height: 24px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 :root {
   font-family: Inter, "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
