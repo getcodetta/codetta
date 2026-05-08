@@ -28,6 +28,79 @@ let _toasts: Toast[] = [];
 let _nextId = 1;
 const listeners = new Set<(t: Toast[]) => void>();
 
+// ---------------------------------------------------------------------------
+// Session-scoped notification history
+//
+// Toasts auto-dismiss after a few seconds; if the user looked away (or a
+// background poll fired off five errors at once) they have no way to go
+// back and read what scrolled by. We mirror every emitted notify() call
+// into a bounded ring buffer that the "Show Notifications" palette command
+// surfaces in a modal.
+//
+// The cap exists for two reasons:
+//   1. Stop a runaway poll loop from pinning megabytes of message strings
+//      in memory across an all-day editor session.
+//   2. Keep the modal scannable — past 200 entries you're not reading the
+//      list anyway, you're searching it (which the filter input handles).
+//
+// Persistence is intentionally NOT done. A fresh app launch starting with a
+// pristine, empty history is the right default; carrying yesterday's
+// "Save failed" toasts forward would be noise and wouldn't tell the user
+// anything actionable about THIS session.
+// ---------------------------------------------------------------------------
+
+export interface ToastRecord {
+  id: string;
+  ts: number;
+  kind: ToastKind;
+  message: string;
+}
+
+const HISTORY_CAP = 200;
+let historyArr: ToastRecord[] = [];
+let _historyIdSeq = 1;
+const historyListeners = new Set<() => void>();
+
+function pushHistory(kind: ToastKind, message: string): void {
+  const rec: ToastRecord = {
+    id: `tr-${_historyIdSeq++}`,
+    ts: Date.now(),
+    kind,
+    message,
+  };
+  historyArr.push(rec);
+  // Drop the oldest in chunks rather than one-at-a-time when many calls
+  // happen in a tight loop. Bounded by HISTORY_CAP so the array can never
+  // outgrow the cap by more than the size of a single error storm.
+  if (historyArr.length > HISTORY_CAP) {
+    historyArr = historyArr.slice(historyArr.length - HISTORY_CAP);
+  }
+  for (const l of historyListeners) l();
+}
+
+/**
+ * Returns a copy of the toast history, newest entries first. We hand back
+ * a copy rather than the live array so callers can't mutate the buffer
+ * (and so React's reference-equality memoization picks up changes).
+ */
+export function getToastHistory(): ToastRecord[] {
+  // slice() then reverse() — slice clones, reverse mutates the clone.
+  return historyArr.slice().reverse();
+}
+
+export function clearToastHistory(): void {
+  if (historyArr.length === 0) return;
+  historyArr = [];
+  for (const l of historyListeners) l();
+}
+
+export function subscribeToastHistory(cb: () => void): () => void {
+  historyListeners.add(cb);
+  return () => {
+    historyListeners.delete(cb);
+  };
+}
+
 // Per-toast auto-dismiss timer + remaining time, so hover can pause
 // the countdown and unhover can resume from where it left off.
 // Without this, longer error toasts vanish mid-read because the user
@@ -94,6 +167,11 @@ export function notify(
   kind: ToastKind = "info",
   timeoutMs?: number,
 ): void {
+  // Record into history BEFORE the dedupe / cap logic kicks in below.
+  // The visible toast queue collapses repeats, but the history view
+  // should still show every individual occurrence — that's the whole
+  // point of having a log the user can scroll back through.
+  pushHistory(kind, message);
   const finalTimeout = timeoutMs ?? defaultTimeout(kind);
   const key = dedupeKey(kind, message);
   const seen = lastSeen.get(key);

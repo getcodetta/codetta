@@ -7,6 +7,7 @@ import { findPaneById, parseKey, useStore } from "./store";
 import { openPalette } from "./paletteBus";
 import { openSettings } from "./settingsBus";
 import { openShortcuts } from "./shortcutsBus";
+import { openNotifications } from "./notifyBus";
 import { openFootprint } from "./footprintBus";
 import { requestAIPrompt } from "./aiBus";
 import { getActiveEditor, requestDiff } from "./editorState";
@@ -952,6 +953,12 @@ ${sample}
     label: "Show Workspace Footprint",
     category: "View",
     run: () => openFootprint(),
+  },
+  {
+    id: "view.notifications",
+    label: "Show Notifications",
+    category: "View",
+    run: () => openNotifications(),
   },
   {
     id: "view.sort_tabs_alpha",
