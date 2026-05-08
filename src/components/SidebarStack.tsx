@@ -13,6 +13,7 @@ import { AIChatPanel } from "./AIChatPanel";
 import { OutlinePanel } from "./OutlinePanel";
 import { BookmarksPanel } from "./BookmarksPanel";
 import { LineBookmarksPanel } from "./LineBookmarksPanel";
+import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { RemoteSftpPanel } from "./RemoteSftpPanel";
 import { Icon } from "./Icon";
 
@@ -132,7 +133,17 @@ export function SidebarStack({ wsId, ws }: Props) {
       case "todos":
         return <TodosPanel wsId={wsId} root={ws.meta.root} />;
       case "outline":
-        return <OutlinePanel wsId={wsId} root={ws.meta.root} />;
+        // Outline + Diagnostics share the "navigate to a line in the
+        // workspace" purpose, so the Problems panel rides inside the
+        // Outline section. Adding a top-level "diagnostics" SidebarView
+        // would require extending the union in store.ts — out of scope
+        // for this change — so the two stack vertically here instead.
+        return (
+          <>
+            <OutlinePanel wsId={wsId} root={ws.meta.root} />
+            <DiagnosticsPanel wsId={wsId} root={ws.meta.root} />
+          </>
+        );
       case "bookmarks":
         // The "bookmarks" section hosts two stacked lists: file-level
         // bookmarks (pinned files) and line-level bookmarks. They share
