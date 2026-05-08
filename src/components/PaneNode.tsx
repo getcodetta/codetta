@@ -24,6 +24,7 @@ import { lookupRemoteLink } from "../sftpLinks";
 import { basename, relPath } from "../pathUtils";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Icon } from "./Icon";
+import { peekClosedTabs, subscribeClosedTabs } from "../closedTabsStack";
 
 function tabLabel(
   ws: WorkspaceData,
@@ -716,7 +717,7 @@ function TabsPaneView(
         className="pane-content"
         data-pane-id={pane.id}
       >
-        {pane.tabs.length === 0 && <EmptyPane />}
+        {pane.tabs.length === 0 && <EmptyPane wsId={wsId} />}
         {showOverlay && drag?.edge && <DropOverlay edge={drag.edge} />}
       </div>
       {tabMenu && (
@@ -862,7 +863,36 @@ function TabListDropdown({
   );
 }
 
-function EmptyPane() {
+// Tiny inline "X ago" formatter used by the recently-closed list. Avoids
+// pulling in date-fns just to render four resolution buckets — anything
+// older than yesterday is just "older" since the closed-tab stack caps
+// at 20 entries and turns over fast in practice.
+function formatAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return "just now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+  return "older";
+}
+
+function EmptyPane({ wsId }: { wsId: string }) {
+  // Subscribe to the closed-tabs stack so the list rerenders when a tab
+  // is closed (or reopened) elsewhere while this empty pane is visible.
+  const [closedTick, setClosedTick] = useState(0);
+  useEffect(() => {
+    return subscribeClosedTabs((changedWsId) => {
+      if (changedWsId === wsId) setClosedTick((n) => n + 1);
+    });
+  }, [wsId]);
+  // closedTick is intentionally unused beyond forcing a rerender.
+  void closedTick;
+  const recentClosed = peekClosedTabs(wsId).slice(0, 5);
+
   return (
     <div className="pane-empty">
       <div className="pane-empty-card">
@@ -870,9 +900,16 @@ function EmptyPane() {
           <Icon name="command" size={28} />
         </div>
         <div className="pane-empty-title">Nothing open here</div>
-        <div className="pane-empty-actions">
+        <div
+          className="pane-empty-actions"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 6,
+          }}
+        >
           <button onClick={() => openPalette("")} title="Ctrl+P">
-            <Icon name="command" size={14} />
+            <Icon name="file" size={14} />
             <span>Quick open file</span>
           </button>
           <button
@@ -887,54 +924,109 @@ function EmptyPane() {
             title="Ctrl+O"
           >
             <Icon name="folder-open" size={14} />
-            <span>Open folder</span>
+            <span>Open Folder</span>
           </button>
           <button
-            onClick={() => runCommand("terminal.new_bottom")}
-            title="Ctrl+`"
+            onClick={() => runCommand("workspace.open_recent")}
+            title="Open a recent workspace"
           >
-            <Icon name="terminal" size={14} />
-            <span>New terminal</span>
+            <Icon name="folder" size={14} />
+            <span>Open Recent Workspace</span>
           </button>
           <button
-            onClick={() => runCommand("ai.new_chat")}
-            title="Open a new AI chat tab"
+            onClick={() => runCommand("edit.reopen_closed_tab")}
+            title="Ctrl+Shift+T"
           >
-            <AIIcon size={14} />
-            <span>New AI chat</span>
+            <Icon name="rotate-ccw" size={14} />
+            <span>Reopen Closed Tab</span>
+          </button>
+          <button
+            onClick={() => openPalette("> ")}
+            title="Ctrl+Shift+P"
+          >
+            <Icon name="command" size={14} />
+            <span>Command Palette</span>
           </button>
         </div>
-        <ul className="pane-empty-tips">
-          <li>
-            <span className="pane-empty-keys">
-              <kbd>Ctrl</kbd>
-              <kbd>P</kbd>
-            </span>
-            Jump to a file by name
-          </li>
-          <li>
-            <span className="pane-empty-keys">
-              <kbd>Ctrl</kbd>
-              <kbd>Shift</kbd>
-              <kbd>F</kbd>
-            </span>
-            Search across the workspace
-          </li>
-          <li>
-            <span className="pane-empty-keys">
-              <kbd>Ctrl</kbd>
-              <kbd>Tab</kbd>
-            </span>
-            Cycle recent files
-          </li>
-          <li>
-            <span className="pane-empty-keys">
-              <kbd>Ctrl</kbd>
-              <kbd>B</kbd>
-            </span>
-            Toggle the sidebar
-          </li>
-        </ul>
+        {recentClosed.length > 0 && (
+          <div
+            style={{
+              marginTop: 14,
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                opacity: 0.6,
+                textTransform: "uppercase",
+                letterSpacing: 0.4,
+                marginBottom: 4,
+              }}
+            >
+              Recently closed
+            </div>
+            {recentClosed.map((entry) => (
+              <button
+                key={`${entry.path}:${entry.closedAt}`}
+                onClick={() =>
+                  void useStore.getState().openFile(wsId, entry.path)
+                }
+                title={entry.path}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  padding: "4px 8px",
+                  background: "transparent",
+                  border: "1px solid transparent",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  color: "inherit",
+                  font: "inherit",
+                  textAlign: "left",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    "var(--hover-bg, rgba(127,127,127,0.12))";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    "transparent";
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    minWidth: 0,
+                  }}
+                >
+                  <Icon name="file-text" size={12} />
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {basename(entry.path)}
+                  </span>
+                </span>
+                <span style={{ fontSize: 11, opacity: 0.55, flexShrink: 0 }}>
+                  {formatAgo(entry.closedAt)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="pane-empty-foot">
           Tip: drag any tab onto an edge to split this pane.
         </div>
