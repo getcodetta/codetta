@@ -228,6 +228,7 @@ export function EditorPane({ wsId, path }: Props) {
       tabSize: settings.tabSize,
       minimap: { enabled: settings.minimap },
       autoClosingBrackets: settings.autoClosingBrackets,
+      renderWhitespace: settings.renderWhitespace,
     });
   }, [
     settings.fontSize,
@@ -235,6 +236,7 @@ export function EditorPane({ wsId, path }: Props) {
     settings.tabSize,
     settings.minimap,
     settings.autoClosingBrackets,
+    settings.renderWhitespace,
   ]);
 
   // Per-file view-state preservation. When the editor's model swaps
@@ -485,7 +487,7 @@ export function EditorPane({ wsId, path }: Props) {
           minimap: { enabled: settings.minimap },
           scrollBeyondLastLine: false,
           tabSize: settings.tabSize,
-          renderWhitespace: "selection",
+          renderWhitespace: settings.renderWhitespace,
           smoothScrolling: true,
           automaticLayout: true,
           wordWrap: settings.wordWrap,

@@ -24,6 +24,10 @@ export interface EditorSettings {
    *  entirely — useful for plain-prose / markdown editing where the
    *  closing bracket gets in the way. */
   autoClosingBrackets: "always" | "languageDefined" | "never";
+  /** Monaco's `renderWhitespace` option. "selection" (default) only
+   *  shows whitespace markers within the current selection — matches
+   *  the editor's pre-existing behaviour. */
+  renderWhitespace: "none" | "boundary" | "selection" | "all";
 }
 
 const STORAGE_KEY = "lcp.editorSettings";
@@ -39,6 +43,7 @@ const DEFAULT: EditorSettings = {
   formatOnSave: false,
   rulers: [],
   autoClosingBrackets: "languageDefined",
+  renderWhitespace: "selection",
 };
 
 function read(): EditorSettings {
@@ -95,6 +100,13 @@ function read(): EditorSettings {
       raw.autoClosingBrackets === "never"
         ? raw.autoClosingBrackets
         : DEFAULT.autoClosingBrackets,
+    renderWhitespace:
+      raw.renderWhitespace === "none" ||
+      raw.renderWhitespace === "boundary" ||
+      raw.renderWhitespace === "selection" ||
+      raw.renderWhitespace === "all"
+        ? raw.renderWhitespace
+        : DEFAULT.renderWhitespace,
   };
 }
 
@@ -191,4 +203,12 @@ export function cycleAutoClosingBrackets() {
   const next = order[(idx + 1) % order.length];
   setEditorSettings({ autoClosingBrackets: next });
   toastInfo(`Auto-closing brackets: ${next}`);
+}
+// No toast on change — the editor's whitespace markers appearing /
+// disappearing is its own feedback, and four-state cycling would be
+// noisier than helpful. The setter is exposed for the settings modal.
+export function setRenderWhitespace(
+  v: EditorSettings["renderWhitespace"],
+) {
+  setEditorSettings({ renderWhitespace: v });
 }

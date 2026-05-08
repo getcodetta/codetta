@@ -3,8 +3,10 @@ import { createPortal } from "react-dom";
 import {
   setAutoClosingBrackets,
   setEditorSettings,
+  setRenderWhitespace,
   useEditorSettings,
 } from "../editorSettings";
+import type { EditorSettings } from "../editorSettings";
 import {
   IDLE_BUFFER_MAX,
   IDLE_BUFFER_MIN,
@@ -468,6 +470,26 @@ export function SettingsModal() {
                     onClick={() => setAutoClosingBrackets(opt.v)}
                   >
                     {opt.label}
+                  </button>
+                ))}
+              </div>
+            </Row>
+            <Row label="Render whitespace">
+              <div className="settings-segmented">
+                {(
+                  [
+                    ["none", "Off"],
+                    ["boundary", "Boundary"],
+                    ["selection", "Selection"],
+                    ["all", "All"],
+                  ] as [EditorSettings["renderWhitespace"], string][]
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    className={`segmented-btn ${settings.renderWhitespace === value ? "active" : ""}`}
+                    onClick={() => setRenderWhitespace(value)}
+                  >
+                    {label}
                   </button>
                 ))}
               </div>
