@@ -3,7 +3,7 @@ import { useStore } from "../store";
 import { useEditorState, getActiveEditor } from "../editorState";
 import { useTheme, type ThemeMode } from "../theme";
 import { runCommand } from "../actions";
-import { useEditorSettings } from "../editorSettings";
+import { useEditorSettings, zoomIn, zoomOut, zoomReset } from "../editorSettings";
 import { basename } from "../pathUtils";
 import { Icon, type IconName } from "./Icon";
 import { git as gitApi, type GitStatus } from "../ipc";
@@ -43,6 +43,14 @@ export function StatusBar({ onOpenPalette }: Props) {
   const bufCount = ws ? Object.keys(ws.files).length : 0;
   const termCount = ws ? Object.keys(ws.terminals).length : 0;
   const showFootprint = bufCount > 0 || termCount > 0;
+  // Editor zoom chip: percent of the hardcoded default font size (13).
+  // Hidden at 100% on an empty workspace — only shows when the user has
+  // actually zoomed, or when there's a focused file so they can adjust
+  // mid-edit.
+  const DEFAULT_FONT_SIZE = 13;
+  const zoomPct = Math.round((settings.fontSize / DEFAULT_FONT_SIZE) * 100);
+  const showZoom = zoomPct !== 100 || !!editorState.filePath;
+
   const sidebarVisible = ws?.layout.sidebarVisible ?? true;
   const bottomVisible = ws?.layout.bottomVisible ?? true;
   const sidebarView = ws?.layout.sidebarView ?? "files";
@@ -215,6 +223,24 @@ export function StatusBar({ onOpenPalette }: Props) {
             <span className="sb-footprint-num">buf{bufCount}</span>
             <span className="sb-footprint-sep">·</span>
             <span className="sb-footprint-num">term{termCount}</span>
+          </button>
+        )}
+
+        {showZoom && (
+          <button
+            type="button"
+            className="sb-item sb-git"
+            title={`Editor zoom: ${zoomPct}% — click to zoom in, Shift+click to zoom out, middle-click to reset`}
+            aria-label={`Editor zoom: ${zoomPct}%`}
+            onClick={(e) => {
+              if (e.shiftKey) zoomOut();
+              else zoomIn();
+            }}
+            onAuxClick={(e) => {
+              if (e.button === 1) zoomReset();
+            }}
+          >
+            {zoomPct}%
           </button>
         )}
 
