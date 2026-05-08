@@ -194,6 +194,64 @@ export const commands: CommandSpec[] = [
     },
   },
   {
+    id: "file.revert",
+    label: "Revert File (Reload from Disk)",
+    category: "File",
+    run: async () => {
+      const wsId = s().activeId;
+      const path = activeFilePath(wsId);
+      if (!wsId || !path) return;
+      const ws = s().loaded[wsId];
+      const f = ws?.files[path];
+      if (!ws || !f) return;
+      // Confirm if there are unsaved changes — reverting silently
+      // discarding work would be a footgun.
+      if (f.contents !== f.original) {
+        const ok = await dialogConfirm(
+          `Revert ${path.split(/[\\/]/).pop()}?\n\nThis discards your unsaved buffer changes and reloads the file from disk.`,
+          {
+            title: "Revert file",
+            okLabel: "Revert",
+            cancelLabel: "Cancel",
+            danger: true,
+          },
+        );
+        if (!ok) return;
+      }
+      let onDisk: string;
+      try {
+        onDisk = await fs.readFile(path);
+      } catch (e) {
+        toastError(`Couldn't read ${path}: ${errMsg(e)}`);
+        return;
+      }
+      // Atomically replace BOTH `contents` and `original` so the
+      // dirty-tracker resets cleanly. Mirror the helper EditorPane
+      // already uses for its own reload path.
+      useStore.setState((st) => {
+        const w = st.loaded[wsId];
+        if (!w || !w.files[path]) return st;
+        return {
+          loaded: {
+            ...st.loaded,
+            [wsId]: {
+              ...w,
+              files: {
+                ...w.files,
+                [path]: {
+                  ...w.files[path],
+                  contents: onDisk,
+                  original: onDisk,
+                },
+              },
+            },
+          },
+        };
+      });
+      toastSuccess("File reverted from disk");
+    },
+  },
+  {
     id: "file.quit",
     label: "Quit",
     category: "File",
