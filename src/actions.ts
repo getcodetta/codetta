@@ -167,6 +167,7 @@ export const commands: CommandSpec[] = [
     id: "file.quit",
     label: "Quit",
     category: "File",
+    accel: "Ctrl+Q",
     run: async () => {
       // Same dirty-file guard as Ctrl+R / × — Quit shouldn't silently
       // dump unsaved buffer state.
@@ -302,6 +303,7 @@ export const commands: CommandSpec[] = [
     id: "view.tasks",
     label: "Show Tasks (npm scripts)",
     category: "View",
+    accel: "Ctrl+Alt+P",
     run: () => {
       const wsId = s().activeId;
       if (!wsId) return;
@@ -324,6 +326,7 @@ export const commands: CommandSpec[] = [
     id: "view.todos",
     label: "Show TODO / FIXME",
     category: "View",
+    accel: "Ctrl+Alt+T",
     run: () => {
       const wsId = s().activeId;
       if (!wsId) return;
@@ -488,6 +491,7 @@ export const commands: CommandSpec[] = [
     id: "view.toggle_minimap",
     label: "Toggle Minimap",
     category: "View",
+    accel: "Ctrl+Alt+M",
     run: () => toggleMinimap(),
   },
   {
@@ -526,12 +530,14 @@ export const commands: CommandSpec[] = [
     id: "edit.fold_all",
     label: "Fold All",
     category: "Edit",
+    accel: "Ctrl+K Ctrl+0",
     run: () => runEditorAction("editor.foldAll"),
   },
   {
     id: "edit.unfold_all",
     label: "Unfold All",
     category: "Edit",
+    accel: "Ctrl+K Ctrl+J",
     run: () => runEditorAction("editor.unfoldAll"),
   },
   {
@@ -653,6 +659,7 @@ export const commands: CommandSpec[] = [
     id: "terminal.new_editor",
     label: "New Terminal in Editor Area",
     category: "Terminal",
+    accel: "Ctrl+Shift+`",
     run: () => {
       const wsId = s().activeId;
       if (wsId) s().addTerminal(wsId, "editor");
@@ -662,6 +669,7 @@ export const commands: CommandSpec[] = [
     id: "ai.new_chat",
     label: "New AI Chat",
     category: "AI",
+    accel: "Ctrl+Alt+N",
     run: () => {
       const wsId = s().activeId;
       if (wsId) s().addAIChat(wsId, "editor");
