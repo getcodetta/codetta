@@ -4,6 +4,14 @@ import {
   setEditorSettings,
   useEditorSettings,
 } from "../editorSettings";
+import {
+  IDLE_BUFFER_MAX,
+  IDLE_BUFFER_MIN,
+  IDLE_TERMINAL_MAX,
+  IDLE_TERMINAL_MIN,
+  setFootprintSettings,
+  useFootprintSettings,
+} from "../footprintSettings";
 import { useTheme, type ThemeMode } from "../theme";
 import { onSettingsOpen } from "../settingsBus";
 import { useStore } from "../store";
@@ -38,6 +46,7 @@ export function SettingsModal() {
   const [activeSlug, setActiveSlug] = useState<string>("");
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const settings = useEditorSettings();
+  const footprint = useFootprintSettings();
   const [theme, setTheme] = useTheme();
   const activeId = useStore((s) => s.activeId);
   const sidebarSide = useStore((s) =>
@@ -250,6 +259,70 @@ export function SettingsModal() {
               value={settings.formatOnSave}
               onChange={(v) => setEditorSettings({ formatOnSave: v })}
             />
+          </Section>
+
+          <Section title="Footprint">
+            <Toggle
+              label="Drop idle file buffers from memory"
+              value={footprint.idleBufferUnloadEnabled}
+              onChange={(v) =>
+                setFootprintSettings({ idleBufferUnloadEnabled: v })
+              }
+            />
+            <Row label="Idle minutes (file buffer)">
+              <input
+                type="number"
+                min={IDLE_BUFFER_MIN}
+                max={IDLE_BUFFER_MAX}
+                value={footprint.idleBufferUnloadMinutes}
+                onChange={(e) =>
+                  setFootprintSettings({
+                    idleBufferUnloadMinutes: Math.max(
+                      IDLE_BUFFER_MIN,
+                      Math.min(
+                        IDLE_BUFFER_MAX,
+                        Number(e.target.value) || 30,
+                      ),
+                    ),
+                  })
+                }
+                className="settings-num"
+                disabled={!footprint.idleBufferUnloadEnabled}
+              />
+            </Row>
+            <Toggle
+              label="Close idle terminals automatically"
+              value={footprint.idleTerminalCloseEnabled}
+              onChange={(v) =>
+                setFootprintSettings({ idleTerminalCloseEnabled: v })
+              }
+            />
+            <Row label="Idle minutes (terminal)">
+              <input
+                type="number"
+                min={IDLE_TERMINAL_MIN}
+                max={IDLE_TERMINAL_MAX}
+                value={footprint.idleTerminalCloseMinutes}
+                onChange={(e) =>
+                  setFootprintSettings({
+                    idleTerminalCloseMinutes: Math.max(
+                      IDLE_TERMINAL_MIN,
+                      Math.min(
+                        IDLE_TERMINAL_MAX,
+                        Number(e.target.value) || 60,
+                      ),
+                    ),
+                  })
+                }
+                className="settings-num"
+                disabled={!footprint.idleTerminalCloseEnabled}
+              />
+            </Row>
+            <div className="settings-row settings-row-note">
+              Trade-off: a tab pointing at a dropped buffer triggers a
+              fresh disk read on click. Worth it for memory wins on
+              long-running sessions.
+            </div>
           </Section>
 
           <Section title="AI Privacy — Exclude paths">

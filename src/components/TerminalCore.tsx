@@ -10,6 +10,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { pty } from "../ipc";
+import { useStore } from "../store";
 import { useResolvedTheme } from "../theme";
 
 const xtermDark = {
@@ -85,6 +86,7 @@ interface Match {
 }
 
 export function TerminalCore({
+  termId,
   cwd,
   container,
   visible,
@@ -120,8 +122,33 @@ export function TerminalCore({
     }
   }, [resolvedTheme]);
 
+  // Stable touch helper: fired from input, focus, and mount. Cheap;
+  // updates a module-level Map keyed by wsId+termId. We resolve wsId
+  // from the store by scanning loaded workspaces for the one that owns
+  // this termId — keeps the prop surface unchanged so the pop-out
+  // window (which doesn't know wsId) just naturally becomes a no-op
+  // when the terminal isn't found in any main-window workspace.
+  const touchSelf = useCallback(() => {
+    try {
+      const loaded = useStore.getState().loaded;
+      for (const [wsId, ws] of Object.entries(loaded)) {
+        if (ws.terminals[termId]) {
+          useStore.getState().touchTerminal(wsId, termId);
+          return;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [termId]);
+
   // Mount-once: create xterm + spawn PTY. Tear down on real unmount.
   useEffect(() => {
+    // Bootstrap the idle-close clock. Without this, a workspace that
+    // was loaded from disk would spawn this terminal with no recorded
+    // activity timestamp; the sweeper bootstraps to "now" too, but
+    // doing it here is cheaper and keeps the sweeper code simpler.
+    touchSelf();
     const initialTheme =
       document.documentElement.dataset.theme === "light"
         ? xtermLight
@@ -288,6 +315,9 @@ export function TerminalCore({
 
         term.onData((data) => {
           if (ptyIdRef.current) void pty.write(ptyIdRef.current, data);
+          // User typed something — they're clearly still using this
+          // terminal, so reset the idle-close clock.
+          touchSelf();
         });
         term.onResize(({ cols, rows }) => {
           if (ptyIdRef.current) void pty.resize(ptyIdRef.current, cols, rows);
@@ -544,6 +574,10 @@ export function TerminalCore({
           } catch {
             /* ignore */
           }
+          // Mouse-down inside the terminal area = the user is engaging
+          // with it (selecting text, focusing to type). Reset the idle
+          // clock so the auto-close-idle-terminals sweeper holds off.
+          touchSelf();
         }}
       />
       {visible && findOpen && (
