@@ -529,10 +529,61 @@ export function EditorPane({ wsId, path }: Props) {
               },
             }),
           );
+          // Symbol-navigation shortcuts. These are thin wrappers that
+          // delegate to Monaco's built-in commands via ed.trigger. They
+          // only do something useful for languages where a Monaco
+          // language service is actually running — TypeScript and
+          // JavaScript work out of the box. For Rust, Python, Go, etc.
+          // without an LSP plugged in, these silently no-op. That's
+          // acceptable for now; documenting the limitation here is
+          // enough until we wire up real LSP support.
+          const navDisposables = [
+            ed.addAction({
+              id: "nav.gotoDef",
+              label: "Go to Definition",
+              contextMenuGroupId: "navigation",
+              contextMenuOrder: 1,
+              keybindings: [monaco.KeyCode.F12],
+              run: (editor) => {
+                editor.trigger("source", "editor.action.revealDefinition", null);
+              },
+            }),
+            ed.addAction({
+              id: "nav.findRefs",
+              label: "Find All References",
+              contextMenuGroupId: "navigation",
+              contextMenuOrder: 2,
+              keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.F12],
+              run: (editor) => {
+                editor.trigger("source", "editor.action.goToReferences", null);
+              },
+            }),
+            ed.addAction({
+              id: "nav.peekDef",
+              label: "Peek Definition",
+              contextMenuGroupId: "navigation",
+              contextMenuOrder: 3,
+              keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.F12],
+              run: (editor) => {
+                editor.trigger("source", "editor.action.peekDefinition", null);
+              },
+            }),
+            ed.addAction({
+              id: "nav.gotoImpl",
+              label: "Go to Implementation",
+              contextMenuGroupId: "navigation",
+              contextMenuOrder: 4,
+              keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F12],
+              run: (editor) => {
+                editor.trigger("source", "editor.action.goToImplementation", null);
+              },
+            }),
+          ];
           ed.onDidDispose(() => {
             off();
             offScroll.dispose();
             for (const d of disposables) d.dispose();
+            for (const d of navDisposables) d.dispose();
             setActiveEditor(null);
           });
         }}
