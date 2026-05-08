@@ -162,6 +162,27 @@ export const commands: CommandSpec[] = [
       void s().saveFile(wsId, path);
     },
   },
+  // Escape hatch for when Format on Save is enabled but the user knows
+  // the formatter would mangle hand-tuned alignment or break a partial
+  // edit (e.g. mid-refactor, intentionally non-canonical whitespace).
+  // Skips formatDocument and writes the buffer as-is.
+  //
+  // The "Ctrl+K S" accel mirrors VS Code's chord for the same action.
+  // Codetta's dispatcher doesn't handle chord shortcuts yet, but
+  // declaring it lets the keyboard-shortcut reference modal display the
+  // hint, and a future chord-aware dispatcher will pick it up.
+  {
+    id: "file.save_no_format",
+    label: "Save Without Formatting",
+    category: "File",
+    accel: "Ctrl+K S",
+    run: () => {
+      const wsId = s().activeId;
+      const path = activeFilePath(wsId);
+      if (!wsId || !path) return;
+      void s().saveFile(wsId, path);
+    },
+  },
   {
     id: "file.save_all",
     label: "Save All",
