@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../store";
-import { useEditorState } from "../editorState";
+import { useEditorState, getActiveEditor } from "../editorState";
 import { useTheme, type ThemeMode } from "../theme";
 import { runCommand } from "../actions";
 import { useEditorSettings } from "../editorSettings";
@@ -146,11 +146,28 @@ export function StatusBar({ onOpenPalette }: Props) {
       <div className="sb-section sb-right">
         {editorState.filePath && (
           <>
-            <span className="sb-item">
+            <button
+              type="button"
+              className="sb-item sb-git sb-pos-btn"
+              title="Go to line… (Ctrl+G)"
+              aria-label="Go to line…"
+              onClick={() => runCommand("edit.goto_line")}
+            >
               Ln {editorState.line}, Col {editorState.col}
-            </span>
+            </button>
             {editorState.language && (
-              <span className="sb-item">{editorState.language}</span>
+              <button
+                type="button"
+                className="sb-item sb-git"
+                title="Change language mode"
+                aria-label="Change language mode"
+                onClick={() => {
+                  const ed = getActiveEditor();
+                  ed?.getAction("editor.action.changeLanguage")?.run();
+                }}
+              >
+                {editorState.language}
+              </button>
             )}
           </>
         )}
