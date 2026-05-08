@@ -256,6 +256,7 @@ export function EditorPane({ wsId, path }: Props) {
       minimap: { enabled: settings.minimap },
       autoClosingBrackets: settings.autoClosingBrackets,
       renderWhitespace: settings.renderWhitespace,
+      stickyScroll: { enabled: settings.stickyScroll },
     });
   }, [
     settings.fontSize,
@@ -264,6 +265,7 @@ export function EditorPane({ wsId, path }: Props) {
     settings.minimap,
     settings.autoClosingBrackets,
     settings.renderWhitespace,
+    settings.stickyScroll,
     ec,
   ]);
 
@@ -522,7 +524,7 @@ export function EditorPane({ wsId, path }: Props) {
           smoothScrolling: true,
           automaticLayout: true,
           wordWrap: settings.wordWrap,
-          stickyScroll: { enabled: true },
+          stickyScroll: { enabled: settings.stickyScroll },
           bracketPairColorization: { enabled: true },
           guides: {
             bracketPairs: "active",

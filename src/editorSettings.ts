@@ -28,6 +28,11 @@ export interface EditorSettings {
    *  shows whitespace markers within the current selection — matches
    *  the editor's pre-existing behaviour. */
   renderWhitespace: "none" | "boundary" | "selection" | "all";
+  /** Monaco's sticky-scroll header — pins enclosing scope lines
+   *  (function / class / block) at the top of the viewport while
+   *  scrolling. Useful for long files; some users find it distracting
+   *  in narrow split panes. Default on, preserving prior behaviour. */
+  stickyScroll: boolean;
 }
 
 const STORAGE_KEY = "lcp.editorSettings";
@@ -44,6 +49,7 @@ const DEFAULT: EditorSettings = {
   rulers: [],
   autoClosingBrackets: "languageDefined",
   renderWhitespace: "selection",
+  stickyScroll: true,
 };
 
 function read(): EditorSettings {
@@ -107,6 +113,10 @@ function read(): EditorSettings {
       raw.renderWhitespace === "all"
         ? raw.renderWhitespace
         : DEFAULT.renderWhitespace,
+    stickyScroll:
+      typeof raw.stickyScroll === "boolean"
+        ? raw.stickyScroll
+        : DEFAULT.stickyScroll,
   };
 }
 
@@ -211,4 +221,9 @@ export function setRenderWhitespace(
   v: EditorSettings["renderWhitespace"],
 ) {
   setEditorSettings({ renderWhitespace: v });
+}
+export function toggleStickyScroll() {
+  const next = !_settings.stickyScroll;
+  setEditorSettings({ stickyScroll: next });
+  toastInfo(`Sticky scroll: ${next ? "on" : "off"}`);
 }

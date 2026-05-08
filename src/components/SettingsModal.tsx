@@ -494,6 +494,11 @@ export function SettingsModal() {
                 ))}
               </div>
             </Row>
+            <Toggle
+              label="Sticky scroll header"
+              value={settings.stickyScroll}
+              onChange={(v) => setEditorSettings({ stickyScroll: v })}
+            />
           </Section>
 
           <Section title="On save">
