@@ -7459,6 +7459,78 @@ input {
   inset: 0;
 }
 
+/* Find-in-terminal overlay (Ctrl+F inside a focused terminal pane). Floats
+   top-right inside the terminal container so the visible buffer stays
+   readable while the user types a query. */
+.term-find-overlay {
+  position: absolute;
+  top: 6px;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  color: var(--fg);
+}
+.term-find-input {
+  width: 200px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 3px;
+  font-size: 12px;
+  outline: none;
+}
+.term-find-input:focus {
+  border-color: var(--accent);
+}
+.term-find-count {
+  min-width: 60px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.term-find-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.term-find-btn:hover:not(:disabled) {
+  background: var(--bg-hover, var(--bg-elev));
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.term-find-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.term-find-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+.term-find-close {
+  margin-left: 2px;
+}
+
 /* Auto-push indicator: subtle ↥ next to the tab name when this file
    is linked to a remote path with autoPush enabled. Saves push to
    remote in the background. */
