@@ -216,12 +216,14 @@ export function EditorPane({ wsId, path }: Props) {
       wordWrap: settings.wordWrap,
       tabSize: settings.tabSize,
       minimap: { enabled: settings.minimap },
+      autoClosingBrackets: settings.autoClosingBrackets,
     });
   }, [
     settings.fontSize,
     settings.wordWrap,
     settings.tabSize,
     settings.minimap,
+    settings.autoClosingBrackets,
   ]);
 
   // Auto-save: debounce-save when contents change while auto-save is on.
@@ -435,6 +437,7 @@ export function EditorPane({ wsId, path }: Props) {
           cursorSmoothCaretAnimation: "on",
           padding: { top: 8 },
           rulers: settings.rulers,
+          autoClosingBrackets: settings.autoClosingBrackets,
         }}
         onMount={(ed: editor.IStandaloneCodeEditor, monaco: Monaco) => {
           editorRef.current = ed;
