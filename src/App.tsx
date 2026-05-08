@@ -34,6 +34,8 @@ import { FootprintModal } from "./components/FootprintModal";
 import { TerminalPopoutWindow } from "./components/TerminalPopoutWindow";
 import { ShortcutReferenceModal } from "./components/ShortcutReferenceModal";
 import { onShortcutsOpen } from "./shortcutsBus";
+import { ToastHistoryModal } from "./components/ToastHistoryModal";
+import { onNotificationsOpen } from "./notifyBus";
 import { useZenMode } from "./zenMode";
 import "./App.css";
 
@@ -105,6 +107,11 @@ function MainApp() {
   const zen = useZenMode();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   useEffect(() => onShortcutsOpen(() => setShortcutsOpen(true)), []);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  useEffect(
+    () => onNotificationsOpen(() => setNotificationsOpen(true)),
+    [],
+  );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteInitial, setPaletteInitial] = useState("");
   // Mirror paletteOpen into a ref so the keyboard-shortcut effect below
@@ -614,6 +621,10 @@ function MainApp() {
       <ShortcutReferenceModal
         open={shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}
+      />
+      <ToastHistoryModal
+        open={notificationsOpen}
+        onClose={() => setNotificationsOpen(false)}
       />
       <FootprintModal
         open={footprintOpen}
