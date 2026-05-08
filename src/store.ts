@@ -22,6 +22,7 @@ import { getEditorSettings } from "./editorSettings";
 import { getFootprintSettings } from "./footprintSettings";
 import { basename } from "./pathUtils";
 import { pushClosedTab, popClosedTab, forgetClosedTab } from "./closedTabsStack";
+import { getRecentFiles } from "./recentFiles";
 
 // -------- Idle tracking (footprint features) --------
 //
@@ -264,6 +265,28 @@ function mapTree(p: Pane, fn: (t: TabsPane) => TabsPane): Pane {
   };
 }
 
+// Split a pane's tabs into pinned and unpinned suffixes, keeping the
+// pinned set in their `layout.pinned` order at the head, and sorting
+// only the unpinned tail with the supplied comparator. Used by the
+// "Sort Tabs" palette commands so explicit pins always win over the
+// alphabetical / MRU ordering.
+function reorderTabsForSort(
+  tabs: string[],
+  pinned: string[],
+  cmp: (a: string, b: string) => number,
+): string[] {
+  const pinSet = new Set(pinned);
+  const inPaneAndPinned = pinned.filter((k) => tabs.includes(k));
+  const unpinnedSorted = tabs.filter((k) => !pinSet.has(k)).slice().sort(cmp);
+  return [...inPaneAndPinned, ...unpinnedSorted];
+}
+
+function sameOrder(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 function replacePaneById(root: Pane, id: PaneId, replacement: Pane): Pane {
   if (root.id === id) return replacement;
   if (root.kind === "tabs") return root;
@@ -500,6 +523,16 @@ interface AppState {
   setActiveTab(wsId: string, paneId: PaneId, key: string): void;
   setActivePane(wsId: string, paneId: PaneId): void;
   setTabPinned(wsId: string, key: string, pinned: boolean): void;
+  /** Reorder tabs in the active pane alphabetically by display label.
+   *  Pinned tabs preserve their `layout.pinned` order at the head of the
+   *  list; only the unpinned suffix is sorted. No-op if the active pane
+   *  isn't a tabs leaf or has fewer than 2 tabs to reorder. */
+  sortActiveTabsAlphabetical(wsId: string): void;
+  /** Reorder tabs in the active pane by recent activity (most recently
+   *  used first). Files use the recentFiles MRU stack; terminals/AI tabs
+   *  fall through to a stable order at the end. Pinned tabs preserve
+   *  their `layout.pinned` order at the head. */
+  sortActiveTabsByRecent(wsId: string): void;
   moveTab(
     wsId: string,
     key: string,
@@ -1345,6 +1378,123 @@ export const useStore = create<AppState>((set, get) => {
         }
         return w;
       }),
+
+    sortActiveTabsAlphabetical: (wsId) => {
+      const ws = get().loaded[wsId];
+      if (!ws) return;
+      const paneId = ws.layout.activePaneId;
+      if (!paneId) return;
+      const target =
+        findPaneById(ws.layout.editorRoot, paneId) ??
+        (ws.layout.bottomRoot
+          ? findPaneById(ws.layout.bottomRoot, paneId)
+          : null);
+      if (!target || target.kind !== "tabs" || target.tabs.length < 2) return;
+
+      const labelFor = (key: string): string => {
+        const parsed = parseKey(key);
+        if (!parsed) return key;
+        if (parsed.kind === "file") return basename(parsed.path) || parsed.path;
+        if (parsed.kind === "terminal") {
+          return ws.terminals[parsed.id]?.title ?? key;
+        }
+        // ai
+        return ws.aiChats[parsed.id]?.title ?? key;
+      };
+
+      const reordered = reorderTabsForSort(target.tabs, ws.layout.pinned ?? [], (a, b) =>
+        labelFor(a).localeCompare(labelFor(b), undefined, {
+          sensitivity: "base",
+          numeric: true,
+        }),
+      );
+      if (sameOrder(reordered, target.tabs)) return;
+
+      updateWs(wsId, (w) => ({
+        ...w,
+        layout: {
+          ...w.layout,
+          editorRoot: mapTree(w.layout.editorRoot, (t) =>
+            t.id === paneId ? { ...t, tabs: reordered } : t,
+          ),
+          bottomRoot: w.layout.bottomRoot
+            ? mapTree(w.layout.bottomRoot, (t) =>
+                t.id === paneId ? { ...t, tabs: reordered } : t,
+              )
+            : null,
+        },
+      }));
+    },
+
+    sortActiveTabsByRecent: (wsId) => {
+      const ws = get().loaded[wsId];
+      if (!ws) return;
+      const paneId = ws.layout.activePaneId;
+      if (!paneId) return;
+      const target =
+        findPaneById(ws.layout.editorRoot, paneId) ??
+        (ws.layout.bottomRoot
+          ? findPaneById(ws.layout.bottomRoot, paneId)
+          : null);
+      if (!target || target.kind !== "tabs" || target.tabs.length < 2) return;
+
+      // Build a recency rank for every tab in the pane. Lower rank ==
+      // more recent. Files draw from the MRU stack; terminals/AI tabs
+      // fall back to the module-level last-touched maps (idle tracker).
+      // Anything with no recorded touch sinks to the end via Infinity.
+      const recentList = getRecentFiles(wsId);
+      const fileRank = new Map<string, number>();
+      recentList.forEach((p, i) => fileRank.set(p, i));
+      const termTouches = terminalLastTouched.get(wsId);
+      // No idle map for AI chats — best we can do is fall back to
+      // createdAt so the most recently created chat ranks above older
+      // ones when the user has never touched any.
+      const now = Date.now();
+
+      const rankFor = (key: string): number => {
+        const parsed = parseKey(key);
+        if (!parsed) return Number.POSITIVE_INFINITY;
+        if (parsed.kind === "file") {
+          const r = fileRank.get(parsed.path);
+          return r === undefined ? Number.POSITIVE_INFINITY : r;
+        }
+        if (parsed.kind === "terminal") {
+          const last = termTouches?.get(parsed.id);
+          // Convert "last-touched ms" to a rank where smaller = more
+          // recent. Untouched terminals get +Infinity.
+          if (last === undefined) return Number.POSITIVE_INFINITY;
+          return now - last;
+        }
+        // ai
+        const desc = ws.aiChats[parsed.id];
+        if (!desc) return Number.POSITIVE_INFINITY;
+        // Newer createdAt ⇒ smaller rank.
+        return now - desc.createdAt;
+      };
+
+      const reordered = reorderTabsForSort(target.tabs, ws.layout.pinned ?? [], (a, b) => {
+        const ra = rankFor(a);
+        const rb = rankFor(b);
+        if (ra === rb) return 0;
+        return ra < rb ? -1 : 1;
+      });
+      if (sameOrder(reordered, target.tabs)) return;
+
+      updateWs(wsId, (w) => ({
+        ...w,
+        layout: {
+          ...w.layout,
+          editorRoot: mapTree(w.layout.editorRoot, (t) =>
+            t.id === paneId ? { ...t, tabs: reordered } : t,
+          ),
+          bottomRoot: w.layout.bottomRoot
+            ? mapTree(w.layout.bottomRoot, (t) =>
+                t.id === paneId ? { ...t, tabs: reordered } : t,
+              )
+            : null,
+        },
+      }));
+    },
 
     moveTab: (wsId, key, target) => {
       updateWs(wsId, (w) => {

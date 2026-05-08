@@ -954,6 +954,24 @@ ${sample}
     run: () => openFootprint(),
   },
   {
+    id: "view.sort_tabs_alpha",
+    label: "Sort Tabs Alphabetically",
+    category: "View",
+    run: () => {
+      const wsId = s().activeId;
+      if (wsId) s().sortActiveTabsAlphabetical(wsId);
+    },
+  },
+  {
+    id: "view.sort_tabs_recent",
+    label: "Sort Tabs by Last Used",
+    category: "View",
+    run: () => {
+      const wsId = s().activeId;
+      if (wsId) s().sortActiveTabsByRecent(wsId);
+    },
+  },
+  {
     id: "ai.run_template",
     label: "Run AI Template…",
     category: "AI",
