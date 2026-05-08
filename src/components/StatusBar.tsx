@@ -7,6 +7,7 @@ import { useEditorSettings } from "../editorSettings";
 import { basename } from "../pathUtils";
 import { Icon, type IconName } from "./Icon";
 import { git as gitApi, type GitStatus } from "../ipc";
+import { openPalette } from "../paletteBus";
 
 interface Props {
   onOpenPalette: () => void;
@@ -35,6 +36,13 @@ export function StatusBar({ onOpenPalette }: Props) {
   const dirtyCount = ws
     ? Object.values(ws.files).filter((f) => f.contents !== f.original).length
     : 0;
+  // Per-workspace footprint glance: how many file buffers and PTYs the
+  // active workspace is holding. Useful for noticing when a session has
+  // accumulated more than expected — esp. terminals, which keep PTYs
+  // alive in the background. Hidden when both are zero (clean slate).
+  const bufCount = ws ? Object.keys(ws.files).length : 0;
+  const termCount = ws ? Object.keys(ws.terminals).length : 0;
+  const showFootprint = bufCount > 0 || termCount > 0;
   const sidebarVisible = ws?.layout.sidebarVisible ?? true;
   const bottomVisible = ws?.layout.bottomVisible ?? true;
   const sidebarView = ws?.layout.sidebarView ?? "files";
@@ -145,6 +153,27 @@ export function StatusBar({ onOpenPalette }: Props) {
               <span className="sb-item">{editorState.language}</span>
             )}
           </>
+        )}
+
+        {showFootprint && (
+          <button
+            type="button"
+            className="sb-item sb-footprint"
+            title={`${bufCount} open file buffer${
+              bufCount === 1 ? "" : "s"
+            }, ${termCount} open terminal${
+              termCount === 1 ? "" : "s"
+            } — click for footprint details`}
+            aria-label={`Workspace footprint: ${bufCount} file buffer${
+              bufCount === 1 ? "" : "s"
+            }, ${termCount} terminal${termCount === 1 ? "" : "s"}`}
+            onClick={() => openPalette("footprint")}
+          >
+            <Icon name="info" size={11} />
+            <span className="sb-footprint-num">buf{bufCount}</span>
+            <span className="sb-footprint-sep">·</span>
+            <span className="sb-footprint-num">term{termCount}</span>
+          </button>
         )}
 
         <button
