@@ -257,6 +257,8 @@ export function EditorPane({ wsId, path }: Props) {
       autoClosingBrackets: settings.autoClosingBrackets,
       renderWhitespace: settings.renderWhitespace,
       stickyScroll: { enabled: settings.stickyScroll },
+      formatOnType: settings.formatOnTypePaste,
+      formatOnPaste: settings.formatOnTypePaste,
     });
   }, [
     settings.fontSize,
@@ -266,6 +268,7 @@ export function EditorPane({ wsId, path }: Props) {
     settings.autoClosingBrackets,
     settings.renderWhitespace,
     settings.stickyScroll,
+    settings.formatOnTypePaste,
     ec,
   ]);
 
@@ -536,6 +539,8 @@ export function EditorPane({ wsId, path }: Props) {
           padding: { top: 8 },
           rulers: settings.rulers,
           autoClosingBrackets: settings.autoClosingBrackets,
+          formatOnType: settings.formatOnTypePaste,
+          formatOnPaste: settings.formatOnTypePaste,
         }}
         onMount={(ed: editor.IStandaloneCodeEditor, monaco: Monaco) => {
           editorRef.current = ed;

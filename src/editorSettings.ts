@@ -33,6 +33,12 @@ export interface EditorSettings {
    *  scrolling. Useful for long files; some users find it distracting
    *  in narrow split panes. Default on, preserving prior behaviour. */
   stickyScroll: boolean;
+  /** Drives both Monaco's `formatOnType` and `formatOnPaste` options.
+   *  When on, typing `;` or `}` re-indents the surrounding code and
+   *  pasted JS/TS gets auto-formatted. Off by default — the editor
+   *  re-indenting under your fingers can be disruptive while typing,
+   *  and we'd rather have users opt in than be surprised. */
+  formatOnTypePaste: boolean;
 }
 
 const STORAGE_KEY = "lcp.editorSettings";
@@ -50,6 +56,7 @@ const DEFAULT: EditorSettings = {
   autoClosingBrackets: "languageDefined",
   renderWhitespace: "selection",
   stickyScroll: true,
+  formatOnTypePaste: false,
 };
 
 function read(): EditorSettings {
@@ -117,6 +124,10 @@ function read(): EditorSettings {
       typeof raw.stickyScroll === "boolean"
         ? raw.stickyScroll
         : DEFAULT.stickyScroll,
+    formatOnTypePaste:
+      typeof raw.formatOnTypePaste === "boolean"
+        ? raw.formatOnTypePaste
+        : DEFAULT.formatOnTypePaste,
   };
 }
 
@@ -226,4 +237,9 @@ export function toggleStickyScroll() {
   const next = !_settings.stickyScroll;
   setEditorSettings({ stickyScroll: next });
   toastInfo(`Sticky scroll: ${next ? "on" : "off"}`);
+}
+export function toggleFormatOnTypePaste() {
+  const next = !_settings.formatOnTypePaste;
+  setEditorSettings({ formatOnTypePaste: next });
+  toastInfo(`Format on type / paste: ${next ? "on" : "off"}`);
 }
