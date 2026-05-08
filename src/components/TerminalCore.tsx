@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -71,6 +77,13 @@ interface Props {
   onPtyIdChange?: (id: string) => void;
 }
 
+/** A single match in the terminal scrollback. row is absolute (incl. scrollback). */
+interface Match {
+  row: number;
+  col: number;
+  length: number;
+}
+
 export function TerminalCore({
   cwd,
   container,
@@ -86,6 +99,14 @@ export function TerminalCore({
   const ptyIdRef = useRef<string | null>(null);
   const hostNodeRef = useRef<HTMLDivElement | null>(null);
   const resolvedTheme = useResolvedTheme();
+
+  // --- Find overlay state -------------------------------------------------
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [matchIndex, setMatchIndex] = useState(0);
+  const findInputRef = useRef<HTMLInputElement | null>(null);
 
   // Update xterm theme when app theme changes.
   useEffect(() => {
@@ -164,6 +185,24 @@ export function TerminalCore({
           term.clearSelection();
         } else if (ptyIdRef.current) {
           void pty.write(ptyIdRef.current, "\x03");
+        }
+        return false;
+      }
+      // Ctrl+F: open find overlay (terminal-focused only — Monaco has its own
+      // Ctrl+F because that handler never sees keys typed inside the editor).
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && k === "f") {
+        const sel = term.getSelection();
+        // Defer to React state — refs aren't reactive, so we use a CustomEvent
+        // dispatched on the host node and listen on it from a state-aware
+        // effect below.
+        const host = hostNodeRef.current;
+        if (host) {
+          host.dispatchEvent(
+            new CustomEvent("codetta:term-find-open", {
+              detail: { selection: sel || "" },
+              bubbles: false,
+            }),
+          );
         }
         return false;
       }
@@ -303,6 +342,21 @@ export function TerminalCore({
     });
   }, []);
 
+  // Bridge the Ctrl+F keydown (raised inside xterm's custom key handler) to
+  // React state so the overlay opens. The CustomEvent carries any selection
+  // text to pre-fill the input with.
+  useEffect(() => {
+    const node = hostNodeRef.current;
+    if (!node) return;
+    const handler = (ev: Event) => {
+      const sel = (ev as CustomEvent<{ selection: string }>).detail?.selection ?? "";
+      setFindQuery(sel);
+      setFindOpen(true);
+    };
+    node.addEventListener("codetta:term-find-open", handler);
+    return () => node.removeEventListener("codetta:term-find-open", handler);
+  }, [container]);
+
   // Track size changes on the current host.
   useEffect(() => {
     const node = hostNodeRef.current;
@@ -332,28 +386,232 @@ export function TerminalCore({
         /* ignore */
       }
       try {
+        if (!findOpen) termRef.current?.focus();
+      } catch {
+        /* ignore */
+      }
+    });
+  }, [visible, container, findOpen]);
+
+  // ------------------------------------------------------------------------
+  // Find: scan the active buffer (scrollback + viewport) for the query.
+  // We deliberately recompute matches on every keystroke or option toggle.
+  // The active buffer caps at `scrollback` (5000) lines, which is fine for
+  // a per-keystroke linear scan.
+  // ------------------------------------------------------------------------
+  const recomputeMatches = useCallback(
+    (query: string, caseSensitive: boolean): Match[] => {
+      const term = termRef.current;
+      if (!term || !query) return [];
+      const buf = term.buffer.active;
+      const totalLines = buf.length;
+      const needle = caseSensitive ? query : query.toLowerCase();
+      const out: Match[] = [];
+      for (let row = 0; row < totalLines; row++) {
+        const line = buf.getLine(row);
+        if (!line) continue;
+        const text = line.translateToString(true);
+        const hay = caseSensitive ? text : text.toLowerCase();
+        let from = 0;
+        while (from <= hay.length - needle.length) {
+          const idx = hay.indexOf(needle, from);
+          if (idx === -1) break;
+          out.push({ row, col: idx, length: needle.length });
+          from = idx + Math.max(needle.length, 1);
+        }
+      }
+      return out;
+    },
+    [],
+  );
+
+  // Re-scan whenever the query, options, or open-state change.
+  useEffect(() => {
+    if (!findOpen) {
+      setMatches([]);
+      setMatchIndex(0);
+      try {
+        termRef.current?.clearSelection();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const next = recomputeMatches(findQuery, findCaseSensitive);
+    setMatches(next);
+    setMatchIndex(0);
+  }, [findOpen, findQuery, findCaseSensitive, recomputeMatches]);
+
+  // Highlight the current match (if any) by selecting it in xterm. xterm's
+  // `select(col, row, length)` uses absolute buffer rows, which is what
+  // recomputeMatches stores. We also scroll it into view.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    if (!findOpen || matches.length === 0) {
+      try {
+        term.clearSelection();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const m = matches[Math.min(matchIndex, matches.length - 1)];
+    if (!m) return;
+    try {
+      term.select(m.col, m.row, m.length);
+      term.scrollToLine(Math.max(0, m.row - Math.floor(term.rows / 2)));
+    } catch {
+      /* ignore */
+    }
+  }, [findOpen, matches, matchIndex]);
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setMatches([]);
+    setMatchIndex(0);
+    try {
+      termRef.current?.clearSelection();
+    } catch {
+      /* ignore */
+    }
+    // Hand focus back to the terminal so typing resumes immediately.
+    requestAnimationFrame(() => {
+      try {
         termRef.current?.focus();
       } catch {
         /* ignore */
       }
     });
-  }, [visible, container]);
+  }, []);
+
+  const findNext = useCallback(() => {
+    if (matches.length === 0) return;
+    setMatchIndex((i) => (i + 1) % matches.length);
+  }, [matches.length]);
+
+  const findPrev = useCallback(() => {
+    if (matches.length === 0) return;
+    setMatchIndex((i) => (i - 1 + matches.length) % matches.length);
+  }, [matches.length]);
+
+  // Autofocus + select-all when the overlay opens.
+  useEffect(() => {
+    if (!findOpen) return;
+    requestAnimationFrame(() => {
+      try {
+        const inp = findInputRef.current;
+        if (inp) {
+          inp.focus();
+          inp.select();
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+  }, [findOpen]);
+
+  const onFindKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeFind();
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.shiftKey) findPrev();
+      else findNext();
+      return;
+    }
+  };
 
   if (!container) return null;
 
   return createPortal(
-    <div
-      ref={setHostRef}
-      className="term-host"
-      style={{ display: visible ? "block" : "none" }}
-      onMouseDown={() => {
-        try {
-          termRef.current?.focus();
-        } catch {
-          /* ignore */
-        }
-      }}
-    />,
+    <>
+      <div
+        ref={setHostRef}
+        className="term-host"
+        style={{ display: visible ? "block" : "none" }}
+        onMouseDown={() => {
+          // Don't steal focus from the find input when it's open and the
+          // user is interacting with it — but a click on the terminal
+          // surface itself should still focus xterm.
+          try {
+            if (!findOpen) termRef.current?.focus();
+          } catch {
+            /* ignore */
+          }
+        }}
+      />
+      {visible && findOpen && (
+        <div
+          className="term-find-overlay"
+          // Stop the parent's onMouseDown from yanking focus back to xterm
+          // while the user is clicking around inside the overlay.
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <input
+            ref={findInputRef}
+            className="term-find-input"
+            type="text"
+            placeholder="Find in terminal"
+            value={findQuery}
+            onChange={(e) => setFindQuery(e.target.value)}
+            onKeyDown={onFindKeyDown}
+            spellCheck={false}
+            autoComplete="off"
+          />
+          <span className="term-find-count">
+            {findQuery
+              ? matches.length === 0
+                ? "0 matches"
+                : `${matchIndex + 1} / ${matches.length}`
+              : ""}
+          </span>
+          <button
+            className={
+              "term-find-btn term-find-toggle" +
+              (findCaseSensitive ? " active" : "")
+            }
+            type="button"
+            title="Match case (Aa)"
+            aria-pressed={findCaseSensitive}
+            onClick={() => setFindCaseSensitive((v) => !v)}
+          >
+            Aa
+          </button>
+          <button
+            className="term-find-btn"
+            type="button"
+            title="Previous match (Shift+Enter)"
+            onClick={findPrev}
+            disabled={matches.length === 0}
+          >
+            {"↑"}
+          </button>
+          <button
+            className="term-find-btn"
+            type="button"
+            title="Next match (Enter)"
+            onClick={findNext}
+            disabled={matches.length === 0}
+          >
+            {"↓"}
+          </button>
+          <button
+            className="term-find-btn term-find-close"
+            type="button"
+            title="Close (Esc)"
+            onClick={closeFind}
+          >
+            {"✕"}
+          </button>
+        </div>
+      )}
+    </>,
     container,
   );
 }
