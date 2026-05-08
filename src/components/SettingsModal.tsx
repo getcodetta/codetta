@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  setAutoClosingBrackets,
   setEditorSettings,
   useEditorSettings,
 } from "../editorSettings";
@@ -239,6 +240,27 @@ export function SettingsModal() {
               value={settings.minimap}
               onChange={(v) => setEditorSettings({ minimap: v })}
             />
+            <Row label="Auto-closing brackets">
+              <div className="settings-segmented">
+                {(
+                  [
+                    { v: "always", label: "Always" },
+                    { v: "languageDefined", label: "Language-defined" },
+                    { v: "never", label: "Never" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.v}
+                    className={`segmented-btn ${
+                      settings.autoClosingBrackets === opt.v ? "active" : ""
+                    }`}
+                    onClick={() => setAutoClosingBrackets(opt.v)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </Row>
           </Section>
 
           <Section title="On save">

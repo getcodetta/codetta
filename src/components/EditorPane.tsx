@@ -227,12 +227,14 @@ export function EditorPane({ wsId, path }: Props) {
       wordWrap: settings.wordWrap,
       tabSize: settings.tabSize,
       minimap: { enabled: settings.minimap },
+      autoClosingBrackets: settings.autoClosingBrackets,
     });
   }, [
     settings.fontSize,
     settings.wordWrap,
     settings.tabSize,
     settings.minimap,
+    settings.autoClosingBrackets,
   ]);
 
   // Per-file view-state preservation. When the editor's model swaps
@@ -498,6 +500,7 @@ export function EditorPane({ wsId, path }: Props) {
           cursorSmoothCaretAnimation: "on",
           padding: { top: 8 },
           rulers: settings.rulers,
+          autoClosingBrackets: settings.autoClosingBrackets,
         }}
         onMount={(ed: editor.IStandaloneCodeEditor, monaco: Monaco) => {
           editorRef.current = ed;

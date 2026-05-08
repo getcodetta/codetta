@@ -18,6 +18,12 @@ export interface EditorSettings {
   /** Vertical guides at the configured columns (e.g. [80, 100]).
    *  Empty array disables. */
   rulers: number[];
+  /** Monaco's auto-pair-brackets behaviour. "languageDefined" preserves
+   *  Monaco's default (pair where the language config says so);
+   *  "always" pairs in every language; "never" disables auto-pairing
+   *  entirely — useful for plain-prose / markdown editing where the
+   *  closing bracket gets in the way. */
+  autoClosingBrackets: "always" | "languageDefined" | "never";
 }
 
 const STORAGE_KEY = "lcp.editorSettings";
@@ -32,6 +38,7 @@ const DEFAULT: EditorSettings = {
   insertFinalNewline: false,
   formatOnSave: false,
   rulers: [],
+  autoClosingBrackets: "languageDefined",
 };
 
 function read(): EditorSettings {
@@ -82,6 +89,12 @@ function read(): EditorSettings {
             typeof n === "number" && Number.isFinite(n) && n > 0 && n < 1000,
         )
       : DEFAULT.rulers,
+    autoClosingBrackets:
+      raw.autoClosingBrackets === "always" ||
+      raw.autoClosingBrackets === "languageDefined" ||
+      raw.autoClosingBrackets === "never"
+        ? raw.autoClosingBrackets
+        : DEFAULT.autoClosingBrackets,
   };
 }
 
@@ -159,4 +172,23 @@ export function toggleFormatOnSave() {
   const next = !_settings.formatOnSave;
   setEditorSettings({ formatOnSave: next });
   toastInfo(`Format on save: ${next ? "on" : "off"}`);
+}
+export function setAutoClosingBrackets(
+  v: EditorSettings["autoClosingBrackets"],
+) {
+  setEditorSettings({ autoClosingBrackets: v });
+}
+// Cycle order matches the segmented-control left-to-right reading order
+// in the settings UI so users mashing the palette command can predict
+// where they'll land next.
+export function cycleAutoClosingBrackets() {
+  const order: EditorSettings["autoClosingBrackets"][] = [
+    "always",
+    "languageDefined",
+    "never",
+  ];
+  const idx = order.indexOf(_settings.autoClosingBrackets);
+  const next = order[(idx + 1) % order.length];
+  setEditorSettings({ autoClosingBrackets: next });
+  toastInfo(`Auto-closing brackets: ${next}`);
 }

@@ -18,6 +18,7 @@ import {
   success as toastSuccess,
 } from "./notify";
 import {
+  cycleAutoClosingBrackets,
   getEditorSettings,
   toggleAutoSave,
   toggleFormatOnSave,
@@ -520,6 +521,12 @@ export const commands: CommandSpec[] = [
     label: "Toggle: Format on Save",
     category: "File",
     run: () => toggleFormatOnSave(),
+  },
+  {
+    id: "edit.cycle_auto_closing",
+    label: "Cycle Auto-Closing Brackets",
+    category: "File",
+    run: () => cycleAutoClosingBrackets(),
   },
   {
     id: "edit.goto_symbol",
