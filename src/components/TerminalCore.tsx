@@ -12,7 +12,6 @@ import "@xterm/xterm/css/xterm.css";
 import { pty } from "../ipc";
 import { useStore } from "../store";
 import { useResolvedTheme } from "../theme";
-import { useStore } from "../store";
 import { setEditorGoto } from "../editorState";
 
 /**

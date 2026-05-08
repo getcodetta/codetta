@@ -62,6 +62,19 @@ export function getLineBookmarks(path: string): number[] {
   return [...set].sort((a, b) => a - b);
 }
 
+/** Snapshot of every (path, line) pair across every file. Used by the
+ *  sidebar list panel which needs to enumerate the whole store rather
+ *  than asking about one path at a time. */
+export function getAllLineBookmarks(): Array<{ path: string; line: number }> {
+  const out: Array<{ path: string; line: number }> = [];
+  for (const [path, set] of bookmarks) {
+    for (const line of [...set].sort((a, b) => a - b)) {
+      out.push({ path, line });
+    }
+  }
+  return out;
+}
+
 /** First bookmark strictly after `fromLine`, wrapping to the lowest
  *  bookmark when none is found above. Returns null when the file has
  *  no bookmarks at all. */

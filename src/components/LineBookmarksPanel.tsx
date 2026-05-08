@@ -8,96 +8,20 @@
 // the editor, and from then on it's reachable from this list without
 // having to remember which file it was in.
 //
-// The lineBookmarks store lives inline in this module. The intent is
-// for `src/lineBookmarks.ts` to be the canonical home (matching the
-// shape of bookmarks.ts), but until that module is split out the API
-// is exported from here so the editor's Ctrl+F2 binding can call into
-// `toggleLineBookmark` without a circular reach into a sidebar component.
-//
-// Storage shape:
-//   localStorage["lcp.lineBookmarks"] = JSON Record<path, sorted line[]>
-//
-// Storage is workspace-agnostic on purpose: line bookmarks are keyed by
-// absolute path, so they stay valid as long as the file is still on
-// disk at that path, regardless of which workspace happens to be open.
+// Reads from the canonical session-scoped store at src/lineBookmarks.ts
+// (in-memory, deliberately not persisted across restarts — see that
+// file's header for the rationale).
 
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../store";
 import { setEditorGoto } from "../editorState";
 import { Icon } from "./Icon";
 import { basename, relPath } from "../pathUtils";
-import { getJson, setJson } from "../localStore";
-
-// ---------- inline lineBookmarks store ----------
-
-const STORAGE_KEY = "lcp.lineBookmarks";
-
-type LineBookmarkMap = Record<string, number[]>;
-type LineBookmarkListener = () => void;
-
-function loadAll(): LineBookmarkMap {
-  const raw = getJson<unknown>(STORAGE_KEY, {});
-  if (!raw || typeof raw !== "object") return {};
-  const out: LineBookmarkMap = {};
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof k !== "string" || !Array.isArray(v)) continue;
-    const lines = v.filter(
-      (n): n is number => typeof n === "number" && n > 0 && Number.isFinite(n),
-    );
-    // Dedupe + sort so callers don't need to.
-    const uniq = Array.from(new Set(lines)).sort((a, b) => a - b);
-    if (uniq.length > 0) out[k] = uniq;
-  }
-  return out;
-}
-
-let cache: LineBookmarkMap | null = null;
-const listeners = new Set<LineBookmarkListener>();
-
-function ensureCache(): LineBookmarkMap {
-  if (cache === null) cache = loadAll();
-  return cache;
-}
-
-function persist() {
-  if (cache === null) return;
-  setJson(STORAGE_KEY, cache);
-  for (const l of listeners) l();
-}
-
-/** All bookmarked line numbers for the given absolute path. Sorted ascending. */
-export function getLineBookmarks(path: string): number[] {
-  const c = ensureCache();
-  return c[path] ? c[path].slice() : [];
-}
-
-/** Subscribe to add/remove events. Fires once per change, with no payload —
- *  callers re-read whatever subset they care about. */
-export function subscribeLineBookmarks(cb: LineBookmarkListener): () => void {
-  listeners.add(cb);
-  return () => listeners.delete(cb);
-}
-
-/** Toggle a line bookmark on (path, line). Returns true if the bookmark
- *  was added, false if it was removed. */
-export function toggleLineBookmark(path: string, line: number): boolean {
-  const c = ensureCache();
-  const cur = c[path] ?? [];
-  const idx = cur.indexOf(line);
-  if (idx >= 0) {
-    const next = cur.slice();
-    next.splice(idx, 1);
-    if (next.length === 0) delete c[path];
-    else c[path] = next;
-    persist();
-    return false;
-  }
-  c[path] = [...cur, line].sort((a, b) => a - b);
-  persist();
-  return true;
-}
-
-// ---------- panel ----------
+import {
+  getAllLineBookmarks,
+  subscribeLineBookmarks,
+  toggleLineBookmark,
+} from "../lineBookmarks";
 
 interface Props {
   wsId: string;
@@ -136,23 +60,14 @@ export function LineBookmarksPanel({ wsId, root }: Props) {
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
-    const unsub = subscribeLineBookmarks(() => setVersion((v) => v + 1));
-    return unsub;
+    return subscribeLineBookmarks(() => setVersion((v) => v + 1));
   }, []);
 
   const wsFiles = useStore((s) => s.loaded[wsId]?.files ?? null);
 
   const entries = useMemo<FlatEntry[]>(() => {
-    // Touch `version` so the memo invalidates whenever the store fires.
     void version;
-    const all = ensureCache();
-    const out: FlatEntry[] = [];
-    for (const [path, lines] of Object.entries(all)) {
-      for (const line of lines) out.push({ path, line });
-    }
-    // Group by path (preserving the path-insertion order from the map),
-    // lines already ascending.
-    return out;
+    return getAllLineBookmarks();
   }, [version]);
 
   const onOpen = (e: FlatEntry) => {
