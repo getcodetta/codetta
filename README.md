@@ -57,8 +57,8 @@ Download the installer from the [latest release](https://github.com/getcodetta/c
 
 | File | Use this if… |
 |---|---|
-| `Codetta_<version>_x64-setup.exe` | **Recommended** — NSIS installer, adds Start Menu entry + uninstaller |
-| `Codetta_<version>_x64_en-US.msi` | You're deploying via SCCM / Intune / GPO |
+| `Codetta_{version}_x64-setup.exe` | **Recommended** — NSIS installer, adds Start Menu entry + uninstaller |
+| `Codetta_{version}_x64_en-US.msi` | You're deploying via SCCM / Intune / GPO |
 | `codetta.exe` | Portable — run without installing (single executable) |
 
 After install, launch **Codetta** from the Start Menu. The first run prompts you to open a folder.
@@ -74,7 +74,7 @@ After install, launch **Codetta** from the Start Menu. The first run prompts you
 
 ### macOS
 
-Download `Codetta_<version>_universal.dmg` from the [latest release](https://github.com/getcodetta/codetta/releases/latest) — universal binary covers both Apple Silicon and Intel.
+Download `Codetta_{version}_universal.dmg` from the [latest release](https://github.com/getcodetta/codetta/releases/latest) — universal binary covers both Apple Silicon and Intel.
 
 > First-launch only — Gatekeeper will warn because the binary isn't notarized yet (notarization is on the roadmap). Either right-click the app → Open → Open to bypass once, or run `xattr -cr /Applications/Codetta.app` after first install.
 
@@ -82,8 +82,8 @@ Download `Codetta_<version>_universal.dmg` from the [latest release](https://git
 
 | File | Use this if… |
 |---|---|
-| `codetta_<version>_amd64.AppImage` | **Recommended** — portable, runs on most distros. `chmod +x` then double-click. |
-| `codetta_<version>_amd64.deb` | Debian / Ubuntu. `sudo apt install ./codetta_<version>_amd64.deb` |
+| `codetta_{version}_amd64.AppImage` | **Recommended** — portable, runs on most distros. `chmod +x` then double-click. |
+| `codetta_{version}_amd64.deb` | Debian / Ubuntu. `sudo apt install ./codetta_{version}_amd64.deb` |
 
 ---
 
@@ -142,8 +142,8 @@ npm run tauri build
 
 Outputs land in `src-tauri/target/release/bundle/`:
 
-- `nsis/Codetta_<version>_x64-setup.exe` — recommended Windows installer
-- `msi/Codetta_<version>_x64_en-US.msi` — enterprise MSI
+- `nsis/Codetta_{version}_x64-setup.exe` — recommended Windows installer
+- `msi/Codetta_{version}_x64_en-US.msi` — enterprise MSI
 - `src-tauri/target/release/codetta.exe` — portable executable
 
 ### Project layout
@@ -205,5 +205,3 @@ Codetta is **source-available** under the [Functional Source License](https://fs
 - 🕒 **Auto-converts to Apache 2.0** two years after each release — so every version eventually becomes fully open source.
 
 If you want to use Codetta in a way the FSL doesn't allow, get in touch at getcodetta@gmail.com.
- 
- 
