@@ -205,3 +205,5 @@ Codetta is **source-available** under the [Functional Source License](https://fs
 - 🕒 **Auto-converts to Apache 2.0** two years after each release — so every version eventually becomes fully open source.
 
 If you want to use Codetta in a way the FSL doesn't allow, get in touch at getcodetta@gmail.com.
+ 
+ 
