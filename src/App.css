@@ -185,7 +185,7 @@ input {
 }
 .splash-card {
   position: relative;
-  width: min(440px, 90vw);
+  width: min(520px, 92vw);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -258,8 +258,128 @@ input {
 .splash-tagline {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.55);
-  margin-bottom: 20px;
+  margin-bottom: 4px;
   text-align: center;
+}
+/* Fake editor window: line numbers, syntax-colored code that "types"
+   itself in (pure CSS typewriter — width 0 → --w ch with steps()), and
+   a blinking block caret on the last line. Gives the splash an
+   actual-code-editor identity instead of generic-app-loading. */
+.splash-editor {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 8, 20, 0.55);
+  overflow: hidden;
+  margin-bottom: 14px;
+  text-align: left;
+}
+.splash-editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+}
+.splash-editor-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+}
+.splash-editor-dot:nth-child(1) {
+  background: rgba(255, 99, 99, 0.55);
+}
+.splash-editor-dot:nth-child(2) {
+  background: rgba(255, 200, 90, 0.55);
+}
+.splash-editor-dot:nth-child(3) {
+  background: rgba(110, 220, 130, 0.55);
+}
+.splash-editor-file {
+  margin-left: 8px;
+  font-family: Cascadia Mono, Consolas, "Courier New", monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+}
+.splash-editor-body {
+  padding: 10px 12px 12px 8px;
+  font-family: Cascadia Mono, Consolas, "Courier New", monospace;
+  font-size: 11.5px;
+  line-height: 1.7;
+}
+.splash-code-line {
+  display: flex;
+  align-items: baseline;
+  white-space: pre;
+  min-height: 1.7em;
+}
+.splash-ln {
+  width: 22px;
+  flex: 0 0 auto;
+  text-align: right;
+  padding-right: 12px;
+  color: rgba(255, 255, 255, 0.18);
+  user-select: none;
+}
+.splash-code-text {
+  display: inline-block;
+  overflow: hidden;
+  white-space: pre;
+  vertical-align: bottom;
+  width: 0;
+  animation: splash-type var(--t, 400ms) steps(var(--steps, 20), end)
+    var(--d, 0ms) forwards;
+  color: rgba(235, 235, 245, 0.85);
+}
+@keyframes splash-type {
+  from {
+    width: 0;
+  }
+  to {
+    width: var(--w);
+  }
+}
+.splash-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1.15em;
+  margin-left: 1px;
+  background: #6e9eff;
+  transform: translateY(2px);
+  animation: splash-caret-blink 1.05s steps(2, start) infinite;
+}
+@keyframes splash-caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+.tok-kw {
+  color: #c792ea;
+}
+.tok-str {
+  color: #8ddc8f;
+}
+.tok-fn {
+  color: #6e9eff;
+}
+.tok-cmt {
+  color: rgba(255, 255, 255, 0.32);
+  font-style: italic;
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash-code-text {
+    animation: none;
+    width: var(--w);
+  }
+  .splash-caret {
+    animation: none;
+  }
 }
 .splash-progress-track {
   width: 100%;
@@ -707,9 +827,12 @@ input {
   right: 0;
   left: auto;
 }
-/* Second-level menus (View → Panels/Tabs/Zoom/…). The flyout anchors to
-   its trigger row and opens to the right; overflow flipping is not
-   needed at the menubar's left-edge position. */
+/* Second-level menus (View → Panels/Tabs/Zoom/…). The flyout portals
+   to <body> with fixed positioning (inline top/left from the trigger
+   rect) — the parent dropdown is overflow-y:auto, so an in-flow child
+   would be clipped at its edge and only grow its scrollbar. z-index
+   sits above the parent dropdown (70) so the flyout overlaps it when
+   space forces a left-side flip. */
 .menu-subanchor {
   position: relative;
 }
@@ -718,12 +841,10 @@ input {
   background: var(--bg-hover, rgba(255, 255, 255, 0.06));
 }
 .menu-dropdown.menu-submenu {
-  position: absolute;
-  top: -5px; /* aligns first child row with the trigger row */
-  left: 100%;
-  margin-top: 0;
-  margin-left: 2px;
+  position: fixed;
+  margin: 0;
   min-width: 220px;
+  z-index: 75;
 }
 .menu-item {
   display: flex;

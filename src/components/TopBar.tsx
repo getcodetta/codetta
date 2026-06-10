@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   commands,
@@ -77,7 +78,14 @@ function MenuButton({
 
 /** Second-level menu. Opens on hover (with a small close grace so the
  *  diagonal move into the flyout doesn't shut it) and on click; ArrowRight
- *  / ArrowLeft open and close it from the keyboard. */
+ *  / ArrowLeft open and close it from the keyboard.
+ *
+ *  The flyout PORTALS to document.body with fixed positioning — the
+ *  parent .menu-dropdown is overflow-y:auto, so an in-flow absolute
+ *  child gets clipped at the dropdown edge and merely inflates its
+ *  scrollbar instead of floating beside it. Both the trigger and the
+ *  portaled flyout share the same enter/leave grace timer so crossing
+ *  the 2px gap doesn't flicker it closed. */
 function SubMenu({
   label,
   children,
@@ -86,6 +94,12 @@ function SubMenu({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const [pos, setPos] = useState<{
+    top: number;
+    left: number;
+    maxHeight: number;
+  } | null>(null);
   const closeTimer = useRef<number | null>(null);
   const enter = () => {
     if (closeTimer.current) window.clearTimeout(closeTimer.current);
@@ -99,6 +113,24 @@ function SubMenu({
       if (closeTimer.current) window.clearTimeout(closeTimer.current);
     };
   }, []);
+  useEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const r = triggerRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const width = 240; // matches .menu-submenu min-width + padding
+    // Open to the right of the trigger; flip to the left edge when the
+    // viewport is too narrow. Clamp top so the flyout never runs off
+    // the bottom of the window.
+    const left =
+      r.right + 2 + width > window.innerWidth
+        ? Math.max(4, r.left - width - 2)
+        : r.right + 2;
+    const top = Math.max(4, Math.min(r.top - 5, window.innerHeight - 200));
+    setPos({ top, left, maxHeight: window.innerHeight - top - 8 });
+  }, [open]);
   return (
     <div
       className="menu-subanchor"
@@ -106,6 +138,7 @@ function SubMenu({
       onMouseLeave={leave}
     >
       <button
+        ref={triggerRef}
         className={`menu-item menu-sub-trigger ${open ? "open" : ""}`}
         role="menuitem"
         aria-haspopup="menu"
@@ -126,11 +159,24 @@ function SubMenu({
           <Icon name="chevron-right" size={11} />
         </span>
       </button>
-      {open && (
-        <div className="menu-dropdown menu-submenu" role="menu">
-          {children}
-        </div>
-      )}
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            className="menu-dropdown menu-submenu"
+            role="menu"
+            style={{
+              top: pos.top,
+              left: pos.left,
+              maxHeight: pos.maxHeight,
+            }}
+            onMouseEnter={enter}
+            onMouseLeave={leave}
+          >
+            {children}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
