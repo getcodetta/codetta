@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { useModalFocus } from "../useModalFocus";
 import { Icon } from "./Icon";
 import {
   CATEGORY_LABELS,
@@ -62,6 +63,8 @@ export function ModelBrowser({
   const [activeCat, setActiveCat] = useState<CatalogModel["category"] | "all">(
     "all",
   );
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(modalRef, open);
 
   // Esc closes the modal — the close button's tooltip already promised
   // "Close (Esc)" but the keydown handler was missing, so users hitting
@@ -115,6 +118,8 @@ export function ModelBrowser({
   return createPortal(
     <div className="settings-backdrop" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="model-browser"
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"

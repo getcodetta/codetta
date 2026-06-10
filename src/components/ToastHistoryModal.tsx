@@ -13,7 +13,7 @@
 // visible list immediately. That way an error that fires WHILE the user
 // is reading shows up without them having to close + reopen.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   clearToastHistory,
@@ -21,6 +21,7 @@ import {
   subscribeToastHistory,
   type ToastRecord,
 } from "../notify";
+import { useModalFocus } from "../useModalFocus";
 import { Icon, type IconName } from "./Icon";
 
 interface Props {
@@ -92,6 +93,8 @@ function dateLabel(ts: number): string {
 
 export function ToastHistoryModal({ open, onClose }: Props) {
   const [query, setQuery] = useState("");
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(modalRef, open);
   // Re-render trigger — we don't store the records in state directly,
   // we just bump a version number whenever the history changes and let
   // useMemo recompute from the source of truth.
@@ -167,6 +170,8 @@ export function ToastHistoryModal({ open, onClose }: Props) {
   return createPortal(
     <div className="shortcut-modal-backdrop" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="shortcut-modal"
         role="dialog"
         aria-modal="true"

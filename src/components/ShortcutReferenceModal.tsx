@@ -7,9 +7,10 @@
 // from, so any new command automatically shows up here once it's
 // registered.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { commands } from "../actions";
+import { useModalFocus } from "../useModalFocus";
 import { Icon } from "./Icon";
 
 interface Props {
@@ -29,6 +30,8 @@ const CATEGORY_ORDER = [
 
 export function ShortcutReferenceModal({ open, onClose }: Props) {
   const [query, setQuery] = useState("");
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(modalRef, open);
 
   useEffect(() => {
     if (!open) {
@@ -72,6 +75,8 @@ export function ShortcutReferenceModal({ open, onClose }: Props) {
   return createPortal(
     <div className="shortcut-modal-backdrop" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="shortcut-modal"
         role="dialog"
         aria-modal="true"

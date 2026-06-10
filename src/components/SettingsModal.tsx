@@ -17,6 +17,7 @@ import {
 } from "../footprintSettings";
 import { useTheme, type ThemeMode } from "../theme";
 import { onSettingsOpen } from "../settingsBus";
+import { useModalFocus } from "../useModalFocus";
 import { useStore } from "../store";
 import { PROVIDERS } from "../providers";
 import { McpServerBrowser } from "./McpServerBrowser";
@@ -316,6 +317,8 @@ export function SettingsModal() {
   // Deep-link target captured from openSettings(section). Consumed by
   // the TOC discovery effect below once the section list exists.
   const pendingSlugRef = useRef<string | null>(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(modalRef, open);
 
   useEffect(() => {
     return onSettingsOpen((section) => {
@@ -379,6 +382,8 @@ export function SettingsModal() {
   return createPortal(
     <div className="settings-backdrop" onMouseDown={() => setOpen(false)}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="settings-modal"
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"

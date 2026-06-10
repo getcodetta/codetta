@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { fsBus } from "../fsBus";
 import {
@@ -18,6 +18,7 @@ import {
 import { langOf } from "../langDetect";
 import { joinPath } from "../pathUtils";
 import { useStore } from "../store";
+import { useModalFocus } from "../useModalFocus";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { Icon } from "./Icon";
 
@@ -82,6 +83,8 @@ export function SourceControlPanel({ wsId, root }: Props) {
   const [commitDiffLoading, setCommitDiffLoading] = useState(false);
   const [stashes, setStashes] = useState<GitStash[]>([]);
   const [stashesOpen, setStashesOpen] = useState(false);
+  const commitCardRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(commitCardRef, !!openCommit);
 
   const refresh = useCallback(async () => {
     try {
@@ -988,6 +991,8 @@ export function SourceControlPanel({ wsId, root }: Props) {
       {openCommit && (
         <div className="git-commit-modal" onMouseDown={() => setOpenCommit(null)}>
           <div
+            ref={commitCardRef}
+            tabIndex={-1}
             className="git-commit-card"
             role="dialog"
             aria-modal="true"

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fileKey, useStore, type Pane } from "../store";
 import { relPath } from "../pathUtils";
+import { useModalFocus } from "../useModalFocus";
 import { Icon } from "./Icon";
 
 interface Props {
@@ -47,6 +48,8 @@ export function FootprintModal({ open, onClose }: Props) {
 
   const [fileFilter, setFileFilter] = useState("");
   const [termFilter, setTermFilter] = useState("");
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(modalRef, open);
 
   // Esc to close — same convention as SettingsModal.
   useEffect(() => {
@@ -155,6 +158,8 @@ export function FootprintModal({ open, onClose }: Props) {
   return createPortal(
     <div className="settings-backdrop" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="settings-modal shortcut-modal"
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"

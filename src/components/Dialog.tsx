@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { resolveDialog, useDialog } from "../dialog";
+import { useModalFocus } from "../useModalFocus";
 
 export function Dialog() {
   const req = useDialog();
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(cardRef, !!req);
 
   useEffect(() => {
     if (!req) return;
@@ -60,6 +63,8 @@ export function Dialog() {
   return createPortal(
     <div className="dialog-backdrop" onMouseDown={cancel}>
       <div
+        ref={cardRef}
+        tabIndex={-1}
         className="dialog-card"
         role={req.kind === "alert" ? "alertdialog" : "dialog"}
         aria-modal="true"
