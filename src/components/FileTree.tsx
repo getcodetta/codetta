@@ -569,12 +569,13 @@ export function FileTree({ wsId, root }: Props) {
                 if (useStore.getState().loaded[wsId]?.files[target.path]) {
                   await useStore.getState().saveFile(wsId, target.path);
                 }
-                const contents = await fs.readFile(target.path);
-                await invoke("sftp_write_file", {
+                // Byte-level upload handles binary linked files too
+                // (fs.readFile rejects anything with NUL bytes).
+                await invoke<number>("sftp_upload_from_disk", {
                   args: {
                     ...conn,
-                    path: link.remotePath,
-                    contents,
+                    remotePath: link.remotePath,
+                    localPath: target.path,
                   },
                 });
                 rememberRemoteLink(wsId, target.path, {
@@ -602,9 +603,12 @@ export function FileTree({ wsId, root }: Props) {
               );
               if (!remotePath) return;
               try {
-                const contents = await fs.readFile(target.path);
-                await invoke("sftp_write_file", {
-                  args: { ...active.conn, path: remotePath, contents },
+                await invoke<number>("sftp_upload_from_disk", {
+                  args: {
+                    ...active.conn,
+                    remotePath,
+                    localPath: target.path,
+                  },
                 });
                 rememberRemoteLink(wsId, target.path, {
                   profileId: active.profileId,

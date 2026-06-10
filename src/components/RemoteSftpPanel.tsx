@@ -312,10 +312,15 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
         title: `Save ${suggestedName} as…`,
       });
       if (!localPath) return;
-      const contents = await invoke<string>("sftp_read_file", {
-        args: { ...profileToConn(profile), path: remotePath },
+      // Byte-level transfer — the old string round-trip via
+      // sftp_read_file failed on any non-UTF-8 file (images, zips).
+      await invoke<number>("sftp_download_to_disk", {
+        args: {
+          ...profileToConn(profile),
+          remotePath,
+          localPath,
+        },
       });
-      await fs.writeFile(localPath, contents);
       // Remember the round-trip so Push-to-remote works on this file.
       rememberRemoteLink(wsId, localPath, {
         profileId: profile.id,
@@ -387,10 +392,11 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
   const uploadLocalFile = async (parentPath: string, localPath: string) => {
     if (!profile) return;
     const fileName = basename(localPath);
-    const contents = await fs.readFile(localPath);
     const remotePath = joinRemote(parentPath, fileName);
-    await invoke("sftp_write_file", {
-      args: { ...profileToConn(profile), path: remotePath, contents },
+    // Byte-level transfer — fs.readFile rejects binary local files, so
+    // the old string hop couldn't upload images/fonts.
+    await invoke<number>("sftp_upload_from_disk", {
+      args: { ...profileToConn(profile), remotePath, localPath },
     });
     // Record the link so subsequent edits to this local file can push
     // back without re-asking for a target.

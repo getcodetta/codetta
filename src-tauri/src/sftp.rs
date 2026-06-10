@@ -43,7 +43,12 @@ pub struct SftpConnectArgs {
     /// Optional absolute path to an OpenSSH private key (PEM). When set,
     /// key auth is tried first; a successful key auth wins, otherwise we
     /// fall through to password auth so existing profiles keep working.
-    #[serde(default)]
+    ///
+    /// The alias matters: every frontend call site sends camelCase
+    /// `privateKeyPath`, and serde silently IGNORED the unknown key —
+    /// so key auth never engaged and key-only profiles failed with a
+    /// confusing "authentication failed" instead of using the key.
+    #[serde(default, alias = "privateKeyPath")]
     pub private_key_path: Option<String>,
 }
 
@@ -314,6 +319,11 @@ pub struct SftpReadArgs {
     pub path: String,
 }
 
+/// Editor-read cap, mirroring fs_ops::MAX_READ_BYTES. sftp_read_file
+/// feeds the text editor; an unbounded read_to_end on a 2 GB remote
+/// log would pull it all into memory before failing.
+const MAX_EDITOR_READ_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB
+
 #[tauri::command]
 pub async fn sftp_read_file(
     state: tauri::State<'_, SftpPoolState>,
@@ -322,6 +332,16 @@ pub async fn sftp_read_file(
     use tokio::io::AsyncReadExt;
     let session = get_session(&state, &args.conn).await?;
     let sftp = session.lock().await;
+    if let Ok(meta) = sftp.metadata(&args.path).await {
+        let size = meta.size.unwrap_or(0);
+        if size > MAX_EDITOR_READ_BYTES {
+            return Err(format!(
+                "File is too large to open in the editor ({} MiB > {} MiB). Use \"Download…\" instead.",
+                size / (1024 * 1024),
+                MAX_EDITOR_READ_BYTES / (1024 * 1024)
+            ));
+        }
+    }
     let mut file = match sftp.open(&args.path).await {
         Ok(f) => f,
         Err(e) => {
@@ -337,7 +357,115 @@ pub async fn sftp_read_file(
         evict_session(&state, &args.conn);
         return Err(format!("read failed: {e}"));
     }
-    String::from_utf8(buf).map_err(|e| format!("file is not valid UTF-8: {e}"))
+    String::from_utf8(buf)
+        .map_err(|_| "File is not valid UTF-8 text. Use \"Download…\" for binary files.".to_string())
+}
+
+#[derive(Serialize)]
+pub struct SftpStat {
+    pub size: u64,
+    pub mtime: u64,
+}
+
+/// Lightweight remote stat — used for stale-push checks and size gates
+/// without opening the file.
+#[tauri::command]
+pub async fn sftp_stat(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpReadArgs,
+) -> SftpResult<SftpStat> {
+    let session = get_session(&state, &args.conn).await?;
+    let sftp = session.lock().await;
+    match sftp.metadata(&args.path).await {
+        Ok(meta) => Ok(SftpStat {
+            size: meta.size.unwrap_or(0),
+            mtime: meta.mtime.unwrap_or(0) as u64,
+        }),
+        Err(e) => {
+            drop(sftp);
+            evict_session(&state, &args.conn);
+            Err(format!("stat failed: {e}"))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SftpDiskTransferArgs {
+    #[serde(flatten)]
+    pub conn: SftpConnectArgs,
+    pub remote_path: String,
+    pub local_path: String,
+}
+
+/// Download a single remote file straight to disk as raw bytes — no
+/// UTF-8 string hop, so images/zips/fonts work. (sftp_read_file is for
+/// the text editor only.)
+#[tauri::command]
+pub async fn sftp_download_to_disk(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpDiskTransferArgs,
+) -> SftpResult<u64> {
+    use tokio::io::AsyncReadExt;
+    let session = get_session(&state, &args.conn).await?;
+    let sftp = session.lock().await;
+    let mut file = match sftp.open(&args.remote_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            drop(sftp);
+            evict_session(&state, &args.conn);
+            return Err(format!("open failed: {e}"));
+        }
+    };
+    let mut buf = Vec::new();
+    if let Err(e) = file.read_to_end(&mut buf).await {
+        drop(file);
+        drop(sftp);
+        evict_session(&state, &args.conn);
+        return Err(format!("read failed: {e}"));
+    }
+    let n = buf.len() as u64;
+    if let Some(parent) = std::path::Path::new(&args.local_path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+    }
+    std::fs::write(&args.local_path, &buf).map_err(|e| format!("local write failed: {e}"))?;
+    Ok(n)
+}
+
+/// Upload a single local file straight from disk as raw bytes — the
+/// counterpart to sftp_download_to_disk. The string-based
+/// sftp_write_file path rejects binary local files at fs.readFile.
+#[tauri::command]
+pub async fn sftp_upload_from_disk(
+    state: tauri::State<'_, SftpPoolState>,
+    args: SftpDiskTransferArgs,
+) -> SftpResult<u64> {
+    use tokio::io::AsyncWriteExt;
+    let buf =
+        std::fs::read(&args.local_path).map_err(|e| format!("local read failed: {e}"))?;
+    let session = get_session(&state, &args.conn).await?;
+    let sftp = session.lock().await;
+    let mut file = match sftp.create(&args.remote_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            drop(sftp);
+            evict_session(&state, &args.conn);
+            return Err(format!("create failed: {e}"));
+        }
+    };
+    if let Err(e) = file.write_all(&buf).await {
+        drop(file);
+        drop(sftp);
+        evict_session(&state, &args.conn);
+        return Err(format!("write failed: {e}"));
+    }
+    if let Err(e) = file.shutdown().await {
+        drop(file);
+        drop(sftp);
+        evict_session(&state, &args.conn);
+        return Err(format!("close failed: {e}"));
+    }
+    Ok(buf.len() as u64)
 }
 
 #[derive(Debug, Deserialize)]
