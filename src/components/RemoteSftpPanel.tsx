@@ -891,11 +891,29 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
   }
 
   if (status.kind === "error") {
+    const hostKeyChanged = status.message.includes("HOST KEY CHANGED");
     return (
       <div className="remote-panel">
         <div className="remote-panel-empty remote-panel-error">
           <strong>Connection failed</strong>
           <pre className="remote-error-text">{status.message}</pre>
+          {hostKeyChanged && profile && (
+            <button
+              className="remote-disconnect-btn"
+              onClick={() => {
+                void (async () => {
+                  await invoke("sftp_forget_host_key", {
+                    host: profile.host,
+                    port: profile.port,
+                  }).catch(() => {});
+                  await connect();
+                })();
+              }}
+              title="Only do this if you KNOW the server's key was legitimately rotated (reinstall, migration). The next connect pins the new key."
+            >
+              Forget host key &amp; retry
+            </button>
+          )}
           <button
             className="remote-connect-btn"
             onClick={() => void connect()}

@@ -90,18 +90,123 @@ pub struct SftpPoolState {
     sessions: parking_lot::Mutex<HashMap<String, PooledSession>>,
 }
 
-struct AcceptAllKeysClient;
+// ---------- Host-key pinning (trust-on-first-use) ----------
+//
+// The previous handler accepted every server key on every connection —
+// an on-path attacker could impersonate the server and harvest the
+// password plus everything pushed. We now persist the first-seen
+// fingerprint per host:port in known_hosts.json (app data dir) and
+// refuse to connect when it changes, with an explanation and a
+// "forget host key" recovery path for legitimate rotations.
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+struct KnownHostEntry {
+    algo: String,
+    /// SHA-256 fingerprint of the host key, base64 (russh's format).
+    fingerprint: String,
+    /// Unix millis when first pinned — shown in the mismatch message
+    /// so the user can judge "first seen 2 years ago" vs "yesterday".
+    first_seen_ms: u64,
+}
+
+fn known_hosts_path() -> Result<std::path::PathBuf, String> {
+    let base = dirs::data_dir().ok_or_else(|| "no app data dir".to_string())?;
+    let dir = base.join("codetta");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("known_hosts.json"))
+}
+
+// Serializes load-modify-store across concurrent connects to the same
+// (or different) hosts.
+static KNOWN_HOSTS_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+fn load_known_hosts() -> HashMap<String, KnownHostEntry> {
+    let Ok(path) = known_hosts_path() else {
+        return HashMap::new();
+    };
+    let Ok(s) = std::fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&s).unwrap_or_default()
+}
+
+fn store_known_hosts(map: &HashMap<String, KnownHostEntry>) {
+    let Ok(path) = known_hosts_path() else { return };
+    if let Ok(s) = serde_json::to_string_pretty(map) {
+        let _ = std::fs::write(path, s);
+    }
+}
+
+fn host_key_id(host: &str, port: u16) -> String {
+    format!("{}:{}", host, port)
+}
+
+/// TOFU check, run from the russh handler. Returns Ok(()) to accept or
+/// Err(message) describing the mismatch.
+fn check_pinned_host_key(
+    host: &str,
+    port: u16,
+    algo: &str,
+    fingerprint: &str,
+) -> Result<(), String> {
+    let _guard = KNOWN_HOSTS_LOCK.lock();
+    let mut map = load_known_hosts();
+    let id = host_key_id(host, port);
+    match map.get(&id) {
+        None => {
+            map.insert(
+                id,
+                KnownHostEntry {
+                    algo: algo.to_string(),
+                    fingerprint: fingerprint.to_string(),
+                    first_seen_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0),
+                },
+            );
+            store_known_hosts(&map);
+            Ok(())
+        }
+        Some(known) if known.fingerprint == fingerprint => Ok(()),
+        Some(known) => Err(format!(
+            "HOST KEY CHANGED for {}:{} — possible man-in-the-middle.\n\
+             Pinned: {} SHA256:{}\n\
+             Offered: {} SHA256:{}\n\
+             If the server was legitimately reinstalled or its keys rotated, \
+             use \"Forget host key & retry\"; otherwise do NOT connect on \
+             this network.",
+            host, port, known.algo, known.fingerprint, algo, fingerprint
+        )),
+    }
+}
+
+struct PinnedHostKeyClient {
+    host: String,
+    port: u16,
+    /// The mismatch explanation, smuggled out of check_server_key —
+    /// russh only lets the handler return a generic error, so
+    /// open_session reads this to build an actionable message.
+    rejection: Arc<parking_lot::Mutex<Option<String>>>,
+}
 
 #[async_trait]
-impl client::Handler for AcceptAllKeysClient {
+impl client::Handler for PinnedHostKeyClient {
     type Error = russh::Error;
 
-    // Trust-on-first-use without persisting fingerprints. TODO known_hosts.
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
+        server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        let algo = server_public_key.name().to_string();
+        let fp = server_public_key.fingerprint();
+        match check_pinned_host_key(&self.host, self.port, &algo, &fp) {
+            Ok(()) => Ok(true),
+            Err(msg) => {
+                *self.rejection.lock() = Some(msg);
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -123,13 +228,23 @@ async fn open_session(args: &SftpConnectArgs) -> SftpResult<SftpSession> {
         ..client::Config::default()
     });
 
-    let mut session = client::connect(
-        config,
-        (args.host.as_str(), args.port),
-        AcceptAllKeysClient,
-    )
-    .await
-    .map_err(|e| format!("connect failed: {e}"))?;
+    let rejection = Arc::new(parking_lot::Mutex::new(None::<String>));
+    let handler = PinnedHostKeyClient {
+        host: args.host.clone(),
+        port: args.port,
+        rejection: rejection.clone(),
+    };
+    let mut session = client::connect(config, (args.host.as_str(), args.port), handler)
+        .await
+        .map_err(|e| {
+            // A host-key rejection surfaces from russh as a generic
+            // error; swap in the actionable explanation when we have it.
+            if let Some(msg) = rejection.lock().take() {
+                msg
+            } else {
+                format!("connect failed: {e}")
+            }
+        })?;
 
     let mut authed = false;
 
@@ -565,6 +680,18 @@ pub async fn sftp_mkdir(
         evict_session(&state, &args.conn);
         return Err(format!("create_dir failed: {e}"));
     }
+    Ok(())
+}
+
+/// Drop the pinned host key for host:port — the two-click recovery for
+/// a legitimate server reinstall / key rotation. The next connect
+/// re-pins whatever the server offers (TOFU again).
+#[tauri::command]
+pub async fn sftp_forget_host_key(host: String, port: u16) -> SftpResult<()> {
+    let _guard = KNOWN_HOSTS_LOCK.lock();
+    let mut map = load_known_hosts();
+    map.remove(&host_key_id(&host, port));
+    store_known_hosts(&map);
     Ok(())
 }
 

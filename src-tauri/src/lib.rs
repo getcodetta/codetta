@@ -121,6 +121,7 @@ pub fn run() {
             sftp::sftp_upload_dir,
             sftp::sftp_download_dir,
             sftp::sftp_disconnect,
+            sftp::sftp_forget_host_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
