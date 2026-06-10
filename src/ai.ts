@@ -140,6 +140,7 @@ export async function* chatStream(
   tools?: ToolDef[],
   resumeSessionId?: string,
   chatSessionId?: string,
+  cwd?: string,
 ): AsyncGenerator<ChatStreamEvent, void, unknown> {
   const parsed = parseQualifiedModel(model);
   const providerId: ProviderId = parsed?.providerId ?? "ollama";
@@ -152,6 +153,7 @@ export async function* chatStream(
     signal,
     resumeSessionId,
     chatSessionId,
+    cwd,
   });
 }
 

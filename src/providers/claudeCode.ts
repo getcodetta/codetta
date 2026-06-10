@@ -129,7 +129,14 @@ export const claudeCodeProvider: ChatProvider = {
     return DEFAULT_MODELS;
   },
 
-  async *chat({ model, messages, signal, resumeSessionId, chatSessionId }) {
+  async *chat({
+    model,
+    messages,
+    signal,
+    resumeSessionId,
+    chatSessionId,
+    cwd: cwdArg,
+  }) {
     // When resuming an existing Claude Code session, send only the LATEST
     // user message — the CLI already has the server-side history. Sending
     // the full transcript again would double-count it. On a fresh session
@@ -137,7 +144,9 @@ export const claudeCodeProvider: ChatProvider = {
     const prompt = resumeSessionId
       ? lastUserMessage(messages)
       : flattenMessages(messages);
-    const cwd = getWorkspaceRoot();
+    // The chat's OWN workspace root wins; the active-workspace fallback
+    // only covers callers that predate the cwd arg.
+    const cwd = cwdArg ?? getWorkspaceRoot();
 
     let streamId: string;
     try {

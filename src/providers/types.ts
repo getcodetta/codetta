@@ -49,6 +49,13 @@ export interface ChatProvider {
      * stream. Non-agentic providers ignore this.
      */
     chatSessionId?: string;
+    /**
+     * Workspace root the chat BELONGS to. Agentic providers spawn in
+     * this directory; without it they fell back to "whichever
+     * workspace is active right now", so a chat in workspace A pointed
+     * Claude Code's tools at workspace B after the user switched.
+     */
+    cwd?: string;
   }): AsyncGenerator<ChatStreamEvent, void, unknown>;
 }
 

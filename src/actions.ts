@@ -845,6 +845,32 @@ export const commands: CommandSpec[] = [
     },
   },
   {
+    id: "terminal.claude_code",
+    label: "Open Claude Code Terminal",
+    category: "Terminal",
+    run: () => {
+      const wsId = s().activeId;
+      if (!wsId) {
+        toastError("Open a workspace first");
+        return;
+      }
+      // Launch the claude CLI directly in the workspace root — the
+      // one-keystroke path into a terminal AI session. Windows needs a
+      // cmd host (claude is claude.cmd from npm and PATHEXT doesn't
+      // apply to raw spawns); POSIX drops back to the login shell when
+      // claude exits so the tab stays usable.
+      const isWin = navigator.userAgent.includes("Windows");
+      const shell = isWin
+        ? { path: "cmd.exe", args: ["/k", "claude"], label: "Claude Code" }
+        : {
+            path: "/bin/sh",
+            args: ["-lc", 'claude; exec "${SHELL:-/bin/sh}"'],
+            label: "Claude Code",
+          };
+      s().addTerminal(wsId, "bottom", shell);
+    },
+  },
+  {
     id: "ai.new_chat",
     label: "New AI Chat",
     category: "AI",

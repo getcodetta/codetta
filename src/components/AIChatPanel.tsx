@@ -1176,6 +1176,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         // Non-fatal — chat still works without rules.
       }
     }
+    // Claude Code per-turn context goes into the USER message, not
+    // sysParts: resumed turns send only the latest user message (the
+    // server-side session already has the system prompt), so anything
+    // in sysParts silently vanished after turn one — @-mentions and
+    // the active-file hint stopped working exactly when conversations
+    // got going.
+    const ccTurnContext: string[] = [];
     if (skipAllInlining) {
       // Hint to the user's request which file they're focused on —
       // unless the active file is on the AI privacy exclusion list,
@@ -1185,14 +1192,33 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         editorState.filePath &&
         !matchExclusion(editorState.filePath)
       ) {
-        sysParts.push(
+        ccTurnContext.push(
           `The user is currently looking at the file: ${editorState.filePath}. Use your Read tool to fetch it if relevant.`,
         );
       }
       if (attachedFiles.length > 0) {
-        sysParts.push(
+        ccTurnContext.push(
           `The user wants you to look at: ${attachedFiles.join(", ")}. Use your Read tool on these.`,
         );
+      }
+      // /terminal for Claude Code: it can't see Codetta's terminal
+      // scrollback through its own Bash tool (different PTY), so this
+      // is the one piece of context that must be inlined.
+      if (attachTerminal) {
+        const wsLatest = useStore.getState().loaded[wsId];
+        const terms = wsLatest ? Object.values(wsLatest.terminals) : [];
+        const t = terms[terms.length - 1];
+        if (t?.ptyId) {
+          try {
+            const buf = await pty.getBuffer(t.ptyId);
+            const trimmed = buf.length > 8000 ? buf.slice(-8000) : buf;
+            ccTurnContext.push(
+              `Recent output from the editor terminal "${t.title ?? "Terminal"}":\n\`\`\`\n${trimmed}\n\`\`\``,
+            );
+          } catch {
+            /* skip */
+          }
+        }
       }
     }
     // /file <path> attaches the contents of the named file.
@@ -1294,11 +1320,16 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     }
 
     // Display the user's bare text in the chat — but send an augmented
-    // version (with the inline tree) to the model.
+    // version (with the inline tree / per-turn editor context) to the
+    // model.
     const displayUserMsg: ChatMessage = { role: "user", content: text };
+    const ccPrefix =
+      ccTurnContext.length > 0
+        ? `[Editor context]\n${ccTurnContext.join("\n\n")}\n[/Editor context]\n\n`
+        : "";
     const sentUserMsg: ChatMessage = {
       role: "user",
-      content: inlineTreeBlock ? text + inlineTreeBlock : text,
+      content: ccPrefix + (inlineTreeBlock ? text + inlineTreeBlock : text),
     };
     const conversation: ChatMessage[] = [
       { role: "system", content: sysParts.join("\n\n") },
@@ -1383,6 +1414,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           // chatSessionId tags the in-flight stream in the Rust buffer
           // so a frontend refresh can re-attach via attachToChat().
           selectedProvider === "claude-code" ? sessionId : undefined,
+          // THIS chat's workspace root — not whichever workspace is
+          // active when the turn fires (multi-workspace isolation).
+          root,
         )) {
           // Any event from the provider is a sign of life — reset the
           // staleness timer so the "still working" badge only fires

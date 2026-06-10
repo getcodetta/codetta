@@ -3867,6 +3867,15 @@ input {
   width: 140px;
   text-align: left;
 }
+.settings-select {
+  min-width: 200px;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+}
 .settings-row-note {
   display: block;
   font-size: 11px;

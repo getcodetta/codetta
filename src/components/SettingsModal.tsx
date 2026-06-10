@@ -18,6 +18,8 @@ import {
 import { useTheme, type ThemeMode } from "../theme";
 import { onSettingsOpen } from "../settingsBus";
 import { useModalFocus } from "../useModalFocus";
+import { pty, type ShellOption } from "../ipc";
+import { getDefaultShellId, setDefaultShellId } from "../terminalPrefs";
 import { useStore } from "../store";
 import { PROVIDERS } from "../providers";
 import { McpServerBrowser } from "./McpServerBrowser";
@@ -52,6 +54,52 @@ import {
   removeTemplate,
   subscribeTemplates,
 } from "../aiTemplates";
+
+// Default-shell picker. The backend's available_shells detection feeds
+// the list; "" = let the OS default win. New-terminal spawn paths all
+// route through store.addTerminal, which resolves this preference.
+function DefaultShellRow() {
+  const [shells, setShells] = useState<ShellOption[]>([]);
+  const [sel, setSel] = useState(() => getDefaultShellId());
+  useEffect(() => {
+    let alive = true;
+    void pty
+      .availableShells()
+      .then((s) => {
+        if (alive) setShells(s);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return (
+    <>
+      <Row label="Default shell">
+        <select
+          className="settings-select"
+          value={sel}
+          onChange={(e) => {
+            setSel(e.target.value);
+            setDefaultShellId(e.target.value);
+          }}
+        >
+          <option value="">System default</option>
+          {shells.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+      </Row>
+      <div className="settings-row settings-row-note">
+        What Ctrl+`, the + Term button, and the auto-created first
+        terminal launch. The + Term ▾ dropdown still offers one-off
+        picks. Applies to new terminals only.
+      </div>
+    </>
+  );
+}
 
 // Vertical-rulers editor. The setting (EditorSettings.rulers) was fully
 // implemented and wired into Monaco but had no UI — dead code from the
@@ -689,6 +737,10 @@ export function SettingsModal() {
               directly from the app to the provider. Ollama runs locally and needs
               no key.
             </div>
+          </Section>
+
+          <Section title="Terminal">
+            <DefaultShellRow />
           </Section>
 
           <Section title="Auto-save">

@@ -5,11 +5,13 @@ import {
   lookupRemoteLink,
 } from "./sftpLinks";
 import { consumeAutoPushSuppression, pushLinkedFile } from "./sftpPush";
+import { resolveDefaultShell } from "./terminalPrefs";
 import { clearEditorState, disposeModelForPath } from "./editorState";
 import {
   error as toastError,
   errMsg,
   success as toastSuccess,
+  warning as toastWarning,
 } from "./notify";
 import {
   workspaces as wsApi,
@@ -20,8 +22,8 @@ import {
 import { choice as dialogChoice } from "./dialog";
 import { getEditorSettings } from "./editorSettings";
 import { getFootprintSettings } from "./footprintSettings";
-import { basename } from "./pathUtils";
-import { pathsEqual } from "./fsBus";
+import { basename, dirname } from "./pathUtils";
+import { fsBus, pathsEqual } from "./fsBus";
 import { pushClosedTab, popClosedTab, forgetClosedTab } from "./closedTabsStack";
 import { getRecentFiles } from "./recentFiles";
 
@@ -1633,6 +1635,47 @@ export const useStore = create<AppState>((set, get) => {
       const ws = get().loaded[wsId];
       const f = ws?.files[path];
       if (!ws || !f || f.contents === f.original) return true;
+      // Disk guard: if the file changed on disk since we loaded it
+      // (claude in a terminal, a formatter, git checkout), writing now
+      // would silently destroy that work. Read-before-write costs one
+      // extra IPC per save and buys the core AI-workflow guarantee.
+      try {
+        const onDisk = await fsApi.readFile(path);
+        if (onDisk !== f.original && onDisk !== f.contents) {
+          const picked = await dialogChoice(
+            `${basename(path)} changed on disk while you were editing (a terminal AI session or another tool wrote it).`,
+            [
+              { value: "cancel", label: "Cancel", kind: "primary" },
+              { value: "disk", label: "Take Disk Version" },
+              { value: "mine", label: "Overwrite Disk", kind: "danger" },
+            ],
+            { title: "File changed on disk" },
+          );
+          if (picked === "cancel" || picked === null) return false;
+          if (picked === "disk") {
+            set((s) => {
+              const w = s.loaded[wsId];
+              if (!w || !w.files[path]) return s;
+              return {
+                loaded: {
+                  ...s.loaded,
+                  [wsId]: {
+                    ...w,
+                    files: {
+                      ...w.files,
+                      [path]: { contents: onDisk, original: onDisk },
+                    },
+                  },
+                },
+              };
+            });
+            return true; // nothing written; buffer now matches disk
+          }
+        }
+      } catch {
+        // Unreadable / not-yet-existing — proceed; the write itself
+        // reports real failures.
+      }
       const settings = getEditorSettings();
       let content = f.contents;
       if (settings.trimTrailingWhitespace) {
@@ -1902,6 +1945,9 @@ export const useStore = create<AppState>((set, get) => {
       }),
 
     addTerminal: (wsId, location = "bottom", shell) => {
+      // No explicit shell → the user's configured default (Settings →
+      // Terminal), falling back to the system default when unset.
+      if (!shell) shell = resolveDefaultShell();
       const id = makeTermId();
       const k = termKey(id);
       const existing = Object.keys(get().loaded[wsId]?.terminals ?? {}).length;
@@ -2279,4 +2325,112 @@ function runIdleSweep(): void {
 
 if (typeof window !== "undefined") {
   setInterval(runIdleSweep, 60_000);
+}
+
+// ---- External-edit sync for ALL open buffers --------------------------
+//
+// The core "claude in a terminal edits my files" workflow: EditorPane
+// already watches the ACTIVE tab (it can prompt in context), but
+// background buffers got nothing — switch away from a tab, let the AI
+// rewrite the file, switch back, Ctrl+S, and the AI's work was silently
+// clobbered. This listener covers every open buffer:
+//   - clean buffers silently adopt the on-disk content (the editor
+//     always shows what the AI just wrote);
+//   - dirty BACKGROUND buffers get a one-time warning toast — the hard
+//     guard lives in saveFile, which re-checks the disk before writing
+//     (dirty ACTIVE buffers keep EditorPane's interactive prompt).
+const externalDirtyWarned = new Set<string>();
+
+function syncBufferWithDisk(wsId: string, path: string) {
+  void (async () => {
+    let onDisk: string;
+    try {
+      onDisk = await fsApi.readFile(path);
+    } catch {
+      // Deleted / unreadable — the close/save flows surface that.
+      return;
+    }
+    const ws = useStore.getState().loaded[wsId];
+    const cur = ws?.files[path];
+    if (!ws || !cur) return;
+    if (onDisk === cur.contents) {
+      // Disk caught up with the buffer (or never differed). If the
+      // buffer was "dirty" only relative to a stale original, sync the
+      // dirty-tracker so the dot clears.
+      if (onDisk !== cur.original) {
+        useStore.setState((s) => {
+          const w = s.loaded[wsId];
+          if (!w || !w.files[path]) return s;
+          return {
+            loaded: {
+              ...s.loaded,
+              [wsId]: {
+                ...w,
+                files: {
+                  ...w.files,
+                  [path]: { contents: onDisk, original: onDisk },
+                },
+              },
+            },
+          };
+        });
+      }
+      externalDirtyWarned.delete(path);
+      return;
+    }
+    if (cur.contents === cur.original) {
+      // Clean — adopt the external edit. The mounted editor (if any)
+      // syncs via the value prop with undo preserved.
+      useStore.setState((s) => {
+        const w = s.loaded[wsId];
+        const f = w?.files[path];
+        // Re-check cleanliness: a keystroke may have landed during the
+        // disk read.
+        if (!w || !f || f.contents !== f.original) return s;
+        return {
+          loaded: {
+            ...s.loaded,
+            [wsId]: {
+              ...w,
+              files: {
+                ...w.files,
+                [path]: { contents: onDisk, original: onDisk },
+              },
+            },
+          },
+        };
+      });
+      externalDirtyWarned.delete(path);
+      return;
+    }
+    // Dirty + disk diverged. The active tab gets EditorPane's prompt;
+    // for background tabs, warn once — saveFile's disk guard does the
+    // actual protecting.
+    const visible = new Set<string>();
+    collectActiveTabs(ws.layout.editorRoot, visible);
+    collectActiveTabs(ws.layout.bottomRoot, visible);
+    if (!visible.has(fileKey(path)) && !externalDirtyWarned.has(path)) {
+      externalDirtyWarned.add(path);
+      toastWarning(
+        `${basename(path)} changed on disk while you have unsaved edits — saving will ask before overwriting.`,
+      );
+    }
+  })();
+}
+
+if (typeof window !== "undefined") {
+  fsBus.addEventListener("ws", (ev) => {
+    const detail = (ev as CustomEvent).detail as {
+      wsId: string;
+      dirs: string[];
+    };
+    const ws = useStore.getState().loaded[detail.wsId];
+    if (!ws) return;
+    for (const path of Object.keys(ws.files)) {
+      const parent = dirname(path);
+      if (detail.dirs.some((d) => pathsEqual(d, parent))) {
+        syncBufferWithDisk(detail.wsId, path);
+      }
+    }
+  });
 }
