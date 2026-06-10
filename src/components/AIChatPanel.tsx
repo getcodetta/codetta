@@ -907,6 +907,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   // Drains automatically once the active turn finishes.
   const queueRef = useRef<string[]>([]);
   const [queueLen, setQueueLen] = useState(0);
+  // drainQueue is a stable useCallback([]), so it MUST call the latest
+  // sendUserText through a ref — the empty-deps closure captured the
+  // very first render's sendUserText, whose stale `messages`/`selected`
+  // silently dropped queued follow-ups.
+  const sendUserTextRef = useRef<((text: string) => Promise<void>) | null>(
+    null,
+  );
   const drainQueue = useCallback(async () => {
     while (queueRef.current.length > 0) {
       const next = queueRef.current.shift();
@@ -919,10 +926,14 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         setQueueLen(0);
         return;
       }
-      await sendUserText(next);
+      await sendUserTextRef.current?.(next);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Keep the ref pointing at this render's sendUserText (defined
+  // further down; the effect runs post-render so the binding exists).
+  useEffect(() => {
+    sendUserTextRef.current = (t: string) => sendUserText(t);
+  });
 
   const send = async () => {
     const text = input.trim();

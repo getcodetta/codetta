@@ -102,6 +102,13 @@ function bashFirstToken(cmd: string): string {
   return cmd.trim().split(/\s+/, 1)[0] ?? "";
 }
 
+/** Shell metacharacters that can chain a second command behind an
+ *  allowed prefix: `git status; rm -rf ~`, `git status && curl …`,
+ *  pipes, backticks, $() substitution, newlines. Commands containing
+ *  any of these never auto-allow — the permission card is shown so the
+ *  user sees the full compound command. */
+const BASH_CHAIN_RE = /[;&|`\n<>]|\$\(/;
+
 interface PermissionRequest {
   request_id: string;
   tool_name: string;
@@ -124,7 +131,13 @@ function shouldAutoAllow(req: PermissionRequest, rules: AllowRules): boolean {
         ? req.tool_input.command
         : "";
     const first = bashFirstToken(cmd);
-    if (first && rules.bashPrefixes.has(first)) return true;
+    if (
+      first &&
+      rules.bashPrefixes.has(first) &&
+      !BASH_CHAIN_RE.test(cmd)
+    ) {
+      return true;
+    }
   }
   if (PATH_TOOLS.has(req.tool_name)) {
     const p = pathFromInput(req.tool_input);

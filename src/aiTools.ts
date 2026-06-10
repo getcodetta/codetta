@@ -13,9 +13,29 @@
 // for isolation.
 
 import type { ToolCall, ToolDef } from "./ai";
+import { matchExclusion } from "./aiPrivacy";
 import { confirm as dialogConfirm } from "./dialog";
 import { fs, pty, search } from "./ipc";
 import { useStore } from "./store";
+
+/** Resolve a tool's relative path against the workspace root. */
+function absPathOf(rel: string, root: string): string {
+  return rel.includes(":") || rel.startsWith("/")
+    ? rel
+    : `${root}/${rel}`.replace(/\\/g, "/");
+}
+
+/** Privacy-exclusion gate for the LOCAL tool loop (Ollama / OpenAI /
+ *  Anthropic API). The exclusion list guarded the paths the USER
+ *  pushes to the AI (/file attachments, the Claude Code hook) but not
+ *  the paths the model PULLS itself via read_file/edit_file — which
+ *  is the direction secrets actually leak. Returns a denial message
+ *  the model can understand, or null when the path is clean. */
+function privacyDenial(abs: string): string | null {
+  const matched = matchExclusion(abs);
+  if (!matched) return null;
+  return `Denied: this path is on the user's AI privacy exclusion list (matches ${matched}). Do not attempt to read or modify it.`;
+}
 
 /** Tool definitions exposed to the model. Kept narrow + read-only so the
  *  model can navigate the codebase without needing user confirmation
@@ -210,10 +230,9 @@ export async function executeTool(
     if (name === "read_file") {
       const rel = String(args.path ?? "");
       if (!rel) return "Error: missing 'path' argument";
-      const abs =
-        rel.includes(":") || rel.startsWith("/")
-          ? rel
-          : `${ctx.root}/${rel}`.replace(/\\/g, "/");
+      const abs = absPathOf(rel, ctx.root);
+      const denied = privacyDenial(abs);
+      if (denied) return denied;
       const content = await fs.readFile(abs);
       return content.length > 16000
         ? content.slice(0, 16000) + "\n…[truncated]"
@@ -223,8 +242,11 @@ export async function executeTool(
       const q = String(args.query ?? "");
       if (!q) return "Error: missing 'query' argument";
       const hits = await search.searchText(ctx.root, q, false, 50);
+      // Drop hits inside privacy-excluded files — a search for
+      // "PASSWORD" would otherwise quote .env lines verbatim.
+      const visible = hits.filter((h) => !matchExclusion(h.path));
       return (
-        hits
+        visible
           .map((h) => `${h.path}:${h.line}: ${h.text}`)
           .join("\n") || "(no matches)"
       );
@@ -248,10 +270,9 @@ export async function executeTool(
       const newText = String(args.new_text ?? "");
       if (!rel) return "Error: missing 'path' argument";
       if (!oldText) return "Error: missing 'old_text' argument";
-      const abs =
-        rel.includes(":") || rel.startsWith("/")
-          ? rel
-          : `${ctx.root}/${rel}`.replace(/\\/g, "/");
+      const abs = absPathOf(rel, ctx.root);
+      const denied = privacyDenial(abs);
+      if (denied) return denied;
       let original: string;
       try {
         original = await fs.readFile(abs);
@@ -289,10 +310,9 @@ export async function executeTool(
       const rel = String(args.path ?? "");
       const content = String(args.content ?? "");
       if (!rel) return "Error: missing 'path' argument";
-      const abs =
-        rel.includes(":") || rel.startsWith("/")
-          ? rel
-          : `${ctx.root}/${rel}`.replace(/\\/g, "/");
+      const abs = absPathOf(rel, ctx.root);
+      const denied = privacyDenial(abs);
+      if (denied) return denied;
       try {
         const exists = await fs.exists(abs);
         if (exists)
