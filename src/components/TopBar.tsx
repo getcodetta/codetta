@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   commandsForCategory,
-  confirmDiscardUnsaved,
   type CommandSpec,
 } from "../actions";
 import { useTheme, type ThemeMode } from "../theme";
@@ -169,12 +168,9 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
     }
   };
   const closeWindow = async () => {
-    // Same dirty-file guard as Ctrl+R: confirm before closing if there's
-    // unsaved buffer state. Without this, a click on × silently throws
-    // away in-flight edits — the OS-level "save your work?" prompt that
-    // every native editor offers wasn't happening because we go straight
-    // to Tauri's window.close().
-    if (!(await confirmDiscardUnsaved("Close"))) return;
+    // The dirty-file guard lives in App.tsx's onCloseRequested handler
+    // now, so it also covers Alt+F4 / taskbar close — close() here
+    // routes through the same single confirm.
     try {
       await getCurrentWindow().close();
     } catch {

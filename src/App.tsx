@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { startFsBusOnce } from "./fsBus";
-import { commands, runCommand } from "./actions";
+import { commands, confirmDiscardUnsaved, runCommand } from "./actions";
 import {
   accelMatches,
   isModifierOnly,
@@ -156,6 +156,31 @@ function MainApp() {
     startFsBusOnce();
     void hydrate();
   }, [hydrate]);
+
+  // Guard the OS close button / Alt+F4 / taskbar-close against unsaved
+  // edits. The custom titlebar × had its own confirm, but every other
+  // close path silently discarded all dirty buffers — the single
+  // highest-stakes hole in the app. The titlebar × now routes through
+  // window.close() so this is the one confirm for every path.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let closing = false;
+    void getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (closing) return; // confirm already passed; let it close
+        const ok = await confirmDiscardUnsaved("Close");
+        if (!ok) {
+          event.preventDefault();
+          return;
+        }
+        closing = true;
+      })
+      .then((u) => {
+        unlisten = u;
+      })
+      .catch(() => {});
+    return () => unlisten?.();
+  }, []);
 
   // Reflect active workspace + file in the OS window title. Depend only
   // on the active workspace's NAME (not the whole `loaded` map) so the
