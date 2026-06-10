@@ -8615,3 +8615,56 @@ input {
 [aria-labelledby="footprint-modal-title"] {
   --warn: #ffd54f;
 }
+
+/* ---------- Tasks panel: run/stop + session "live" indicator ---------- */
+/* A task that was started this session and still has its terminal open
+   shows a Stop button next to Run. Two buttons in the grid's auto column
+   need their own flex wrapper so the row height doesn't change when the
+   Stop button appears. */
+.task-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.task-stop:hover {
+  border-color: #c75252;
+  color: #c75252;
+}
+/* Pulsing dot = "this task's terminal is open", not "process is still
+   running" — we can't see inside the shell, so don't overclaim with a
+   solid steady light. The pulse reads as "activity here" while staying
+   honest about being session-local state. */
+.task-live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 5px;
+  vertical-align: 1px;
+  animation: task-live-pulse 2s ease-in-out infinite;
+}
+@keyframes task-live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ---------- Pop-out terminal: window controls in the titlebar ---------- */
+/* Reuse .winctl visuals from the main TopBar but fit the popout's 30px
+   bar: stretch to full bar height and cancel the bar's right padding so
+   the close button reaches the screen edge when maximized (same Fitts's
+   law corner the main window gets). */
+.popout-bar .window-controls {
+  align-self: stretch;
+  margin-left: 4px;
+  margin-right: -10px;
+}
+.popout-bar .winctl {
+  width: 38px;
+  height: auto;
+}
