@@ -96,6 +96,10 @@ export const openaiProvider: ChatProvider = {
       model,
       messages: toOpenAiMessages(messages),
       stream: true,
+      // Asks OpenAI to append a final chunk carrying prompt/completion
+      // token counts — without it streamed turns are invisible to the
+      // usage dashboard and the monthly hard cap.
+      stream_options: { include_usage: true },
     };
     if (tools && tools.length > 0) {
       body.tools = tools.map((t) => ({
@@ -127,71 +131,118 @@ export const openaiProvider: ChatProvider = {
       { id: string; name: string; argsBuf: string }
     >();
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      // SSE: events separated by blank line, each line "data: {...}".
-      let nl;
-      while ((nl = buf.indexOf("\n")) >= 0) {
-        const rawLine = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        const line = rawLine.trim();
-        if (!line || !line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (payload === "[DONE]") {
-          for (const c of pendingCalls.values()) {
-            yield {
-              kind: "tool_call",
-              call: makeCallFromPending(c),
+    let finished = false;
+    let aborted = false;
+    let usage: { input: number; output: number; cacheRead: number } | null =
+      null;
+
+    try {
+      while (!finished) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // SSE: events separated by blank line, each line "data: {...}".
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const rawLine = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          const line = rawLine.trim();
+          if (!line || !line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (payload === "[DONE]") {
+            finished = true;
+            break;
+          }
+          try {
+            const j = JSON.parse(payload) as {
+              choices?: Array<{
+                delta?: {
+                  content?: string;
+                  tool_calls?: Array<{
+                    index?: number;
+                    id?: string;
+                    function?: { name?: string; arguments?: string };
+                  }>;
+                };
+                finish_reason?: string | null;
+              }>;
+              usage?: {
+                prompt_tokens?: number;
+                completion_tokens?: number;
+                prompt_tokens_details?: { cached_tokens?: number };
+              } | null;
             };
-          }
-          pendingCalls.clear();
-          return;
-        }
-        try {
-          const j = JSON.parse(payload) as {
-            choices?: Array<{
-              delta?: {
-                content?: string;
-                tool_calls?: Array<{
-                  index?: number;
-                  id?: string;
-                  function?: { name?: string; arguments?: string };
-                }>;
+            // With stream_options.include_usage every chunk carries
+            // usage: null except the final one. prompt_tokens INCLUDES
+            // cached tokens, but the dashboard sums input + cacheRead —
+            // subtract so the total doesn't double-count cache hits.
+            if (j.usage) {
+              const cached = j.usage.prompt_tokens_details?.cached_tokens ?? 0;
+              usage = {
+                input: Math.max(0, (j.usage.prompt_tokens ?? 0) - cached),
+                output: j.usage.completion_tokens ?? 0,
+                cacheRead: cached,
               };
-              finish_reason?: string | null;
-            }>;
-          };
-          const delta = j.choices?.[0]?.delta;
-          if (!delta) continue;
-          if (delta.content) {
-            yield { kind: "content", text: delta.content };
-          }
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index ?? 0;
-              let cur = pendingCalls.get(idx);
-              if (!cur) {
-                cur = { id: tc.id ?? `call_${idx}`, name: "", argsBuf: "" };
-                pendingCalls.set(idx, cur);
-              }
-              if (tc.id) cur.id = tc.id;
-              if (tc.function?.name) cur.name = tc.function.name;
-              if (tc.function?.arguments) cur.argsBuf += tc.function.arguments;
             }
+            const delta = j.choices?.[0]?.delta;
+            if (!delta) continue;
+            if (delta.content) {
+              yield { kind: "content", text: delta.content };
+            }
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index ?? 0;
+                let cur = pendingCalls.get(idx);
+                if (!cur) {
+                  cur = { id: tc.id ?? `call_${idx}`, name: "", argsBuf: "" };
+                  pendingCalls.set(idx, cur);
+                }
+                if (tc.id) cur.id = tc.id;
+                if (tc.function?.name) cur.name = tc.function.name;
+                if (tc.function?.arguments) cur.argsBuf += tc.function.arguments;
+              }
+            }
+          } catch {
+            /* skip malformed event */
           }
-        } catch {
-          /* skip malformed event */
         }
       }
+    } catch (e) {
+      // Stop must keep partials: rethrowing the abort makes the chat
+      // panel skip committing the streamed text. End the generator
+      // gracefully instead — everything already yielded survives.
+      if (!isAbortError(e)) throw e;
+      aborted = true;
     }
-    // If the stream ended without [DONE], flush whatever we have.
-    for (const c of pendingCalls.values()) {
-      yield { kind: "tool_call", call: makeCallFromPending(c) };
+    // Flush tool calls whether or not [DONE] arrived — but not on
+    // abort, where half-streamed argument JSON would produce calls
+    // with bogus empty args.
+    if (!aborted) {
+      for (const c of pendingCalls.values()) {
+        yield { kind: "tool_call", call: makeCallFromPending(c) };
+      }
+    }
+    if (usage) {
+      // No BYOK pricing table exists, so cost stays unset rather than
+      // inventing per-model rates — the dashboard still gets tokens.
+      yield {
+        kind: "usage",
+        model,
+        tokens: { ...usage, cacheCreate: 0 },
+      };
     }
   },
 };
+
+// Name-based check rather than instanceof — abort surfaces as a
+// DOMException, whose prototype chain varies across webview versions.
+function isAbortError(e: unknown): boolean {
+  return (
+    !!e &&
+    typeof e === "object" &&
+    (e as { name?: unknown }).name === "AbortError"
+  );
+}
 
 function makeCallFromPending(c: {
   id: string;
