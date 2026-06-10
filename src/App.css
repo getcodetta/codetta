@@ -191,13 +191,12 @@ input {
   align-items: center;
   gap: 18px;
   padding: 48px 36px 32px;
-  border-radius: 16px;
-  background: rgba(20, 16, 36, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow:
-    0 40px 80px rgba(0, 0, 0, 0.6),
-    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
-    0 1px 0 rgba(255, 255, 255, 0.06) inset;
+  /* No box — the brand, editor mock, and progress float directly on
+     the gradient backdrop. The mini editor window supplies the only
+     "panel" the splash needs. */
+  background: transparent;
+  border: none;
+  box-shadow: none;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   animation: splash-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
@@ -269,7 +268,8 @@ input {
   width: 100%;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(10, 8, 20, 0.55);
+  background: rgba(10, 8, 20, 0.7);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
   overflow: hidden;
   margin-bottom: 14px;
   text-align: left;
