@@ -17,7 +17,7 @@ import {
   fs as fsApi,
   pty as ptyApi,
 } from "./ipc";
-import { confirm as dialogConfirm } from "./dialog";
+import { choice as dialogChoice } from "./dialog";
 import { getEditorSettings } from "./editorSettings";
 import { getFootprintSettings } from "./footprintSettings";
 import { basename } from "./pathUtils";
@@ -548,6 +548,10 @@ interface AppState {
    *  deploy the on-disk file afterwards must abort on false or they'd
    *  ship stale content with a success toast. */
   saveFile(wsId: string, path: string): Promise<boolean>;
+  /** Re-key open buffers + tab keys after a rename (file OR directory
+   *  — children re-key by prefix). Without this, Ctrl+S on a renamed
+   *  file resurrected the old path on disk. */
+  handlePathRenamed(wsId: string, oldPath: string, newPath: string): void;
   saveAllFiles(wsId: string): Promise<void>;
 
   toggleDir(wsId: string, path: string): void;
@@ -1039,7 +1043,19 @@ export const useStore = create<AppState>((set, get) => {
       };
 
       setProg("Reading workspace index…", 5, 100);
-      const idx = await wsApi.load();
+      let idx: Awaited<ReturnType<typeof wsApi.load>>;
+      try {
+        idx = await wsApi.load();
+      } catch (e) {
+        // A corrupt workspaces.json used to reject here and strand the
+        // app on the splash forever. Recover with a fresh index — the
+        // file is rewritten on the next persist — and say so; recents
+        // are lost but the app starts.
+        toastError(
+          `Workspace index was unreadable and has been reset: ${errMsg(e)}`,
+        );
+        idx = { recent: [], active_id: null, open_ids: [] };
+      }
       const recent = idx.recent ?? [];
       const requestedOpen =
         idx.open_ids ?? (idx.active_id ? [idx.active_id] : []);
@@ -1142,20 +1158,28 @@ export const useStore = create<AppState>((set, get) => {
     closeWorkspace: async (id) => {
       const ws = get().loaded[id];
       if (ws) {
-        const dirty = Object.values(ws.files).filter(
-          (f) => f.contents !== f.original,
+        const dirty = Object.entries(ws.files).filter(
+          ([, f]) => f.contents !== f.original,
         );
         if (dirty.length > 0) {
-          const ok = await dialogConfirm(
-            `Discard unsaved changes in ${ws.meta.name}?`,
-            {
-              title: "Close workspace",
-              okLabel: "Discard",
-              cancelLabel: "Cancel",
-              danger: true,
-            },
+          const picked = await dialogChoice(
+            `${ws.meta.name} has unsaved changes in ${dirty.length} file${dirty.length === 1 ? "" : "s"}.`,
+            [
+              { value: "save", label: "Save All", kind: "primary" },
+              { value: "discard", label: "Don't Save", kind: "danger" },
+              { value: "cancel", label: "Cancel" },
+            ],
+            { title: "Close workspace" },
           );
-          if (!ok) return;
+          if (picked === "cancel" || picked === null) return;
+          if (picked === "save") {
+            const results = await Promise.all(
+              dirty.map(([p]) => get().saveFile(id, p)),
+            );
+            // Any failed save aborts the close — silently proceeding
+            // would discard exactly the file the user asked to keep.
+            if (results.some((ok) => !ok)) return;
+          }
         }
         // Kill all PTYs we own in this workspace, and close any pop-out
         // windows hosting them. Both are best-effort.
@@ -1292,16 +1316,24 @@ export const useStore = create<AppState>((set, get) => {
       if (parsed?.kind === "file") {
         const f = ws.files[parsed.path];
         if (f && f.contents !== f.original) {
-          const ok = await dialogConfirm(
-            `Discard unsaved changes to ${basename(parsed.path)}?`,
-            {
-              title: "Close tab",
-              okLabel: "Discard",
-              cancelLabel: "Cancel",
-              danger: true,
-            },
+          // Save / Don't Save / Cancel — the old binary Discard/Cancel
+          // forced a detour (cancel, Ctrl+S, close again) for the most
+          // common answer, which is "save it".
+          const picked = await dialogChoice(
+            `${basename(parsed.path)} has unsaved changes.`,
+            [
+              { value: "save", label: "Save", kind: "primary" },
+              { value: "discard", label: "Don't Save", kind: "danger" },
+              { value: "cancel", label: "Cancel" },
+            ],
+            { title: "Close tab" },
           );
-          if (!ok) return;
+          if (picked === "cancel" || picked === null) return;
+          if (picked === "save") {
+            // Failed save (locked file etc.) keeps the tab open — the
+            // user chose to keep this content.
+            if (!(await get().saveFile(wsId, parsed.path))) return;
+          }
         }
         // Push onto the per-workspace "recently closed" stack so
         // Ctrl+Shift+T can resurrect it.
@@ -1666,6 +1698,59 @@ export const useStore = create<AppState>((set, get) => {
         }
       }
       return true;
+    },
+
+    handlePathRenamed: (wsId, oldPath, newPath) => {
+      const ws = get().loaded[wsId];
+      if (!ws) return;
+      const normOld = oldPath.replace(/\\/g, "/").toLowerCase();
+      // A renamed DIRECTORY re-keys every open buffer underneath it,
+      // matching separators loosely (tree paths are OS-native, reveal
+      // paths forward-slash).
+      const mapPath = (p: string): string | null => {
+        if (pathsEqual(p, oldPath)) return newPath;
+        const norm = p.replace(/\\/g, "/").toLowerCase();
+        if (norm.startsWith(normOld + "/")) {
+          return newPath + p.slice(oldPath.length);
+        }
+        return null;
+      };
+      const renames: [string, string][] = [];
+      for (const p of Object.keys(ws.files)) {
+        const np = mapPath(p);
+        if (np) renames.push([p, np]);
+      }
+      if (renames.length === 0) return;
+      const keyMap = new Map(
+        renames.map(([o, n]) => [fileKey(o), fileKey(n)]),
+      );
+      updateWs(wsId, (w) => {
+        const files: typeof w.files = {};
+        for (const [p, f] of Object.entries(w.files)) {
+          files[mapPath(p) ?? p] = f;
+        }
+        const renamePane = (pane: Pane): Pane =>
+          mapTree(pane, (t) => ({
+            ...t,
+            tabs: t.tabs.map((k) => keyMap.get(k) ?? k),
+            active: t.active ? (keyMap.get(t.active) ?? t.active) : t.active,
+          }));
+        return {
+          ...w,
+          files,
+          layout: {
+            ...w.layout,
+            editorRoot: renamePane(w.layout.editorRoot),
+            bottomRoot: w.layout.bottomRoot
+              ? renamePane(w.layout.bottomRoot)
+              : null,
+            pinned: w.layout.pinned.map((k) => keyMap.get(k) ?? k),
+          },
+        };
+      });
+      // The old-path models are orphans now; the re-keyed tabs create
+      // fresh models at the new URI from the (preserved) buffer.
+      for (const [o] of renames) disposeModelForPath(o);
     },
 
     saveAllFiles: async (wsId) => {

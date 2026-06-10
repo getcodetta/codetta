@@ -122,6 +122,9 @@ function Node({ wsId, entry, depth, onContext }: NodeProps) {
     const newPath = joinPath(dirname(entry.path), next);
     try {
       await fs.rename(entry.path, newPath);
+      // Re-key any open buffers/tabs so Ctrl+S writes to the NEW path
+      // (a dir rename re-keys every open child).
+      useStore.getState().handlePathRenamed(wsId, entry.path, newPath);
       if (!entry.is_dir) {
         dropRecentFile(wsId, entry.path);
         renameBookmark(wsId, entry.path, newPath);

@@ -49,6 +49,10 @@ russh = "0.46"
 russh-sftp = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "fs"] }
 async-trait = "0.1"
+# Recycle Bin / Trash / GIO trash for file deletes from the explorer.
+# remove_dir_all on a mis-click was unrecoverable; every desktop OS has
+# a native undo path — use it.
+trash = "5"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

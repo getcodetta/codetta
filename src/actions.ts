@@ -13,6 +13,7 @@ import { requestAIPrompt } from "./aiBus";
 import { getActiveEditor, requestDiff } from "./editorState";
 import {
   alert as dialogAlert,
+  choice as dialogChoice,
   confirm as dialogConfirm,
   prompt as dialogPrompt,
 } from "./dialog";
@@ -84,32 +85,42 @@ function cycleActiveTab(dir: 1 | -1) {
  * "Close", etc.
  */
 export async function confirmDiscardUnsaved(verb: string): Promise<boolean> {
-  let dirtyCount = 0;
+  const dirty: { wsId: string; path: string }[] = [];
   const dirtyNames: string[] = [];
-  for (const ws of Object.values(s().loaded)) {
+  for (const [wsId, ws] of Object.entries(s().loaded)) {
     for (const [path, f] of Object.entries(ws.files)) {
       if (f.contents !== f.original) {
-        dirtyCount++;
+        dirty.push({ wsId, path });
         const name = path.replace(/\\/g, "/").split("/").pop();
         if (dirtyNames.length < 5 && name) dirtyNames.push(name);
       }
     }
   }
-  if (dirtyCount === 0) return true;
+  if (dirty.length === 0) return true;
   const sample = dirtyNames.join(", ");
   const more =
-    dirtyCount > dirtyNames.length
-      ? `, +${dirtyCount - dirtyNames.length} more`
+    dirty.length > dirtyNames.length
+      ? `, +${dirty.length - dirtyNames.length} more`
       : "";
-  return await dialogConfirm(
-    `${verb} will discard unsaved changes in ${dirtyCount} file${dirtyCount === 1 ? "" : "s"}: ${sample}${more}\n\n${verb} anyway?`,
-    {
-      title: "Unsaved changes",
-      okLabel: verb,
-      cancelLabel: "Cancel",
-      danger: true,
-    },
+  const picked = await dialogChoice(
+    `${dirty.length} file${dirty.length === 1 ? " has" : "s have"} unsaved changes: ${sample}${more}`,
+    [
+      { value: "save", label: `Save All & ${verb}`, kind: "primary" },
+      { value: "discard", label: `${verb} Without Saving`, kind: "danger" },
+      { value: "cancel", label: "Cancel" },
+    ],
+    { title: "Unsaved changes" },
   );
+  if (picked === "cancel" || picked === null) return false;
+  if (picked === "save") {
+    const results = await Promise.all(
+      dirty.map((d) => s().saveFile(d.wsId, d.path)),
+    );
+    // A failed save (locked / read-only file) must block the verb —
+    // proceeding would discard exactly what the user asked to keep.
+    return results.every((ok) => ok);
+  }
+  return true;
 }
 
 function activeFilePath(wsId: string | null): string | null {

@@ -130,10 +130,19 @@ pub fn rename_path(from: String, to: String) -> Result<(), String> {
 #[tauri::command]
 pub fn delete_path(path: String) -> Result<(), String> {
     let p = Path::new(&path);
-    if p.is_dir() {
-        std::fs::remove_dir_all(p).map_err(|e| e.to_string())
-    } else {
-        std::fs::remove_file(p).map_err(|e| e.to_string())
+    // Recycle Bin first — a mis-confirmed delete of a folder was
+    // unrecoverable with remove_dir_all, and every desktop OS has a
+    // native undo path. Fall back to permanent removal only where no
+    // trash facility exists (headless Linux, some network shares).
+    match trash::delete(p) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            if p.is_dir() {
+                std::fs::remove_dir_all(p).map_err(|e| e.to_string())
+            } else {
+                std::fs::remove_file(p).map_err(|e| e.to_string())
+            }
+        }
     }
 }
 

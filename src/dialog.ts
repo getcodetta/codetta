@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 
-export type DialogKind = "alert" | "confirm" | "prompt";
+export type DialogKind = "alert" | "confirm" | "prompt" | "choice";
+
+export interface DialogChoice {
+  /** Value resolved when this button is clicked. */
+  value: string;
+  label: string;
+  /** Visual emphasis: "primary" is the default action, "danger" the
+   *  destructive one. At most one of each per dialog. */
+  kind?: "primary" | "danger";
+}
 
 export interface DialogRequest {
   id: number;
@@ -11,6 +20,9 @@ export interface DialogRequest {
   okLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  /** For kind="choice": the buttons, rendered left-to-right. Escape /
+   *  backdrop click resolves null (treat as Cancel). */
+  choices?: DialogChoice[];
   resolve: (value: boolean | string | null) => void;
 }
 
@@ -85,6 +97,25 @@ export function prompt(
       title: opts?.title,
       okLabel: opts?.okLabel,
       cancelLabel: opts?.cancelLabel,
+      resolve: (v) => resolve(typeof v === "string" ? v : null),
+    });
+  });
+}
+
+/** Multi-button dialog (e.g. Save / Don't Save / Cancel). Resolves the
+ *  clicked choice's `value`, or null on Escape / backdrop click. */
+export function choice(
+  message: string,
+  choices: DialogChoice[],
+  opts?: { title?: string },
+): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    pump({
+      id: nextId++,
+      kind: "choice",
+      message,
+      title: opts?.title,
+      choices,
       resolve: (v) => resolve(typeof v === "string" ? v : null),
     });
   });

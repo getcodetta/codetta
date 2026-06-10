@@ -26,11 +26,18 @@ export function Dialog() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        if (req.kind === "alert") resolveDialog(null);
+        if (req.kind === "alert" || req.kind === "choice") resolveDialog(null);
         else resolveDialog(false);
       } else if (e.key === "Enter" && req.kind !== "prompt") {
         e.preventDefault();
-        resolveDialog(req.kind === "confirm" ? true : null);
+        if (req.kind === "choice") {
+          // Enter triggers the primary choice (or nothing if none is
+          // marked primary — ambiguous defaults shouldn't fire on Enter).
+          const primary = req.choices?.find((c) => c.kind === "primary");
+          if (primary) resolveDialog(primary.value);
+        } else {
+          resolveDialog(req.kind === "confirm" ? true : null);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -89,16 +96,37 @@ export function Dialog() {
           />
         )}
         <div className="dialog-actions">
-          {req.kind !== "alert" && (
-            <button onClick={cancel}>{cancelLabel}</button>
+          {req.kind === "choice" ? (
+            (req.choices ?? []).map((c) => (
+              <button
+                key={c.value}
+                className={
+                  c.kind === "primary"
+                    ? "primary"
+                    : c.kind === "danger"
+                      ? "primary danger"
+                      : ""
+                }
+                onClick={() => resolveDialog(c.value)}
+                autoFocus={c.kind === "primary"}
+              >
+                {c.label}
+              </button>
+            ))
+          ) : (
+            <>
+              {req.kind !== "alert" && (
+                <button onClick={cancel}>{cancelLabel}</button>
+              )}
+              <button
+                className={`primary ${req.danger ? "danger" : ""}`}
+                onClick={submit}
+                autoFocus={req.kind !== "prompt"}
+              >
+                {okLabel}
+              </button>
+            </>
           )}
-          <button
-            className={`primary ${req.danger ? "danger" : ""}`}
-            onClick={submit}
-            autoFocus={req.kind !== "prompt"}
-          >
-            {okLabel}
-          </button>
         </div>
       </div>
     </div>,
