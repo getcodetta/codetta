@@ -13,6 +13,26 @@
   --danger: #c75252;
   --term-bg: #1e1e1e;
   --term-fg: #d4d4d4;
+  /* Semantic tokens. Status colors exist so toasts, diff markers,
+     permission cards, MCP badges and the toast-history modal agree on
+     one green/red/amber per theme instead of per-surface pastels —
+     several of which were dark-only and vanished on a light background.
+     --accent-fg is the text color readable ON the accent (buttons like
+     the permission "Allow" used near-black text that disappeared on the
+     dark-mode accent). */
+  --mono: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  --border-strong: #5a5a5a;
+  --accent-fg: #fff;
+  --accent-soft: rgba(0, 122, 204, 0.15);
+  --bg-hover: rgba(255, 255, 255, 0.04);
+  --ok: #22c55e;
+  --ok-bg: rgba(34, 197, 94, 0.12);
+  --warn: #f59e0b;
+  --warn-bg: rgba(245, 158, 11, 0.1);
+  --err: #ef4444;
+  --err-bg: rgba(239, 68, 68, 0.12);
+  --info: #6ea8ff;
+  --info-bg: rgba(110, 168, 255, 0.1);
 }
 
 :root[data-theme="light"] {
@@ -29,6 +49,22 @@
   --danger: #c0392b;
   --term-bg: #fafafa;
   --term-fg: #2d2d2d;
+  /* Light counterparts of the semantic tokens. Status text colors are
+     pulled darker than the dark-theme ones — the bright dark-mode
+     greens/ambers (#22c55e, #f59e0b) fail contrast on white. */
+  --mono: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  --border-strong: #a8a8a8;
+  --accent-fg: #fff;
+  --accent-soft: rgba(13, 110, 253, 0.12);
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  --ok: #15803d;
+  --ok-bg: rgba(34, 197, 94, 0.14);
+  --warn: #b45309;
+  --warn-bg: rgba(245, 158, 11, 0.16);
+  --err: #dc2626;
+  --err-bg: rgba(239, 68, 68, 0.1);
+  --info: #0b5ed7;
+  --info-bg: rgba(13, 110, 253, 0.1);
 }
 
 /* Themed scrollbars across the app. Default Chromium / Windows
@@ -427,7 +463,7 @@ input {
   color: rgba(255, 255, 255, 0.85);
   font-variant-numeric: tabular-nums;
   font-weight: 500;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 .splash-credit {
   position: absolute;
@@ -877,7 +913,7 @@ input {
 .menu-item-accel {
   font-size: 11px;
   color: var(--fg-muted);
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
 }
 .menu-separator {
   height: 1px;
@@ -1022,7 +1058,7 @@ input {
 .palette-item-hint {
   font-size: 11px;
   color: var(--fg-muted);
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
 }
 .palette-item.active .palette-item-hint {
   color: rgba(255, 255, 255, 0.8);
@@ -1235,7 +1271,7 @@ input {
   flex-shrink: 0;
 }
 .welcome-keys kbd {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 10px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1984,7 +2020,7 @@ input {
   min-width: 72px;
 }
 .pane-empty-keys kbd {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 10px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -2271,7 +2307,7 @@ input {
   border: 1px solid var(--border);
   border-radius: 3px;
   font-size: 11px;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   cursor: pointer;
   outline: none;
 }
@@ -2315,7 +2351,7 @@ input {
   text-overflow: ellipsis;
   white-space: nowrap;
   margin-right: 8px;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
 }
 .search-panel-group-count {
   flex-shrink: 0;
@@ -2342,7 +2378,7 @@ input {
 }
 .search-panel-hit-line {
   color: var(--fg-muted);
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   flex-shrink: 0;
   min-width: 28px;
   text-align: right;
@@ -2353,7 +2389,7 @@ input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
 }
 .search-hit-mark {
   background: rgba(255, 200, 0, 0.35);
@@ -2437,7 +2473,7 @@ input {
 }
 .task-cmd {
   grid-column: 1 / -1;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 10px;
   color: var(--fg-muted);
   margin-top: 2px;
@@ -2509,7 +2545,7 @@ input {
 }
 .todo-line {
   color: var(--fg-muted);
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   flex-shrink: 0;
 }
 .todo-text {
@@ -2603,7 +2639,7 @@ input {
   color: var(--fg-muted);
 }
 .outline-panel-file {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   text-transform: none;
   letter-spacing: 0;
   font-size: 11px;
@@ -2697,13 +2733,13 @@ input {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
 }
 .outline-panel-line {
   flex-shrink: 0;
   font-size: 10px;
   color: var(--fg-muted);
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
 }
 
 /* ---------- Bookmarks panel ---------- */
@@ -2785,7 +2821,7 @@ input {
   white-space: nowrap;
 }
 .bookmarks-rel {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 10px;
   color: var(--fg-muted);
   overflow: hidden;
@@ -2917,7 +2953,7 @@ input {
   color: var(--fg-muted);
 }
 .diagnostics-group-name {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2967,7 +3003,7 @@ input {
 }
 .diagnostics-row-pos {
   flex-shrink: 0;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 10px;
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
@@ -2980,7 +3016,7 @@ input {
 }
 .diagnostics-row-source {
   flex-shrink: 0;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 10px;
   color: var(--fg-dim);
   padding: 1px 5px;
@@ -3020,7 +3056,7 @@ input {
   background: rgba(140, 30, 30, 0.18);
   border: 1px solid rgba(140, 30, 30, 0.4);
   border-radius: 4px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 11px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -3133,7 +3169,7 @@ input {
   align-items: center;
   flex-wrap: nowrap;
   gap: 0;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10.5px;
   color: var(--fg-muted);
 }
@@ -3381,7 +3417,7 @@ input {
   margin-top: 4px;
 }
 .remote-form-result {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10.5px;
   padding: 6px 8px;
   border-radius: 4px;
@@ -3437,7 +3473,7 @@ input {
 .sftp-profile-detail {
   font-size: 11px;
   color: var(--fg-muted);
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 .sftp-profile-actions {
   display: flex;
@@ -3478,7 +3514,7 @@ input {
   padding: 6px 8px;
   border-radius: 4px;
   margin-top: 4px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 .sftp-profile-test-ok {
   background: #e8f7ee;
@@ -3693,7 +3729,7 @@ input {
 }
 .settings-toc-item.active {
   color: var(--fg);
-  border-left-color: var(--accent, #7c9eff);
+  border-left-color: var(--accent);
   background: var(--bg-alt);
   font-weight: 500;
 }
@@ -3714,7 +3750,7 @@ input {
   }
   .settings-toc-item.active {
     border-left-color: transparent;
-    border-bottom-color: var(--accent, #7c9eff);
+    border-bottom-color: var(--accent);
   }
 }
 
@@ -3749,7 +3785,7 @@ input {
   border-radius: 6px;
   padding: 12px;
   color: var(--fg);
-  font-family: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.55;
   resize: none;
@@ -3758,7 +3794,7 @@ input {
 }
 .settings-json-textarea:focus {
   outline: none;
-  border-color: var(--accent, #7c9eff);
+  border-color: var(--accent);
 }
 .settings-foot {
   padding: 10px 18px;
@@ -3770,7 +3806,7 @@ input {
   color: var(--fg-muted);
 }
 .settings-foot code {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   background: var(--bg-alt);
   padding: 1px 4px;
   border-radius: 3px;
@@ -4038,7 +4074,7 @@ input {
   font-size: 13px;
 }
 .model-card-name code {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-weight: 600;
   color: var(--fg);
 }
@@ -4084,7 +4120,7 @@ input {
   margin-top: 6px;
   font-size: 11px;
   color: var(--accent);
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 .model-card-actions {
   flex-shrink: 0;
@@ -4112,7 +4148,7 @@ input {
   gap: 12px;
 }
 .model-browser-foot code {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10px;
   padding: 1px 4px;
   background: var(--bg-alt);
@@ -4160,12 +4196,12 @@ input {
   flex-shrink: 0;
 }
 .ai-perm-tool {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--accent);
   font-weight: 600;
 }
 .ai-perm-args {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--fg);
   word-break: break-all;
   font-size: 10px;
@@ -4223,7 +4259,7 @@ input {
   color: var(--fg);
 }
 .settings-row-note code {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10px;
   padding: 1px 4px;
   background: var(--bg);
@@ -4241,7 +4277,7 @@ input {
   border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 12px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 .settings-key-toggle,
 .settings-key-help {
@@ -4472,7 +4508,7 @@ input {
   background: var(--bg-alt);
 }
 .recent-overlay-footer kbd {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 9px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -4555,7 +4591,7 @@ input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 11.5px;
   font-weight: 500;
   color: var(--fg);
@@ -4611,7 +4647,7 @@ input {
   border: 1px solid var(--border);
   border-radius: 12px;
   font-size: 10px;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   cursor: pointer;
   outline: none;
 }
@@ -4682,7 +4718,7 @@ input {
 .ai-header-menu-meta {
   font-size: 10px;
   color: var(--fg-muted);
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 .ai-header-menu-sep {
   height: 1px;
@@ -4755,7 +4791,7 @@ input {
   border: 1px solid rgba(255, 158, 61, 0.35);
   padding: 1px 5px;
   border-radius: 3px;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 11px;
 }
 .ai-privacy-settings {
@@ -4786,7 +4822,7 @@ input {
   margin: 0;
 }
 .ai-empty code {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   background: var(--bg-alt);
   padding: 1px 4px;
   border-radius: 3px;
@@ -4811,7 +4847,7 @@ input {
   gap: 8px;
 }
 .ai-pull-btn {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   padding: 4px 10px;
   background: var(--bg);
@@ -5159,12 +5195,12 @@ input {
   gap: 5px;
 }
 .ai-status-tps {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   margin-left: auto;
   color: var(--accent);
 }
 .ai-status-pull {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 
 /* MCP server browser — installed list + curated catalog with one-
@@ -5244,7 +5280,7 @@ input {
   flex-wrap: wrap;
 }
 .mcp-card-name {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 14px;
   font-weight: 600;
   color: var(--fg);
@@ -5329,7 +5365,7 @@ input {
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 .mcp-card-btn-icon {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 13px;
   line-height: 1;
   opacity: 0.85;
@@ -5361,7 +5397,7 @@ input {
   cursor: not-allowed;
 }
 .mcp-name {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 12.5px;
   color: var(--fg);
   font-weight: 500;
@@ -5389,7 +5425,7 @@ input {
 }
 .mcp-row-cmd {
   margin-top: 4px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10.5px;
   color: var(--fg-muted);
   word-break: break-all;
@@ -5408,8 +5444,8 @@ input {
   flex-shrink: 0;
 }
 .mcp-remove-btn:hover {
-  border-color: #ef4444;
-  color: #ef4444;
+  border-color: var(--err);
+  color: var(--err);
   background: rgba(239, 68, 68, 0.08);
 }
 .mcp-warning {
@@ -5491,7 +5527,7 @@ input {
   background: var(--bg-alt);
   color: var(--fg-muted);
   border-radius: 2px;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
 }
 .cc-allow-list {
   display: flex;
@@ -5510,7 +5546,7 @@ input {
 }
 .cc-allow-name {
   flex: 1;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 12px;
   color: var(--fg);
 }
@@ -5524,8 +5560,8 @@ input {
   cursor: pointer;
 }
 .cc-allow-remove:hover {
-  border-color: #ef4444;
-  color: #ef4444;
+  border-color: var(--err);
+  color: var(--err);
   background: rgba(239, 68, 68, 0.08);
 }
 .cc-allow-clear {
@@ -5538,8 +5574,8 @@ input {
   cursor: pointer;
 }
 .cc-allow-clear:hover {
-  border-color: #ef4444;
-  color: #ef4444;
+  border-color: var(--err);
+  color: var(--err);
   background: rgba(239, 68, 68, 0.08);
 }
 
@@ -5561,7 +5597,7 @@ input {
   width: 100%;
   max-height: 50vh;
   background: var(--bg-elev);
-  border: 1px solid var(--accent, #7a4fff);
+  border: 1px solid var(--accent);
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   display: flex;
@@ -5619,7 +5655,7 @@ input {
   color: var(--fg);
 }
 .cc-perm-title code {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   background: var(--bg-hi);
   padding: 1px 6px;
   border-radius: 3px;
@@ -5653,7 +5689,7 @@ input {
   letter-spacing: 0.04em;
 }
 .cc-perm-path {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 12px;
   color: var(--fg);
   word-break: break-all;
@@ -5665,7 +5701,7 @@ input {
 }
 .cc-perm-cmd,
 .cc-perm-content {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 12px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -5690,7 +5726,7 @@ input {
   gap: 12px;
 }
 .cc-perm-diff {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 12px;
   line-height: 1.5;
   border: 1px solid var(--border);
@@ -5719,7 +5755,7 @@ input {
   background: rgba(239, 68, 68, 0.13);
 }
 .cc-perm-diff-rm .cc-perm-diff-mark {
-  color: #ef4444;
+  color: var(--err);
 }
 .cc-perm-diff-add {
   background: rgba(34, 197, 94, 0.13);
@@ -5750,11 +5786,11 @@ input {
   background: var(--bg-hi);
 }
 .cc-perm-deny {
-  color: #ef4444;
+  color: var(--err);
 }
 .cc-perm-deny:hover {
   background: rgba(239, 68, 68, 0.12);
-  border-color: #ef4444;
+  border-color: var(--err);
 }
 .cc-perm-allow {
   background: var(--accent);
@@ -5788,7 +5824,7 @@ input {
   font-style: normal;
 }
 .cc-perm-prefix {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   background: var(--bg-hi);
   padding: 1px 5px;
   border-radius: 2px;
@@ -5814,7 +5850,7 @@ input {
   border-top: 1px solid var(--border);
 }
 .cc-perm-shortcut-hint kbd {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -5824,7 +5860,7 @@ input {
   color: var(--fg);
 }
 .cc-perm-queue-inline {
-  color: var(--accent, #7a4fff);
+  color: var(--accent);
 }
 
 /* Claude Code session resume picker — header button + dropdown */
@@ -5914,7 +5950,7 @@ input {
   gap: 10px;
   margin-top: 4px;
   font-size: 10px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--fg-muted);
 }
 
@@ -5922,7 +5958,7 @@ input {
    modified 2+ files. Aggregates them into a single header (file
    count + line stats) with collapsible per-file diffs. */
 .ai-compose-card {
-  border: 1px solid var(--accent, #7c9eff);
+  border: 1px solid var(--accent);
   border-radius: 6px;
   background: linear-gradient(
     180deg,
@@ -5963,7 +5999,7 @@ input {
 .ai-compose-meta {
   color: var(--fg-muted);
   font-size: 11px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 .ai-compose-add { color: #7ddc99; font-weight: 500; }
 .ai-compose-rem { color: #ff8989; font-weight: 500; margin-left: 4px; }
@@ -6030,7 +6066,7 @@ input {
   background: transparent;
   border: none;
   color: var(--fg);
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 11.5px;
   cursor: pointer;
   padding: 0;
@@ -6038,14 +6074,14 @@ input {
   font-family: inherit;
 }
 .ai-compose-path:hover {
-  color: var(--accent, #7c9eff);
+  color: var(--accent);
   text-decoration: underline;
 }
 .ai-compose-file-stats {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--fg-muted);
   font-size: 11px;
 }
@@ -6081,12 +6117,12 @@ input {
 .ai-tcall-edit-stats {
   display: inline-flex;
   gap: 6px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10.5px;
   margin-left: auto;
 }
 .ai-tcall-edit-rm {
-  color: #ef4444;
+  color: var(--err);
 }
 .ai-tcall-edit-add {
   color: #22c55e;
@@ -6108,16 +6144,16 @@ input {
   border-radius: 3px;
   background: var(--bg-elev);
   color: var(--fg-dim);
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 .ai-tcall-edit-result.applied {
   color: #22c55e;
 }
 .ai-tcall-edit-result.errored {
-  color: #ef4444;
+  color: var(--err);
 }
 .ai-diff {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 11.5px;
   line-height: 1.5;
   max-height: 320px;
@@ -6153,7 +6189,7 @@ input {
   color: var(--fg);
 }
 .ai-diff-rm .ai-diff-mark {
-  color: #ef4444;
+  color: var(--err);
 }
 .ai-diff-add {
   background: rgba(34, 197, 94, 0.12);
@@ -6217,7 +6253,7 @@ input {
   white-space: nowrap;
 }
 .ai-scrubber-pos {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--accent);
   font-weight: 500;
 }
@@ -6282,7 +6318,7 @@ input {
 }
 .ai-todos-summary {
   flex: 1;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6304,7 +6340,7 @@ input {
   gap: 8px;
   padding: 3px 0;
   line-height: 1.45;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 11.5px;
 }
 .ai-todo-mark {
@@ -6349,7 +6385,7 @@ input {
   gap: 6px;
   padding: 4px 12px;
   font-size: 11px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--fg-muted);
   background: var(--bg-alt);
   border-top: 1px solid var(--border);
@@ -6380,7 +6416,7 @@ input {
   opacity: 1;
 }
 .ai-usage-budget.over {
-  color: #ef4444;
+  color: var(--err);
   font-weight: 600;
   opacity: 1;
 }
@@ -6446,13 +6482,13 @@ input {
   font-size: 12px;
 }
 .ai-usage-month-name {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--fg);
   font-weight: 600;
 }
 .ai-usage-month-total {
-  font-family: var(--mono, monospace);
-  color: var(--accent, #7c9eff);
+  font-family: var(--mono);
+  color: var(--accent);
   font-weight: 600;
   text-align: right;
 }
@@ -6463,7 +6499,7 @@ input {
 .ai-usage-month-providers {
   color: var(--fg-muted);
   font-size: 11px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   text-align: right;
   white-space: nowrap;
   overflow: hidden;
@@ -6486,7 +6522,7 @@ input {
   border-bottom: 1px solid var(--border);
 }
 .ai-usage-recent-row:last-child { border-bottom: none; }
-.ai-usage-recent-ts { color: var(--fg-muted); font-family: var(--mono, monospace); }
+.ai-usage-recent-ts { color: var(--fg-muted); font-family: var(--mono); }
 .ai-usage-recent-model code {
   background: var(--bg-alt);
   padding: 1px 6px;
@@ -6498,7 +6534,7 @@ input {
 .ai-usage-recent-tokens,
 .ai-usage-recent-cost {
   color: var(--fg-muted);
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -6529,7 +6565,7 @@ input {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -6566,14 +6602,14 @@ input {
   color: var(--fg);
 }
 .ai-usage-ws-meta span {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10.5px;
   color: var(--fg-muted);
 }
 .ai-usage-ws-spend {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 13px;
-  color: var(--accent, #7c9eff);
+  color: var(--accent);
   font-weight: 600;
   text-align: right;
   white-space: nowrap;
@@ -6604,7 +6640,7 @@ input {
 .cc-budget-suffix {
   color: var(--fg-muted);
   font-size: 12px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 .cc-budget-field {
   width: 90px;
@@ -6612,13 +6648,13 @@ input {
   border: none;
   color: var(--fg);
   font-size: 13px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   outline: none;
 }
 .ai-tps {
   padding: 2px 10px;
   font-size: 10px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--fg-muted);
   background: var(--bg-alt);
   border-top: 1px solid var(--border);
@@ -6762,7 +6798,7 @@ input {
   white-space: nowrap;
 }
 .ai-tool-summary-detail {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10px;
   color: var(--accent);
 }
@@ -6786,13 +6822,13 @@ input {
   word-break: break-all;
 }
 .ai-tool-summary-name {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--accent);
   font-weight: 600;
   flex-shrink: 0;
 }
 .ai-tool-summary-args {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10px;
   color: var(--fg-muted);
   word-break: break-all;
@@ -6829,7 +6865,7 @@ input {
   background: var(--bg);
   border-radius: 3px;
   white-space: pre-wrap;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 11px;
   color: var(--fg);
   max-height: 240px;
@@ -6850,7 +6886,7 @@ input {
   color: var(--fg-muted);
 }
 .ai-inline-tps {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10px;
   color: var(--accent);
   margin-left: auto;
@@ -6971,7 +7007,7 @@ input {
   letter-spacing: 0.2px;
 }
 .ai-running-row-detail {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 11px;
   color: var(--fg-muted);
   white-space: nowrap;
@@ -6987,7 +7023,7 @@ input {
 .ai-running-row-preview {
   margin: 0;
   padding: 6px 8px;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 10.5px;
   line-height: 1.45;
   background: var(--bg);
@@ -7042,7 +7078,7 @@ input {
   flex-shrink: 0;
 }
 .ai-tcall-detail {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 11px;
   color: var(--fg-muted);
   overflow: hidden;
@@ -7067,7 +7103,7 @@ input {
   color: var(--fg-muted);
   cursor: pointer;
   text-align: left;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 .ai-tcall-result:hover {
   background: var(--bg);
@@ -7128,7 +7164,7 @@ input {
   background: var(--accent-soft, rgba(0, 122, 204, 0.15));
 }
 .ai-slash-name {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--accent);
   min-width: 80px;
 }
@@ -7686,7 +7722,7 @@ input {
 .shortcut-modal-accel kbd {
   display: inline-block;
   padding: 1px 8px;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -7909,7 +7945,7 @@ input {
   text-decoration: underline;
 }
 .md-preview code {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 0.9em;
   padding: 1px 5px;
   background: var(--bg-alt);
@@ -8531,7 +8567,7 @@ input {
 .git-log {
   margin: 0;
   padding: 8px 10px;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   color: var(--fg-dim);
   background: var(--bg);
@@ -8632,7 +8668,7 @@ input {
   gap: 6px;
   font-size: 10px;
   color: var(--fg-muted);
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
 }
 .git-history-hash {
   color: var(--accent);
@@ -8691,7 +8727,7 @@ input {
   gap: 6px;
   font-size: 10px;
   color: var(--fg-muted);
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
 }
 .git-stash-ref {
   color: var(--accent);
@@ -8755,7 +8791,7 @@ input {
   font-size: 13px;
 }
 .git-commit-hash {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   color: var(--accent);
   flex-shrink: 0;
 }
@@ -8780,7 +8816,7 @@ input {
   flex: 1;
   margin: 0;
   padding: 12px 14px;
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   line-height: 1.5;
   color: var(--fg);
@@ -8834,7 +8870,7 @@ input {
    under the right-aligned header. Inline style only sets alignment;
    we add the font-family + dim color here. */
 [aria-labelledby="footprint-modal-title"] tbody td:nth-child(2) {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family: var(--mono);
   color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
 }
