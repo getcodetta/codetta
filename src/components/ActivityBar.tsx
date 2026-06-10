@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useStore, type SidebarView } from "../store";
+import { getGitStatus, subscribeGitStatus } from "../gitStatusStore";
 import { AIIcon } from "./AIIcon";
 import { Icon } from "./Icon";
 
@@ -38,6 +39,20 @@ export function ActivityBar() {
 
   const [addOpen, setAddOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Pending-changes badge on the Source Control icon. Piggybacks on the
+  // shared gitStatusStore watch the FileTree/SourceControlPanel start —
+  // we only SUBSCRIBE here (no startGitStatusWatch) so the badge costs
+  // zero extra `git status` runs and simply reads whatever the cache
+  // last published for the active workspace.
+  const [, setGitTick] = useState(0);
+  useEffect(() => {
+    if (!activeId) return;
+    return subscribeGitStatus(activeId, () => setGitTick((n) => n + 1));
+  }, [activeId]);
+  const gitChangeCount = activeId
+    ? (getGitStatus(activeId).status?.files.length ?? 0)
+    : 0;
 
   const switchView = (v: SidebarView) => {
     if (!activeId) return;
@@ -149,13 +164,24 @@ export function ActivityBar() {
         </button>
         <button
           className={`activity-icon ${sectionActive("git") ? "active" : ""}`}
-          title="Source Control (Ctrl+Shift+G) — click to toggle section"
-          aria-label="Source Control"
+          title={`Source Control (Ctrl+Shift+G)${
+            gitChangeCount > 0
+              ? ` — ${gitChangeCount} changed file${gitChangeCount === 1 ? "" : "s"}`
+              : ""
+          } — click to toggle section`}
+          aria-label={`Source Control${
+            gitChangeCount > 0 ? `, ${gitChangeCount} pending changes` : ""
+          }`}
           aria-pressed={sectionActive("git")}
           onClick={() => switchView("git")}
           disabled={!activeId}
         >
           <Icon name="git-branch" size={20} />
+          {gitChangeCount > 0 && (
+            <span className="activity-badge" aria-hidden="true">
+              {gitChangeCount > 99 ? "99+" : gitChangeCount}
+            </span>
+          )}
         </button>
         <button
           className={`activity-icon ${sectionActive("tasks") ? "active" : ""}`}

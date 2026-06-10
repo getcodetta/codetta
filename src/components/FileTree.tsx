@@ -24,7 +24,7 @@ import { findSftpProfile, profileToConn } from "../sftpProfiles";
 import { pushLinkedFile, suppressNextAutoPush } from "../sftpPush";
 import { appendDeployLog } from "../deployLog";
 import { REVEAL_IN_TREE_EVENT } from "../revealInTree";
-import { basename, dirname, joinPath } from "../pathUtils";
+import { basename, dirname, joinPath, relPath } from "../pathUtils";
 import { dropRecentFile } from "../recentFiles";
 import {
   isBookmarked,
@@ -32,6 +32,15 @@ import {
   addBookmark,
   renameBookmark,
 } from "../bookmarks";
+import {
+  getGitStatus,
+  normalizeGitPath,
+  startGitStatusWatch,
+  statusColor,
+  subscribeGitStatus,
+  treeBadge,
+} from "../gitStatusStore";
+import { FileHistoryModal } from "./FileHistoryModal";
 import { Icon } from "./Icon";
 
 interface MenuTarget {
@@ -186,6 +195,18 @@ function Node({ wsId, entry, depth, onContext }: NodeProps) {
     }
   };
 
+  // Git decoration: files get a colored status letter on the right
+  // edge; folders get a muted dot when anything under them changed.
+  // Read on-demand from the shared cache — the parent FileTree
+  // re-renders the whole tree on every published status, so Node
+  // doesn't need its own subscription.
+  const gitSnap = getGitStatus(wsId);
+  const gitFile = entry.is_dir
+    ? undefined
+    : gitSnap.byPath.get(normalizeGitPath(entry.path));
+  const gitDirDot =
+    entry.is_dir && gitSnap.changedDirs.has(normalizeGitPath(entry.path));
+
   return (
     <>
       <div
@@ -214,6 +235,17 @@ function Node({ wsId, entry, depth, onContext }: NodeProps) {
           <Icon name={entry.is_dir ? "folder" : "file"} size={14} />
         </span>
         <span className="tree-name">{entry.name}</span>
+        {gitFile && (
+          <span
+            className="tree-git-badge"
+            style={{ color: statusColor(gitFile) }}
+            aria-hidden="true"
+            title={`Git: ${gitFile.index_status}${gitFile.worktree_status}`}
+          >
+            {treeBadge(gitFile)}
+          </span>
+        )}
+        {gitDirDot && <span className="tree-git-dot" aria-hidden="true" />}
       </div>
       {entry.is_dir && expanded && children && (
         <>
@@ -240,7 +272,20 @@ interface Props {
 export function FileTree({ wsId, root }: Props) {
   const [entries, setEntries] = useState<DirEntry[]>([]);
   const [menu, setMenu] = useState<MenuTarget | null>(null);
+  const [historyFile, setHistoryFile] = useState<string | null>(null);
   const treeRef = useRef<HTMLDivElement | null>(null);
+
+  // Shared git status: one watcher feeds every Node's badge. The tick
+  // only forces a re-render — Nodes read the cache directly.
+  const [, setGitTick] = useState(0);
+  useEffect(() => {
+    const stop = startGitStatusWatch(wsId, root);
+    const unsub = subscribeGitStatus(wsId, () => setGitTick((n) => n + 1));
+    return () => {
+      unsub();
+      stop();
+    };
+  }, [wsId, root]);
 
   // Scroll-into-view half of reveal-in-tree. Lazily-loaded levels need
   // one listDir round trip each before the row exists, so retry on a
@@ -417,6 +462,10 @@ export function FileTree({ wsId, root }: Props) {
             if (pinned) removeBookmark(wsId, target.path);
             else addBookmark(wsId, target.path);
           },
+        });
+        out.push({
+          label: "File History…",
+          onClick: () => setHistoryFile(relPath(target.path, root)),
         });
       }
       out.push({
@@ -691,6 +740,13 @@ export function FileTree({ wsId, root }: Props) {
           y={menu.y}
           items={items}
           onClose={() => setMenu(null)}
+        />
+      )}
+      {historyFile && (
+        <FileHistoryModal
+          root={root}
+          relPath={historyFile}
+          onClose={() => setHistoryFile(null)}
         />
       )}
     </div>

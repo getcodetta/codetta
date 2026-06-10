@@ -90,6 +90,7 @@ pub fn run() {
             git::git_create_branch,
             git::git_delete_branch,
             git::git_log,
+            git::git_file_log,
             git::git_show_commit,
             git::git_stash_list,
             git::git_stash_push,

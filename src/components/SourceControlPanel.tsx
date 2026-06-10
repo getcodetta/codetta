@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { fsBus } from "../fsBus";
 import {
   fs,
   git as gitApi,
@@ -19,7 +18,16 @@ import { langOf } from "../langDetect";
 import { joinPath } from "../pathUtils";
 import { useStore } from "../store";
 import { useModalFocus } from "../useModalFocus";
+import {
+  forceGitStatusRefresh,
+  getGitStatus,
+  startGitStatusWatch,
+  statusColor,
+  statusLabel,
+  subscribeGitStatus,
+} from "../gitStatusStore";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { FileHistoryModal } from "./FileHistoryModal";
 import { Icon } from "./Icon";
 
 function authorInitials(name: string): string {
@@ -45,26 +53,8 @@ interface Props {
   root: string;
 }
 
-function statusLabel(f: GitFile): string {
-  if (f.index_status === "?" && f.worktree_status === "?") return "U";
-  const i = f.index_status.trim();
-  const w = f.worktree_status.trim();
-  if (i && w) return `${i}${w}`;
-  return i || w || " ";
-}
-
-function statusColor(f: GitFile): string {
-  // Conflicts first: their XY pairs contain U/A/D letters that would
-  // otherwise pick up the cheerful "untracked green".
-  if (f.conflicted) return "#e5734f";
-  const tag = statusLabel(f);
-  if (tag.includes("U")) return "#73c990";
-  if (tag.includes("A")) return "#73c990";
-  if (tag.includes("M")) return "#e2c08d";
-  if (tag.includes("D")) return "#c75252";
-  if (tag.includes("R")) return "#9cdcfe";
-  return "#d4d4d4";
-}
+// statusLabel / statusColor moved to gitStatusStore.ts so the file
+// tree paints the same palette — imported above.
 
 export function SourceControlPanel({ wsId, root }: Props) {
   const [status, setStatus] = useState<GitStatus | null>(null);
@@ -83,44 +73,43 @@ export function SourceControlPanel({ wsId, root }: Props) {
   const [commitDiffLoading, setCommitDiffLoading] = useState(false);
   const [stashes, setStashes] = useState<GitStash[]>([]);
   const [stashesOpen, setStashesOpen] = useState(false);
+  const [historyFile, setHistoryFile] = useState<string | null>(null);
   const commitCardRef = useRef<HTMLDivElement | null>(null);
   useModalFocus(commitCardRef, !!openCommit);
 
-  const refresh = useCallback(async () => {
-    try {
-      const s = await gitApi.status(root);
-      setStatus(s);
-    } catch (e) {
-      setStatus({
-        is_repo: false,
-        branch: null,
-        upstream: null,
-        ahead: 0,
-        behind: 0,
-        files: [],
-      });
-      setLog(errMsg(e));
-    }
-  }, [root]);
-
+  // Status comes from the shared gitStatusStore (one `git status` per
+  // fs-event debounce window feeds this panel, the file tree's badges,
+  // and the activity-bar count). refresh() forces an immediate fetch —
+  // used by the Refresh button and after explicit git mutations so the
+  // UI reflects the command it just ran, not the watcher's echo.
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    let timer: number | null = null;
-    const handler = (ev: Event) => {
-      const detail = (ev as CustomEvent).detail as { wsId: string };
-      if (detail.wsId !== wsId) return;
-      if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => void refresh(), 250);
+    const apply = () => {
+      const snap = getGitStatus(wsId);
+      if (snap.status) setStatus(snap.status);
+      if (snap.error) {
+        setStatus({
+          is_repo: false,
+          branch: null,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          files: [],
+        });
+        setLog(snap.error);
+      }
     };
-    fsBus.addEventListener("ws", handler);
+    const stop = startGitStatusWatch(wsId, root);
+    const unsub = subscribeGitStatus(wsId, apply);
+    apply();
     return () => {
-      fsBus.removeEventListener("ws", handler);
-      if (timer) window.clearTimeout(timer);
+      unsub();
+      stop();
     };
-  }, [wsId, refresh]);
+  }, [wsId, root]);
+
+  const refresh = useCallback(async () => {
+    await forceGitStatusRefresh(wsId);
+  }, [wsId]);
 
   const run = useCallback(
     async (
@@ -1033,6 +1022,13 @@ export function SourceControlPanel({ wsId, root }: Props) {
         </div>
       )}
 
+      {historyFile && (
+        <FileHistoryModal
+          root={root}
+          relPath={historyFile}
+          onClose={() => setHistoryFile(null)}
+        />
+      )}
       {busy && <div className="git-busy">{busy}…</div>}
       {log && <pre className="git-log">{log}</pre>}
       {ctx && (
@@ -1072,6 +1068,10 @@ export function SourceControlPanel({ wsId, root }: Props) {
             items.push({
               label: "View Diff",
               onClick: () => showDiff(file, file.staged),
+            });
+            items.push({
+              label: "File History…",
+              onClick: () => setHistoryFile(file.path),
             });
             if (file.staged) {
               items.push({
