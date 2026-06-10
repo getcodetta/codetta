@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useStore } from "../store";
 import { openPalette } from "../paletteBus";
+import { openSettings } from "../settingsBus";
 import { pty } from "../ipc";
 import { error as toastError, errMsg, info as toastInfo } from "../notify";
 import { prompt as dialogPrompt } from "../dialog";
@@ -110,6 +111,25 @@ export function WorkspacePicker() {
               <span className="welcome-action-label">
                 <strong>Command Palette</strong>
                 <span>Search commands, files, and workspaces</span>
+              </span>
+            </button>
+            {/* The product pitch is "BYOK AI editor", yet a new user
+                could work for days without ever finding the AI setup
+                path (the AI panel defaults to hidden). One visible
+                door, straight to the key fields. */}
+            <button
+              className="welcome-action"
+              onClick={() => openSettings("ai-providers")}
+            >
+              <span className="welcome-action-icon">
+                <Icon name="settings" size={20} />
+              </span>
+              <span className="welcome-action-label">
+                <strong>Set up AI</strong>
+                <span>
+                  Bring your own key — Claude Code, Anthropic, OpenAI.
+                  Ollama needs no key.
+                </span>
               </span>
             </button>
           </section>
