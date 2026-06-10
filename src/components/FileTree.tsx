@@ -20,6 +20,7 @@ import {
   rememberRemoteLink,
   subscribeActiveSftp,
 } from "../sftpLinks";
+import { findSftpProfile, profileToConn } from "../sftpProfiles";
 import { basename, dirname, joinPath } from "../pathUtils";
 import { dropRecentFile } from "../recentFiles";
 import {
@@ -503,12 +504,33 @@ export function FileTree({ wsId, root }: Props) {
             label: `Push to remote (${link.remotePath})`,
             onClick: async () => {
               try {
+                // Prefer the live session's connection; otherwise fall
+                // back to the saved profile this file was downloaded
+                // from. (Spreading null here used to send an invoke
+                // with no host/user at all, which surfaced as a
+                // cryptic "missing field" deserialization error.)
+                const conn =
+                  active?.profileId === link.profileId
+                    ? active.conn
+                    : (() => {
+                        const p = findSftpProfile(link.profileId);
+                        return p ? profileToConn(p) : null;
+                      })();
+                if (!conn) {
+                  toastError(
+                    "The SFTP profile this file came from no longer exists. Re-download it from the Remote panel.",
+                  );
+                  return;
+                }
+                // Flush any open dirty buffer so we push what the user
+                // sees, not the last on-disk save.
+                if (useStore.getState().loaded[wsId]?.files[target.path]) {
+                  await useStore.getState().saveFile(wsId, target.path);
+                }
                 const contents = await fs.readFile(target.path);
                 await invoke("sftp_write_file", {
                   args: {
-                    ...(active?.profileId === link.profileId
-                      ? active.conn
-                      : null),
+                    ...conn,
                     path: link.remotePath,
                     contents,
                   },

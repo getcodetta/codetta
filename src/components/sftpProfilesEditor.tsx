@@ -9,62 +9,14 @@
 
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  getJson as lsGetJson,
-  setJson as lsSetJson,
-} from "../localStore";
 import { errMsg } from "../notify";
 import { Row } from "./settingsBits";
-
-// SFTP profiles — stored in localStorage as a JSON array. Each profile
-// holds the connection details + a friendly label. Passwords sit
-// alongside the existing API-key trust model: the user's localStorage
-// is treated as a local secret store. Same caveat applies (anyone with
-// disk access can read them).
-const SFTP_PROFILES_KEY = "lcp.sftp.profiles";
-
-interface SftpProfile {
-  id: string;
-  name: string;
-  host: string;
-  port: number;
-  user: string;
-  password: string;
-  /** Optional remote folder to land in on connect. Mirror of the field
-   *  in the panel-side schema; both editors round-trip it untouched. */
-  defaultPath?: string;
-  /** Optional path to an OpenSSH private key. Mirror of the panel field. */
-  privateKeyPath?: string;
-}
-
-function loadSftpProfiles(): SftpProfile[] {
-  return lsGetJson<unknown[]>(SFTP_PROFILES_KEY, [], Array.isArray).filter(
-    (p): p is SftpProfile =>
-      !!p &&
-      typeof p === "object" &&
-      typeof (p as SftpProfile).id === "string" &&
-      typeof (p as SftpProfile).name === "string" &&
-      typeof (p as SftpProfile).host === "string" &&
-      typeof (p as SftpProfile).user === "string" &&
-      typeof (p as SftpProfile).password === "string" &&
-      typeof (p as SftpProfile).port === "number",
-  );
-}
-
-function saveSftpProfiles(profiles: SftpProfile[]) {
-  lsSetJson(SFTP_PROFILES_KEY, profiles);
-}
-
-function emptyProfile(): SftpProfile {
-  return {
-    id: "p_" + Math.random().toString(36).slice(2, 10),
-    name: "",
-    host: "",
-    port: 22,
-    user: "",
-    password: "",
-  };
-}
+import {
+  emptySftpProfile as emptyProfile,
+  loadSftpProfiles,
+  saveSftpProfiles,
+  type SftpProfile,
+} from "../sftpProfiles";
 
 export function SftpProfilesEditor() {
   const [profiles, setProfiles] = useState<SftpProfile[]>(() =>
@@ -155,7 +107,7 @@ export function SftpProfilesEditor() {
     <>
       <div className="settings-row settings-row-note">
         Saved SFTP/SSH connections. Test verifies credentials before
-        saving. Used by the Remote browser (coming soon) and as a
+        saving. Used by the Remote browser in the sidebar and as a
         deploy target for upload/download from the file tree.
         Passwords are stored locally in <code>localStorage</code>.
       </div>

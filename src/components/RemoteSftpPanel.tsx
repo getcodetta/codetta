@@ -13,9 +13,7 @@ import {
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { confirm as dialogConfirm, prompt as dialogPrompt } from "../dialog";
 import {
-  getJson as lsGetJson,
   getString as lsGetString,
-  setJson as lsSetJson,
   setString as lsSetString,
 } from "../localStore";
 import {
@@ -23,96 +21,25 @@ import {
   lookupRemoteLink,
   setActiveSftp,
 } from "../sftpLinks";
-import { basename } from "../pathUtils";
+import {
+  emptySftpProfile as emptyProfile,
+  loadSftpProfiles as loadProfiles,
+  onSftpProfilesChanged,
+  profileToConn,
+  saveSftpProfiles as saveProfiles,
+  type SftpProfile,
+} from "../sftpProfiles";
+import { basename, dirname } from "../pathUtils";
 import { Icon } from "./Icon";
 
-// SFTP profiles live alongside the Settings editor's storage key. We
-// keep the parsing + connection-arg shape duplicated here (rather than
-// importing from SettingsModal) to keep this panel decoupled from the
-// settings UI's React lifecycle.
-const SFTP_PROFILES_KEY = "lcp.sftp.profiles";
 const SFTP_LAST_PROFILE_KEY = (wsId: string) =>
   `lcp.sftp.lastProfile.${wsId}`;
-
-interface SftpProfile {
-  id: string;
-  name: string;
-  host: string;
-  port: number;
-  user: string;
-  password: string;
-  /** Optional remote folder to open on connect, e.g. "/var/www/site".
-   *  When empty, falls back to the SSH home dir. */
-  defaultPath?: string;
-  /** Optional absolute path to an OpenSSH private key (PEM). When set,
-   *  the backend tries key auth first; if the key is encrypted, the
-   *  password field doubles as the passphrase. Falls back to password
-   *  auth if the server rejects the key. */
-  privateKeyPath?: string;
-}
-
-interface SftpConnectArgs {
-  host: string;
-  port: number;
-  user: string;
-  password: string;
-  privateKeyPath?: string;
-}
 
 interface SftpEntry {
   name: string;
   kind: string;
   size: number;
   mtime: number;
-}
-
-function loadProfiles(): SftpProfile[] {
-  return lsGetJson<unknown[]>(SFTP_PROFILES_KEY, [], Array.isArray)
-    .filter(
-      (p): p is SftpProfile =>
-        !!p &&
-        typeof p === "object" &&
-        typeof (p as SftpProfile).id === "string" &&
-        typeof (p as SftpProfile).name === "string" &&
-        typeof (p as SftpProfile).host === "string" &&
-        typeof (p as SftpProfile).user === "string" &&
-        typeof (p as SftpProfile).password === "string" &&
-        typeof (p as SftpProfile).port === "number",
-    )
-    .map((p) => ({
-      ...p,
-      defaultPath:
-        typeof p.defaultPath === "string" ? p.defaultPath : undefined,
-      privateKeyPath:
-        typeof p.privateKeyPath === "string" ? p.privateKeyPath : undefined,
-    }));
-}
-
-function saveProfiles(profiles: SftpProfile[]) {
-  lsSetJson(SFTP_PROFILES_KEY, profiles);
-}
-
-function emptyProfile(): SftpProfile {
-  return {
-    id: "p_" + Math.random().toString(36).slice(2, 10),
-    name: "",
-    host: "",
-    port: 22,
-    user: "",
-    password: "",
-    defaultPath: "",
-    privateKeyPath: "",
-  };
-}
-
-function profileToConn(p: SftpProfile): SftpConnectArgs {
-  return {
-    host: p.host,
-    port: p.port,
-    user: p.user,
-    password: p.password,
-    privateKeyPath: p.privateKeyPath?.trim() || undefined,
-  };
 }
 
 function joinRemote(parent: string, name: string): string {
@@ -196,16 +123,11 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
   const editorState = useEditorState();
   const activeFilePath = editorState.filePath;
 
-  // Re-read profiles when storage changes from another tab/component
-  // (e.g. user added a profile in Settings while this panel was open).
+  // Re-read profiles when they change anywhere — the Settings modal in
+  // this window (custom event; the DOM storage event never fires in the
+  // window that wrote it) or another Codetta window (storage event).
   useEffect(() => {
-    const handler = (e: StorageEvent) => {
-      if (e.key === SFTP_PROFILES_KEY) {
-        setProfiles(loadProfiles());
-      }
-    };
-    window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
+    return onSftpProfilesChanged(() => setProfiles(loadProfiles()));
   }, []);
 
   // Persist last-picked profile per workspace so reopening the panel
@@ -418,9 +340,18 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       // it normally. The remote-link table remembers the upstream
       // remote path, so a subsequent "Push to remote" knows where to
       // send changes back without re-asking.
+      //
+      // The cache path mirrors profile id + the full remote path, NOT
+      // the bare filename: CMS trees repeat names constantly
+      // (index.php, style.css), and a flat cache would overwrite the
+      // first file's buffer AND relink its push target to the second —
+      // pushing the wrong content to the wrong production file.
       const cacheDir = `${root.replace(/\\/g, "/")}/.codetta-remote-cache`;
-      await fs.createDir(cacheDir).catch(() => {});
-      const localPath = `${cacheDir}/${name}`;
+      const safeRemote = remotePath
+        .replace(/[:*?"<>|]/g, "_")
+        .replace(/^\/+/, "");
+      const localPath = `${cacheDir}/${profile.id}/${safeRemote}`;
+      await fs.createDir(dirname(localPath)).catch(() => {});
       await fs.writeFile(localPath, contents);
       rememberRemoteLink(wsId, localPath, {
         profileId: profile.id,
@@ -540,7 +471,6 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       if (!ok) return;
     }
     try {
-      const contents = await fs.readFile(activeFilePath);
       const remotePath = link?.remotePath ?? null;
       if (!remotePath) {
         toastError(
@@ -548,6 +478,11 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
         );
         return;
       }
+      // Save first so we push what the user sees in the editor, not
+      // the last on-disk version (pushAllDirty already does this;
+      // saveFile no-ops when the buffer is clean).
+      await useStore.getState().saveFile(wsId, activeFilePath);
+      const contents = await fs.readFile(activeFilePath);
       await invoke("sftp_write_file", {
         args: { ...profileToConn(profile), path: remotePath, contents },
       });

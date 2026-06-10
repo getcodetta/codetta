@@ -81,8 +81,16 @@ type Listener = () => void;
 export interface ActiveSftp {
   profileId: string;
   /** Connection params, snapshotted so the file tree can call
-   *  sftp_write_file without re-reading localStorage. */
-  conn: { host: string; port: number; user: string; password: string };
+   *  sftp_write_file without re-reading localStorage. Includes the
+   *  private-key path — key-auth profiles push through this snapshot
+   *  too. */
+  conn: {
+    host: string;
+    port: number;
+    user: string;
+    password: string;
+    privateKeyPath?: string;
+  };
   /** Where the panel is currently rooted (defaultPath or home). Used as
    *  the suggested upload target. */
   cwd: string;
