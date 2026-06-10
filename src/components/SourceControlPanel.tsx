@@ -123,15 +123,21 @@ export function SourceControlPanel({ wsId, root }: Props) {
   }, [wsId, refresh]);
 
   const run = useCallback(
-    async (label: string, cmd: string, args: Record<string, unknown>) => {
+    async (
+      label: string,
+      cmd: string,
+      args: Record<string, unknown>,
+    ): Promise<boolean> => {
       setBusy(label);
       setLog("");
       try {
         const out = await invoke<string>(cmd, args);
         setLog(out);
         await refresh();
+        return true;
       } catch (e) {
         setLog(errMsg(e));
+        return false;
       } finally {
         setBusy(null);
       }
@@ -150,8 +156,11 @@ export function SourceControlPanel({ wsId, root }: Props) {
     });
   const commit = async () => {
     if (!message.trim()) return;
-    await run("Committing", "git_commit", { path: root, message });
-    setMessage("");
+    const ok = await run("Committing", "git_commit", { path: root, message });
+    // Only clear on success — a failed hook / config error used to wipe
+    // the carefully-typed message along with the error.
+    if (ok) setMessage("");
+    else toastError("Commit failed — see the log below. Your message is preserved.");
   };
   const pull = () => run("Pulling", "git_pull", { path: root });
   const fetch_ = () => run("Fetching", "git_fetch", { path: root });
@@ -1067,12 +1076,12 @@ export function SourceControlPanel({ wsId, root }: Props) {
             if (file.staged) {
               items.push({
                 label: "Unstage",
-                onClick: () => unstage(file.path),
+                onClick: () => void unstage(file.path),
               });
             } else {
               items.push({
                 label: "Stage",
-                onClick: () => stage(file.path),
+                onClick: () => void stage(file.path),
               });
             }
             items.push("separator");

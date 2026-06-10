@@ -109,8 +109,17 @@ impl client::Handler for AcceptAllKeysClient {
 /// is configured, then falling back to password. Returns the live
 /// session — caller decides whether to pool it or use it one-shot.
 async fn open_session(args: &SftpConnectArgs) -> SftpResult<SftpSession> {
+    // Keepalives every 15s keep NAT/firewall state and the server's
+    // ClientAliveInterval happy across editing pauses — with the old
+    // bare 30s inactivity timeout, every pooled session died while the
+    // user was typing and each next action paid a full reconnect (or
+    // just failed). The inactivity timeout stays as dead-peer
+    // detection: with keepalives flowing it only fires when the
+    // connection is actually gone.
     let config = Arc::new(client::Config {
-        inactivity_timeout: Some(Duration::from_secs(30)),
+        inactivity_timeout: Some(Duration::from_secs(120)),
+        keepalive_interval: Some(Duration::from_secs(15)),
+        keepalive_max: 4,
         ..client::Config::default()
     });
 

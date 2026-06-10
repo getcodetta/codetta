@@ -9,10 +9,12 @@ import { createPortal } from "react-dom";
 import { Terminal, type IDisposable, type ILink } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { pty } from "../ipc";
 import { useStore } from "../store";
 import { useResolvedTheme } from "../theme";
 import { setEditorGoto } from "../editorState";
+import { ContextMenu } from "./ContextMenu";
 
 /**
  * Match `path:line` and `path:line:col` patterns in terminal output so the
@@ -36,6 +38,10 @@ import { setEditorGoto } from "../editorState";
  */
 const PATH_LINE_COL_RE =
   /(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|\/)?(?:[\w.\-]+[\\/])*[\w.\-]+\.\w+:(\d+)(?::(\d+))?/g;
+
+/** http(s) URLs in terminal output — dev-server addresses, package
+ *  registry links, CI URLs. Activated via the system browser. */
+const URL_RE = /https?:\/\/[^\s"'<>()[\]]+/g;
 
 const xtermDark = {
   background: "#1e1e1e",
@@ -132,6 +138,12 @@ export function TerminalCore({
     cwdRef.current = cwd;
   }, [cwd]);
   const resolvedTheme = useResolvedTheme();
+
+  // Right-click context menu. Without it the raw WebView2 menu showed
+  // (with a Refresh item that could discard unsaved work).
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
 
   // --- Find overlay state -------------------------------------------------
   const [findOpen, setFindOpen] = useState(false);
@@ -356,6 +368,42 @@ export function TerminalCore({
       },
     });
 
+    // Second provider: clickable http(s) URLs → system browser. The
+    // opener plugin permission is already granted app-wide; only the
+    // path:line provider existed before, so dev-server addresses and
+    // registry links printed by tools were dead text.
+    const urlLinkDisposable: IDisposable = term.registerLinkProvider({
+      provideLinks(bufferLineNumber, callback) {
+        const line = term.buffer.active.getLine(bufferLineNumber - 1);
+        const text = line?.translateToString(true) ?? "";
+        if (!text) {
+          callback(undefined);
+          return;
+        }
+        const links: ILink[] = [];
+        URL_RE.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = URL_RE.exec(text)) !== null) {
+          // Trailing punctuation is almost never part of the URL
+          // ("see https://example.com." in prose).
+          const url = m[0].replace(/[.,;:!?]+$/, "");
+          if (!url) continue;
+          links.push({
+            range: {
+              start: { x: m.index + 1, y: bufferLineNumber },
+              end: { x: m.index + url.length, y: bufferLineNumber },
+            },
+            text: url,
+            decorations: { underline: true, pointerCursor: true },
+            activate: () => {
+              void openUrl(url).catch(() => {});
+            },
+          });
+        }
+        callback(links.length > 0 ? links : undefined);
+      },
+    });
+
     let unlistenOut: (() => void) | undefined;
     let unlistenExit: (() => void) | undefined;
     let cancelled = false;
@@ -457,6 +505,7 @@ export function TerminalCore({
       unlistenExit?.();
       try {
         linkDisposable.dispose();
+        urlLinkDisposable.dispose();
       } catch {
         /* ignore */
       }
@@ -704,7 +753,58 @@ export function TerminalCore({
           // clock so the auto-close-idle-terminals sweeper holds off.
           touchSelf();
         }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setCtxMenu({ x: e.clientX, y: e.clientY });
+        }}
       />
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={[
+            {
+              label: "Copy",
+              disabled: !termRef.current?.hasSelection(),
+              onClick: () => {
+                const sel = termRef.current?.getSelection();
+                if (sel) void navigator.clipboard.writeText(sel);
+              },
+            },
+            {
+              label: "Paste",
+              onClick: () => {
+                void navigator.clipboard.readText().then((t) => {
+                  if (t && ptyIdRef.current) {
+                    void pty.write(ptyIdRef.current, t);
+                  }
+                });
+              },
+            },
+            "separator",
+            {
+              label: "Select All",
+              onClick: () => termRef.current?.selectAll(),
+            },
+            {
+              label: "Clear",
+              onClick: () => termRef.current?.clear(),
+            },
+            "separator",
+            {
+              label: "Find…",
+              onClick: () => {
+                hostNodeRef.current?.dispatchEvent(
+                  new CustomEvent("codetta:term-find-open", {
+                    detail: { selection: termRef.current?.getSelection() ?? "" },
+                  }),
+                );
+              },
+            },
+          ]}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
       {visible && findOpen && (
         <div
           className="term-find-overlay"
