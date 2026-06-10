@@ -32,6 +32,7 @@ export const SETTINGS_KEYS = [
   "lcp.aiTemplates",
   "lcp.claudeCode.alwaysAllow",
   "lcp.claudeCode.budgetUsd",
+  "lcp.claudeCode.allowUnguarded",
   "lcp.sftp.profiles",
   "lcp.ai.privacy.exclusions",
   "lcp.ai.usage.hardCapUsd",

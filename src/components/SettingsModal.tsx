@@ -38,6 +38,7 @@ import {
 import {
   ClaudeCodeAlwaysAllowEditor,
   ClaudeCodeBudgetEditor,
+  ClaudeCodeUnguardedEditor,
 } from "./claudeCodeSettings";
 import { SftpProfilesEditor } from "./sftpProfilesEditor";
 import { Icon } from "./Icon";
@@ -660,6 +661,10 @@ export function SettingsModal() {
 
           <Section title="Claude Code — Always-allow tools">
             <ClaudeCodeAlwaysAllowEditor />
+          </Section>
+
+          <Section title="Claude Code — Permission guard">
+            <ClaudeCodeUnguardedEditor />
           </Section>
 
           <Section title="Claude Code — MCP servers">

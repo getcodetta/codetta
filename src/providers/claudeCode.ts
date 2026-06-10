@@ -3,6 +3,22 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ChatMessage, ChatStreamEvent, ToolCall } from "../ai";
 import type { ChatProvider, ProviderModel } from "./types";
 import { getWorkspaceRoot } from "../wsRoot";
+import { getJson as lsGetJson } from "../localStore";
+
+/** Explicit opt-in for running Claude Code WITHOUT the permission
+ *  guard (--dangerously-skip-permissions) when the local permission
+ *  server is unavailable. Default false: the backend refuses to spawn
+ *  unguarded unless this is set. Managed in Settings → Claude Code —
+ *  Permission guard. */
+export const CC_ALLOW_UNGUARDED_KEY = "lcp.claudeCode.allowUnguarded";
+
+export function getAllowUnguarded(): boolean {
+  return lsGetJson<boolean>(
+    CC_ALLOW_UNGUARDED_KEY,
+    false,
+    (v): v is boolean => typeof v === "boolean",
+  );
+}
 
 // "default" passes no --model flag, so Claude Code uses whatever your
 // `claude /login` session is configured for. This is the most reliable
@@ -131,8 +147,13 @@ export const claudeCodeProvider: ChatProvider = {
         model,
         resumeSessionId,
         chatSessionId,
+        allowUnguarded: getAllowUnguarded(),
       });
     } catch (e) {
+      const msg = String(e);
+      // The backend's permission-guard refusal is already a complete,
+      // user-worthy message — don't bury it under a spawn-error prefix.
+      if (msg.includes("permission guard")) throw new Error(msg);
       throw new Error(`claude CLI failed to spawn: ${e}`);
     }
 

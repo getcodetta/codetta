@@ -31,7 +31,18 @@ const PATH_TOOLS = new Set([
   "Write",
   "Read",
   "NotebookEdit",
+  "Grep",
+  "Glob",
 ]);
+
+/** Read-only tools that are in the hook matcher ONLY so the privacy
+ *  gate can see them. They auto-allow immediately after that check —
+ *  never a permission card — so gating them adds zero friction.
+ *  (Limit: the hook sees tool INPUTS, so Grep/Glob are gated on their
+ *  `path` argument; a workspace-wide Grep that merely matches lines
+ *  inside an excluded file can't be filtered at this layer. Read — the
+ *  high-bandwidth leak — is fully covered.) */
+const READ_ONLY_HOOK_TOOLS = new Set(["Read", "Grep", "Glob"]);
 
 interface ExtRule {
   ext: string; // ".ts" lowercased, leading dot
@@ -83,6 +94,9 @@ function pathFromInput(input: Record<string, unknown>): string | null {
   if (typeof fp === "string" && fp) return fp;
   const np = input.notebook_path;
   if (typeof np === "string" && np) return np;
+  // Grep/Glob scope their search via a plain `path` argument.
+  const p = input.path;
+  if (typeof p === "string" && p) return p;
   return null;
 }
 
@@ -203,6 +217,16 @@ export function ClaudePermissionOverlay() {
           }).catch((err) => console.warn("privacy-deny failed", err));
           return;
         }
+      }
+      // Read-only tools passed the privacy gate above — allow without
+      // a card. They're only in the hook matcher so the gate can see
+      // model-initiated reads.
+      if (READ_ONLY_HOOK_TOOLS.has(req.tool_name)) {
+        void invoke("claude_perm_decide", {
+          requestId: req.request_id,
+          decision: "allow",
+        }).catch((err) => console.warn("read-allow failed", err));
+        return;
       }
       // Check both the persisted rules AND the in-memory session rules.
       // Read latest via refs so we never miss a recent click.

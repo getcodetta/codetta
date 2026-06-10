@@ -104,8 +104,13 @@ pub fn claude_code_check() -> Result<String, String> {
 /// way to grant access, and (b) hitting external URLs is a meaningful
 /// trust decision the user should make once and for all via the
 /// "Always allow" button.
+/// Read/Grep/Glob are in the matcher ONLY so the frontend's privacy
+/// gate can see model-initiated reads (the exclusion list is useless
+/// if Claude can `Read .env` without the hook firing). The overlay
+/// auto-allows them immediately after the privacy check — they never
+/// produce a permission card, so day-to-day friction is unchanged.
 const PERMISSION_GATED_TOOLS: &str =
-    "Bash|Edit|MultiEdit|Write|NotebookEdit|WebFetch|WebSearch";
+    "Bash|Edit|MultiEdit|Write|NotebookEdit|WebFetch|WebSearch|Read|Grep|Glob";
 
 /// Cached resolution of the working `claude` executable name. On
 /// Windows, npm-installed Claude Code is `claude.cmd`, which
@@ -457,6 +462,7 @@ pub fn claude_code_chat(
     model: Option<String>,
     resume_session_id: Option<String>,
     chat_session_id: Option<String>,
+    allow_unguarded: Option<bool>,
 ) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     let event_name = format!("claude-stream:{}", id);
@@ -515,6 +521,25 @@ pub fn claude_code_chat(
     } else {
         false
     };
+
+    // No permission guard available → REFUSE to run unless the user
+    // has explicitly opted into the unguarded fallback. Silently
+    // degrading to --dangerously-skip-permissions contradicted the
+    // product's own red line: every Edit/Bash would have executed with
+    // no card and no indication the guard was gone.
+    if !use_hooks && !allow_unguarded.unwrap_or(false) {
+        state.buffers.lock().remove(&id);
+        state.session_streams.lock().remove(&chat_sid);
+        return Err(
+            "Codetta's permission guard isn't available (the local permission \
+             server failed to start, or no workspace folder is open), so this \
+             chat would run Claude Code with --dangerously-skip-permissions. \
+             Refusing by default. To accept unguarded runs, enable \
+             \"Allow unguarded fallback\" in Settings → Claude Code — \
+             Permission guard, then retry."
+                .to_string(),
+        );
+    }
 
     let mut cmd = build_claude_command(
         &prompt,

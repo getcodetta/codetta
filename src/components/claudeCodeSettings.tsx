@@ -13,10 +13,54 @@ import {
   setJson as lsSetJson,
   setString as lsSetString,
 } from "../localStore";
-import { Row } from "./settingsBits";
+import { Row, Toggle } from "./settingsBits";
+import {
+  CC_ALLOW_UNGUARDED_KEY,
+  getAllowUnguarded,
+} from "../providers/claudeCode";
 
 const CC_ALWAYS_ALLOW_KEY = "lcp.claudeCode.alwaysAllow";
 const CC_BUDGET_KEY = "lcp.claudeCode.budgetUsd";
+
+/** Opt-in for running Claude Code with --dangerously-skip-permissions
+ *  when the local permission server can't start. Default OFF: chats
+ *  refuse to run unguarded instead of silently degrading. */
+export function ClaudeCodeUnguardedEditor() {
+  const [on, setOn] = useState<boolean>(() => getAllowUnguarded());
+  const persist = async (v: boolean) => {
+    if (v) {
+      const ok = await dialogConfirm(
+        "When the permission guard is unavailable, Claude Code will run with --dangerously-skip-permissions: every Edit, Write, and Bash command executes WITHOUT a permission card.\n\nAllow that fallback?",
+        {
+          title: "Allow unguarded Claude Code",
+          okLabel: "Allow fallback",
+          cancelLabel: "Keep refusing",
+          danger: true,
+        },
+      );
+      if (!ok) return;
+    }
+    setOn(v);
+    lsSetJson(CC_ALLOW_UNGUARDED_KEY, v);
+  };
+  return (
+    <>
+      <Toggle
+        label="Allow unguarded fallback"
+        value={on}
+        onChange={(v) => void persist(v)}
+      />
+      <div className="settings-row settings-row-note">
+        Normally every Claude Code tool call is routed through Codetta's
+        permission cards. If the local permission server can't start
+        (port in use, no workspace folder), chats <strong>refuse to
+        run</strong> rather than silently dropping the guard. Turning
+        this on accepts running with{" "}
+        <code>--dangerously-skip-permissions</code> in that situation.
+      </div>
+    </>
+  );
+}
 
 export function ClaudeCodeBudgetEditor() {
   const [val, setVal] = useState<string>(() => {
