@@ -690,6 +690,24 @@ input {
   right: 0;
   left: auto;
 }
+/* Second-level menus (View → Panels/Tabs/Zoom/…). The flyout anchors to
+   its trigger row and opens to the right; overflow flipping is not
+   needed at the menubar's left-edge position. */
+.menu-subanchor {
+  position: relative;
+}
+.menu-sub-trigger.open,
+.menu-sub-trigger:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+.menu-dropdown.menu-submenu {
+  position: absolute;
+  top: -5px; /* aligns first child row with the trigger row */
+  left: 100%;
+  margin-top: 0;
+  margin-left: 2px;
+  min-width: 220px;
+}
 .menu-item {
   display: flex;
   align-items: center;

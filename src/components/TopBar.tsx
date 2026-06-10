@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  commands,
   commandsForCategory,
   type CommandSpec,
 } from "../actions";
@@ -35,15 +36,27 @@ interface DropdownProps {
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
+  /** Fired on hover so the menubar can switch open menus the way every
+   *  native menubar does: once one menu is open, sliding the pointer
+   *  across the bar opens siblings without extra clicks. */
+  onHover?: () => void;
   children: React.ReactNode;
 }
 
-function MenuButton({ label, open, onToggle, onClose, children }: DropdownProps) {
+function MenuButton({
+  label,
+  open,
+  onToggle,
+  onClose,
+  onHover,
+  children,
+}: DropdownProps) {
   return (
     <div className="menu-anchor" data-tauri-drag-region={false}>
       <button
         className={`menu-button ${open ? "open" : ""}`}
         onClick={onToggle}
+        onMouseEnter={onHover}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`${label} menu`}
@@ -57,6 +70,66 @@ function MenuButton({ label, open, onToggle, onClose, children }: DropdownProps)
             {children}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/** Second-level menu. Opens on hover (with a small close grace so the
+ *  diagonal move into the flyout doesn't shut it) and on click; ArrowRight
+ *  / ArrowLeft open and close it from the keyboard. */
+function SubMenu({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const closeTimer = useRef<number | null>(null);
+  const enter = () => {
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    setOpen(true);
+  };
+  const leave = () => {
+    closeTimer.current = window.setTimeout(() => setOpen(false), 140);
+  };
+  useEffect(() => {
+    return () => {
+      if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    };
+  }, []);
+  return (
+    <div
+      className="menu-subanchor"
+      onMouseEnter={enter}
+      onMouseLeave={leave}
+    >
+      <button
+        className={`menu-item menu-sub-trigger ${open ? "open" : ""}`}
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowRight") {
+            e.preventDefault();
+            setOpen(true);
+          } else if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            setOpen(false);
+          }
+        }}
+      >
+        <span className="menu-item-label">{label}</span>
+        <span className="menu-item-accel">
+          <Icon name="chevron-right" size={11} />
+        </span>
+      </button>
+      {open && (
+        <div className="menu-dropdown menu-submenu" role="menu">
+          {children}
+        </div>
       )}
     </div>
   );
@@ -94,6 +167,10 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
 
   const closeMenu = () => setMenu(null);
   const toggleMenu = (k: string) => setMenu((cur) => (cur === k ? null : k));
+  // Hover only SWITCHES between menus once one is open — it never opens
+  // the first one (that's still a click), matching native menubars.
+  const hoverMenu = (k: string) =>
+    setMenu((cur) => (cur !== null && cur !== k ? k : cur));
 
   useEffect(() => {
     let unl: (() => void) | undefined;
@@ -143,6 +220,71 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
       />
     ));
 
+  // Render specific registry commands by id, in the given order. The
+  // grouped menus below are hand-curated id lists (a flat category dump
+  // had grown to ~30 rows for View); pulling from the registry keeps
+  // labels/accels in sync with the palette. Unknown ids are skipped so
+  // a renamed command degrades to a missing row, not a crash.
+  const commandById = useMemo(
+    () => new Map(commands.map((c) => [c.id, c])),
+    [],
+  );
+  const itemsFor = (ids: string[]) =>
+    ids.map((id) => {
+      const cmd = commandById.get(id);
+      if (!cmd) return null;
+      return (
+        <MenuItem
+          key={cmd.id}
+          label={cmd.label}
+          accel={cmd.accel}
+          onClick={() => {
+            closeMenu();
+            void cmd.run();
+          }}
+        />
+      );
+    });
+
+  // Every View command placed in a curated group below. Anything in the
+  // View category but NOT in this set renders in a trailing "More"
+  // section, so newly-registered commands stay reachable from the menu
+  // without anyone remembering to update this file.
+  const groupedViewIds = new Set([
+    "view.quick_open",
+    "view.goto_symbol",
+    "view.search",
+    "view.search_palette",
+    "view.files",
+    "view.source_control",
+    "view.ai",
+    "view.tasks",
+    "view.todos",
+    "view.notifications",
+    "view.footprint",
+    "view.close_tab",
+    "view.next_tab",
+    "view.prev_tab",
+    "view.sort_tabs_alpha",
+    "view.sort_tabs_recent",
+    "view.reveal_in_tree",
+    "edit.toggle_word_wrap",
+    "view.toggle_minimap",
+    "view.zoom_in",
+    "view.zoom_out",
+    "view.zoom_reset",
+    "view.toggle_sidebar",
+    "view.toggle_panel",
+    "view.toggle_zen",
+    "view.settings",
+    "view.settings_ai_providers",
+    "view.settings_ai_privacy",
+    "view.reload",
+  ]);
+  const ungroupedView = commandsForCategory("View").filter(
+    (c) => !groupedViewIds.has(c.id),
+  );
+
   const themes: {
     mode: ThemeMode;
     label: string;
@@ -190,8 +332,11 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
           open={menu === "file"}
           onToggle={() => toggleMenu("file")}
           onClose={closeMenu}
+          onHover={() => hoverMenu("file")}
         >
           {renderCategoryItems("File")}
+          <MenuSeparator />
+          {itemsFor(["workspace.open_recent"])}
         </MenuButton>
 
         <MenuButton
@@ -199,6 +344,7 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
           open={menu === "edit"}
           onToggle={() => toggleMenu("edit")}
           onClose={closeMenu}
+          onHover={() => hoverMenu("edit")}
         >
           <MenuItem
             label="Undo"
@@ -260,6 +406,31 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
               );
             }}
           />
+          <MenuSeparator />
+          {/* Registry Edit commands — previously palette-only; the
+              menu stopped at clipboard ops. */}
+          {itemsFor([
+            "edit.find_in_file",
+            "edit.replace_in_file",
+            "edit.goto_line",
+            "edit.goto_symbol",
+          ])}
+          <MenuSeparator />
+          {itemsFor(["edit.format_document", "edit.reopen_closed_tab"])}
+          <SubMenu label="Folding">
+            {itemsFor([
+              "edit.fold",
+              "edit.unfold",
+              "edit.fold_all",
+              "edit.unfold_all",
+            ])}
+          </SubMenu>
+          <SubMenu label="Compare">
+            {itemsFor([
+              "edit.compare_with_clipboard",
+              "edit.compare_with_file",
+            ])}
+          </SubMenu>
         </MenuButton>
 
         <MenuButton
@@ -267,31 +438,97 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
           open={menu === "view"}
           onToggle={() => toggleMenu("view")}
           onClose={closeMenu}
+          onHover={() => hoverMenu("view")}
         >
-          {renderCategoryItems("View")}
+          {itemsFor([
+            "view.quick_open",
+            "view.goto_symbol",
+            "view.search",
+            "view.search_palette",
+          ])}
           <MenuSeparator />
-          <div className="menu-section-title">Theme</div>
-          {themes.map((t) => (
-            <button
-              key={t.mode}
-              className="menu-item topbar-theme-item"
-              role="menuitem"
-              onClick={() => {
-                closeMenu();
-                setTheme(t.mode);
-              }}
-            >
-              <span className="menu-item-label topbar-theme-label">
-                <Icon name={t.icon} size={12} />
-                {t.label}
-              </span>
-              {theme === t.mode && (
-                <span className="menu-item-accel">
-                  <Icon name="check" size={11} />
+          <SubMenu label="Panels">
+            {itemsFor([
+              "view.files",
+              "view.source_control",
+              "view.ai",
+              "view.tasks",
+              "view.todos",
+              "view.notifications",
+              "view.footprint",
+            ])}
+          </SubMenu>
+          <SubMenu label="Tabs">
+            {itemsFor([
+              "view.close_tab",
+              "view.next_tab",
+              "view.prev_tab",
+              "view.reveal_in_tree",
+              "view.sort_tabs_alpha",
+              "view.sort_tabs_recent",
+            ])}
+          </SubMenu>
+          <SubMenu label="Editor">
+            {itemsFor(["edit.toggle_word_wrap", "view.toggle_minimap"])}
+          </SubMenu>
+          <SubMenu label="Zoom">
+            {itemsFor(["view.zoom_in", "view.zoom_out", "view.zoom_reset"])}
+          </SubMenu>
+          <MenuSeparator />
+          {itemsFor([
+            "view.toggle_sidebar",
+            "view.toggle_panel",
+            "view.toggle_zen",
+          ])}
+          {ungroupedView.length > 0 && (
+            <>
+              <MenuSeparator />
+              {ungroupedView.map((cmd) => (
+                <MenuItem
+                  key={cmd.id}
+                  label={cmd.label}
+                  accel={cmd.accel}
+                  onClick={() => {
+                    closeMenu();
+                    void cmd.run();
+                  }}
+                />
+              ))}
+            </>
+          )}
+          <MenuSeparator />
+          <SubMenu label="Theme">
+            {themes.map((t) => (
+              <button
+                key={t.mode}
+                className="menu-item topbar-theme-item"
+                role="menuitem"
+                onClick={() => {
+                  closeMenu();
+                  setTheme(t.mode);
+                }}
+              >
+                <span className="menu-item-label topbar-theme-label">
+                  <Icon name={t.icon} size={12} />
+                  {t.label}
                 </span>
-              )}
-            </button>
-          ))}
+                {theme === t.mode && (
+                  <span className="menu-item-accel">
+                    <Icon name="check" size={11} />
+                  </span>
+                )}
+              </button>
+            ))}
+          </SubMenu>
+          <SubMenu label="Settings">
+            {itemsFor([
+              "view.settings",
+              "view.settings_ai_providers",
+              "view.settings_ai_privacy",
+            ])}
+          </SubMenu>
+          <MenuSeparator />
+          {itemsFor(["view.reload"])}
         </MenuButton>
 
         <MenuButton
@@ -299,8 +536,19 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
           open={menu === "terminal"}
           onToggle={() => toggleMenu("terminal")}
           onClose={closeMenu}
+          onHover={() => hoverMenu("terminal")}
         >
           {renderCategoryItems("Terminal")}
+        </MenuButton>
+
+        <MenuButton
+          label="AI"
+          open={menu === "ai"}
+          onToggle={() => toggleMenu("ai")}
+          onClose={closeMenu}
+          onHover={() => hoverMenu("ai")}
+        >
+          {renderCategoryItems("AI")}
         </MenuButton>
 
         <MenuButton
@@ -308,6 +556,7 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
           open={menu === "help"}
           onToggle={() => toggleMenu("help")}
           onClose={closeMenu}
+          onHover={() => hoverMenu("help")}
         >
           {renderCategoryItems("Help")}
         </MenuButton>
