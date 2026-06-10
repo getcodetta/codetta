@@ -21,14 +21,23 @@ import {
   lookupRemoteLink,
   setActiveSftp,
 } from "../sftpLinks";
+import { pushLinkedFile } from "../sftpPush";
 import {
   emptySftpProfile as emptyProfile,
+  findSftpProfile,
   loadSftpProfiles as loadProfiles,
   onSftpProfilesChanged,
   profileToConn,
   saveSftpProfiles as saveProfiles,
   type SftpProfile,
 } from "../sftpProfiles";
+import {
+  appendDeployLog,
+  clearDeployLog,
+  loadDeployLog,
+  subscribeDeployLog,
+  type DeployLogEntry,
+} from "../deployLog";
 import { basename, dirname } from "../pathUtils";
 import { Icon } from "./Icon";
 
@@ -314,12 +323,20 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       if (!localPath) return;
       // Byte-level transfer — the old string round-trip via
       // sftp_read_file failed on any non-UTF-8 file (images, zips).
-      await invoke<number>("sftp_download_to_disk", {
+      const bytes = await invoke<number>("sftp_download_to_disk", {
         args: {
           ...profileToConn(profile),
           remotePath,
           localPath,
         },
+      });
+      appendDeployLog(wsId, {
+        op: "download",
+        profileId: profile.id,
+        remotePath,
+        localPath,
+        bytes,
+        status: "ok",
       });
       // Remember the round-trip so Push-to-remote works on this file.
       rememberRemoteLink(wsId, localPath, {
@@ -395,8 +412,29 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
     const remotePath = joinRemote(parentPath, fileName);
     // Byte-level transfer — fs.readFile rejects binary local files, so
     // the old string hop couldn't upload images/fonts.
-    await invoke<number>("sftp_upload_from_disk", {
-      args: { ...profileToConn(profile), remotePath, localPath },
+    let bytes: number;
+    try {
+      bytes = await invoke<number>("sftp_upload_from_disk", {
+        args: { ...profileToConn(profile), remotePath, localPath },
+      });
+    } catch (e) {
+      appendDeployLog(wsId, {
+        op: "upload",
+        profileId: profile.id,
+        remotePath,
+        localPath,
+        status: "fail",
+        detail: errMsg(e),
+      });
+      throw e;
+    }
+    appendDeployLog(wsId, {
+      op: "upload",
+      profileId: profile.id,
+      remotePath,
+      localPath,
+      bytes,
+      status: "ok",
     });
     // Record the link so subsequent edits to this local file can push
     // back without re-asking for a target.
@@ -430,34 +468,26 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
     }
     toastInfo(`Pushing ${candidates.length} file${candidates.length === 1 ? "" : "s"}…`);
     let okCount = 0;
-    const failures: string[] = [];
     for (const c of candidates) {
-      try {
-        // Save first so the on-disk contents match what we push.
-        await useStore.getState().saveFile(wsId, c.path);
-        const contents = await fs.readFile(c.path);
-        await invoke("sftp_write_file", {
-          args: { ...profileToConn(profile), path: c.remotePath, contents },
-        });
-        rememberRemoteLink(wsId, c.path, {
-          profileId: profile.id,
-          remotePath: c.remotePath,
-          downloadedAt: Date.now(),
-        });
-        okCount++;
-      } catch (e) {
-        failures.push(
-          `${c.path.split(/[\\/]/).pop()}: ${errMsg(e)}`,
-        );
-      }
+      // Save first so the on-disk contents match what we push.
+      await useStore.getState().saveFile(wsId, c.path);
+      const link = lookupRemoteLink(wsId, c.path);
+      if (!link) continue;
+      const sent = await pushLinkedFile({
+        wsId,
+        conn: profileToConn(profile),
+        localPath: c.path,
+        link,
+        mode: "interactive",
+      });
+      if (sent) okCount++;
     }
-    if (failures.length === 0) {
+    if (okCount === candidates.length) {
       toastSuccess(`Pushed ${okCount} file${okCount === 1 ? "" : "s"}`);
     } else {
       toastError(
-        `Pushed ${okCount}/${candidates.length}; ${failures.length} failed (see console)`,
+        `Pushed ${okCount}/${candidates.length} — see the Deploy log below for details`,
       );
-      console.warn("Push-all failures:", failures);
     }
   };
 
@@ -476,32 +506,23 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       );
       if (!ok) return;
     }
-    try {
-      const remotePath = link?.remotePath ?? null;
-      if (!remotePath) {
-        toastError(
-          "This file isn't linked to a remote path yet. Right-click a remote folder → Upload current editor file here.",
-        );
-        return;
-      }
-      // Save first so we push what the user sees in the editor, not
-      // the last on-disk version (pushAllDirty already does this;
-      // saveFile no-ops when the buffer is clean).
-      await useStore.getState().saveFile(wsId, activeFilePath);
-      const contents = await fs.readFile(activeFilePath);
-      await invoke("sftp_write_file", {
-        args: { ...profileToConn(profile), path: remotePath, contents },
-      });
-      // Refresh link so downloadedAt stays current.
-      rememberRemoteLink(wsId, activeFilePath, {
-        profileId: profile.id,
-        remotePath,
-        downloadedAt: Date.now(),
-      });
-      toastSuccess(`Pushed → ${remotePath}`);
-    } catch (e) {
-      toastError(`Push failed: ${errMsg(e)}`);
+    if (!link) {
+      toastError(
+        "This file isn't linked to a remote path yet. Right-click a remote folder → Upload current editor file here.",
+      );
+      return;
     }
+    // Save first so we push what the user sees in the editor, not
+    // the last on-disk version (saveFile no-ops when clean).
+    await useStore.getState().saveFile(wsId, activeFilePath);
+    const sent = await pushLinkedFile({
+      wsId,
+      conn: profileToConn(profile),
+      localPath: activeFilePath,
+      link,
+      mode: "interactive",
+    });
+    if (sent) toastSuccess(`Pushed → ${link.remotePath}`);
   };
 
   // Upload the active editor file into a chosen remote folder, even
@@ -996,6 +1017,7 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
           onFolderMenu={openFolderMenu}
         />
       </div>
+      <DeployLogStrip wsId={wsId} profile={profile} />
       {ctxMenu && (
         <ContextMenu
           x={ctxMenu.x}
@@ -1003,6 +1025,117 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
           items={ctxMenu.items}
           onClose={() => setCtxMenu(null)}
         />
+      )}
+    </div>
+  );
+}
+
+interface DeployLogStripProps {
+  wsId: string;
+  profile: SftpProfile | null;
+}
+
+/** Collapsible record of recent pushes/uploads/downloads with
+ *  per-entry retry. Bulk-operation failures used to go to
+ *  console.warn, which desktop users never see. */
+function DeployLogStrip({ wsId, profile }: DeployLogStripProps) {
+  const [open, setOpen] = useState(false);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    return subscribeDeployLog((changed) => {
+      if (changed === wsId) setTick((n) => n + 1);
+    });
+  }, [wsId]);
+  const entries = loadDeployLog(wsId);
+  const failCount = entries.filter((e) => e.status === "fail").length;
+
+  const retry = async (entry: DeployLogEntry) => {
+    if (!entry.localPath) return;
+    const p =
+      profile && profile.id === entry.profileId
+        ? profile
+        : findSftpProfile(entry.profileId);
+    if (!p) {
+      toastError("The SFTP profile for this entry no longer exists.");
+      return;
+    }
+    const link = lookupRemoteLink(wsId, entry.localPath) ?? {
+      profileId: entry.profileId,
+      remotePath: entry.remotePath,
+      downloadedAt: 0,
+    };
+    const sent = await pushLinkedFile({
+      wsId,
+      conn: profileToConn(p),
+      localPath: entry.localPath,
+      link,
+      mode: "interactive",
+    });
+    if (sent) toastSuccess(`Pushed → ${entry.remotePath}`);
+  };
+
+  return (
+    <div className="deploy-log">
+      <button
+        className="deploy-log-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <Icon name={open ? "chevron-down" : "chevron-right"} size={11} />
+        <span>Deploy log</span>
+        {entries.length > 0 && (
+          <span className="deploy-log-count">{entries.length}</span>
+        )}
+        {failCount > 0 && (
+          <span className="deploy-log-failcount">{failCount} failed</span>
+        )}
+      </button>
+      {open && (
+        <div className="deploy-log-list">
+          {entries.length === 0 && (
+            <div className="deploy-log-empty">
+              No transfers yet. Pushes, uploads, and downloads will be
+              recorded here.
+            </div>
+          )}
+          {entries.slice(0, 50).map((e) => (
+            <div key={e.id} className={`deploy-log-row deploy-log-${e.status}`}>
+              <span className="deploy-log-status" aria-hidden="true">
+                {e.status === "ok" ? "✓" : e.status === "fail" ? "✗" : "⏭"}
+              </span>
+              <span
+                className="deploy-log-main"
+                title={`${e.op} ${e.remotePath}${e.detail ? `\n${e.detail}` : ""}`}
+              >
+                <span className="deploy-log-path">{e.remotePath}</span>
+                <span className="deploy-log-sub">
+                  {e.op} · {new Date(e.ts).toLocaleTimeString()}
+                  {typeof e.bytes === "number"
+                    ? ` · ${formatBytes(e.bytes)}`
+                    : ""}
+                  {e.detail ? ` · ${e.detail}` : ""}
+                </span>
+              </span>
+              {e.status !== "ok" && e.localPath && (
+                <button
+                  className="deploy-log-retry"
+                  onClick={() => void retry(e)}
+                  title={`Push ${e.localPath} again`}
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          ))}
+          {entries.length > 0 && (
+            <button
+              className="deploy-log-clear"
+              onClick={() => clearDeployLog(wsId)}
+            >
+              Clear log
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

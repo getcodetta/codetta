@@ -21,6 +21,7 @@ import {
   subscribeActiveSftp,
 } from "../sftpLinks";
 import { findSftpProfile, profileToConn } from "../sftpProfiles";
+import { pushLinkedFile } from "../sftpPush";
 import { REVEAL_IN_TREE_EVENT } from "../revealInTree";
 import { basename, dirname, joinPath } from "../pathUtils";
 import { dropRecentFile } from "../recentFiles";
@@ -569,20 +570,14 @@ export function FileTree({ wsId, root }: Props) {
                 if (useStore.getState().loaded[wsId]?.files[target.path]) {
                   await useStore.getState().saveFile(wsId, target.path);
                 }
-                // Byte-level upload handles binary linked files too
-                // (fs.readFile rejects anything with NUL bytes).
-                await invoke<number>("sftp_upload_from_disk", {
-                  args: {
-                    ...conn,
-                    remotePath: link.remotePath,
-                    localPath: target.path,
-                  },
+                const sent = await pushLinkedFile({
+                  wsId,
+                  conn,
+                  localPath: target.path,
+                  link,
+                  mode: "interactive",
                 });
-                rememberRemoteLink(wsId, target.path, {
-                  ...link,
-                  downloadedAt: Date.now(),
-                });
-                toastSuccess(`Pushed → ${link.remotePath}`);
+                if (sent) toastSuccess(`Pushed → ${link.remotePath}`);
               } catch (e) {
                 toastError(
                   `Push failed: ${errMsg(e)}`,

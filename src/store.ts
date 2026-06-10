@@ -3,14 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   getActiveSftp,
   lookupRemoteLink,
-  rememberRemoteLink,
 } from "./sftpLinks";
+import { pushLinkedFile } from "./sftpPush";
 import { clearEditorState } from "./editorState";
-import {
-  error as toastError,
-  errMsg,
-  success as toastSuccess,
-} from "./notify";
+import { success as toastSuccess } from "./notify";
 import {
   workspaces as wsApi,
   type WorkspaceMeta,
@@ -1619,29 +1615,24 @@ export const useStore = create<AppState>((set, get) => {
       });
       // Auto-push to remote if this file is linked AND has autoPush
       // enabled AND the matching SFTP session is currently connected.
-      // Fire-and-forget: never block the save on a network round-trip,
-      // and don't surface routine successes — only errors.
+      // Fire-and-forget: never block the save on a network round-trip.
+      // pushLinkedFile stale-checks the remote first — in "auto" mode a
+      // changed remote file SKIPS the push with a warning instead of
+      // silently clobbering a second writer's edits on every Ctrl+S —
+      // and records the outcome in the deploy log.
       const link = lookupRemoteLink(wsId, path);
       if (link && link.autoPush) {
         const active = getActiveSftp(wsId);
         if (active && active.profileId === link.profileId) {
-          void invoke("sftp_write_file", {
-            args: { ...active.conn, path: link.remotePath, contents: content },
-          })
-            .then(() => {
-              rememberRemoteLink(wsId, path, {
-                ...link,
-                downloadedAt: Date.now(),
-              });
-              toastSuccess(`↥ Auto-pushed → ${link.remotePath}`);
-            })
-            .catch((e) => {
-              toastError(
-                `Auto-push failed for ${path.split(/[\\/]/).pop()}: ${
-                  errMsg(e)
-                }`,
-              );
-            });
+          void pushLinkedFile({
+            wsId,
+            conn: active.conn,
+            localPath: path,
+            link,
+            mode: "auto",
+          }).then((sent) => {
+            if (sent) toastSuccess(`↥ Auto-pushed → ${link.remotePath}`);
+          });
         }
       }
     },

@@ -14,6 +14,10 @@ export interface RemoteLink {
   /** Wall-clock millis when the file was downloaded. Used for stale
    *  warnings if the remote file's mtime later differs. */
   downloadedAt: number;
+  /** Remote mtime (Unix seconds) observed right after our last push /
+   *  download. When present, the stale-push check compares server
+   *  clock to server clock instead of trusting our wall clock. */
+  remoteMtime?: number;
   /** When true, store.saveFile pushes this file to the remote on every
    *  save (via the active SFTP session — silently no-ops when no
    *  session is connected, so saves don't block on the network). */
