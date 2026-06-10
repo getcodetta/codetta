@@ -404,27 +404,12 @@ pub struct GitCommit {
     pub parents: String,
 }
 
-fn git_log_blocking(path: String, limit: Option<u32>) -> Result<Vec<GitCommit>, String> {
-    if !is_repo(&path) {
-        return Ok(vec![]);
-    }
-    let n = limit.unwrap_or(50).min(500);
-    // Use ASCII unit separator (\x1f) between fields and record separator
-    // (\x1e) between commits. Avoids the "what if a commit subject
-    // contains a tab" bug git's --format docs warn about.
-    let format = "%h\x1f%H\x1f%an\x1f%ae\x1f%ct\x1f%P\x1f%s\x1e";
-    let limit_arg = format!("-n{}", n);
-    let out = run_git(
-        &path,
-        &[
-            "log",
-            "--no-decorate",
-            "--no-color",
-            &limit_arg,
-            &format!("--format={}", format),
-        ],
-    )?;
+// Use ASCII unit separator (\x1f) between fields and record separator
+// (\x1e) between commits. Avoids the "what if a commit subject
+// contains a tab" bug git's --format docs warn about.
+const LOG_FORMAT: &str = "%h\x1f%H\x1f%an\x1f%ae\x1f%ct\x1f%P\x1f%s\x1e";
 
+fn parse_log_output(out: &str) -> Vec<GitCommit> {
     let mut commits = Vec::new();
     for raw in out.split('\x1e') {
         let trimmed = raw.trim_start_matches('\n').trim_end_matches('\n');
@@ -446,13 +431,69 @@ fn git_log_blocking(path: String, limit: Option<u32>) -> Result<Vec<GitCommit>, 
             subject: parts[6].to_string(),
         });
     }
+    commits
+}
 
-    Ok(commits)
+fn git_log_blocking(path: String, limit: Option<u32>) -> Result<Vec<GitCommit>, String> {
+    if !is_repo(&path) {
+        return Ok(vec![]);
+    }
+    let n = limit.unwrap_or(50).min(500);
+    let limit_arg = format!("-n{}", n);
+    let out = run_git(
+        &path,
+        &[
+            "log",
+            "--no-decorate",
+            "--no-color",
+            &limit_arg,
+            &format!("--format={}", LOG_FORMAT),
+        ],
+    )?;
+    Ok(parse_log_output(&out))
 }
 
 #[tauri::command]
 pub async fn git_log(path: String, limit: Option<u32>) -> Result<Vec<GitCommit>, String> {
     off_thread(move || git_log_blocking(path, limit)).await
+}
+
+fn git_file_log_blocking(
+    path: String,
+    file: String,
+    limit: Option<u32>,
+) -> Result<Vec<GitCommit>, String> {
+    if !is_repo(&path) {
+        return Ok(vec![]);
+    }
+    let n = limit.unwrap_or(50).min(500);
+    let limit_arg = format!("-n{}", n);
+    // --follow keeps history flowing across renames; without it the
+    // listing dead-ends at the most recent `git mv`.
+    let out = run_git(
+        &path,
+        &[
+            "log",
+            "--follow",
+            "--no-decorate",
+            "--no-color",
+            &limit_arg,
+            &format!("--format={}", LOG_FORMAT),
+            "--",
+            &file,
+        ],
+    )?;
+    Ok(parse_log_output(&out))
+}
+
+/// Commit history for a single file (pathspec-limited git log).
+#[tauri::command]
+pub async fn git_file_log(
+    path: String,
+    file: String,
+    limit: Option<u32>,
+) -> Result<Vec<GitCommit>, String> {
+    off_thread(move || git_file_log_blocking(path, file, limit)).await
 }
 
 #[tauri::command]

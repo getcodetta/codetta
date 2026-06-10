@@ -287,6 +287,10 @@ export const git = {
     invoke<string>("git_delete_branch", { path, name, force }),
   log: (path: string, limit = 50) =>
     invoke<GitCommit[]>("git_log", { path, limit }),
+  /** Commits touching one file (git log --follow -- <file>). `file` is
+   *  repo-relative with forward slashes. */
+  fileLog: (path: string, file: string, limit = 50) =>
+    invoke<GitCommit[]>("git_file_log", { path, file, limit }),
   showCommit: (path: string, refspec: string) =>
     invoke<string>("git_show_commit", { path, refspec }),
   stashList: (path: string) =>
