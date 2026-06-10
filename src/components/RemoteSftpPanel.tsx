@@ -21,7 +21,8 @@ import {
   lookupRemoteLink,
   setActiveSftp,
 } from "../sftpLinks";
-import { pushLinkedFile } from "../sftpPush";
+import { pushLinkedFile, suppressNextAutoPush } from "../sftpPush";
+import type { RemoteLink } from "../sftpLinks";
 import {
   emptySftpProfile as emptyProfile,
   findSftpProfile,
@@ -346,6 +347,13 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       });
       toastSuccess(`Downloaded ${suggestedName}`);
     } catch (e) {
+      appendDeployLog(wsId, {
+        op: "download",
+        profileId: profile.id,
+        remotePath,
+        status: "fail",
+        detail: errMsg(e),
+      });
       toastError(
         `Download failed: ${errMsg(e)}`,
       );
@@ -455,12 +463,12 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
     if (!profile) return;
     const ws = useStore.getState().loaded[wsId];
     if (!ws) return;
-    const candidates: { path: string; remotePath: string }[] = [];
+    const candidates: { path: string; link: RemoteLink }[] = [];
     for (const [path, f] of Object.entries(ws.files)) {
       const link = lookupRemoteLink(wsId, path);
       if (!link || link.profileId !== profile.id) continue;
       if (f.contents === f.original) continue;
-      candidates.push({ path, remotePath: link.remotePath });
+      candidates.push({ path, link });
     }
     if (candidates.length === 0) {
       toastInfo("No dirty linked files to push.");
@@ -469,15 +477,18 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
     toastInfo(`Pushing ${candidates.length} file${candidates.length === 1 ? "" : "s"}…`);
     let okCount = 0;
     for (const c of candidates) {
-      // Save first so the on-disk contents match what we push.
-      await useStore.getState().saveFile(wsId, c.path);
-      const link = lookupRemoteLink(wsId, c.path);
-      if (!link) continue;
+      // This explicit push owns the save — stand the auto-push down so
+      // autoPush files aren't uploaded twice per click.
+      if (c.link.autoPush) suppressNextAutoPush(c.path);
+      // Save first so the on-disk contents match what we push. A failed
+      // save must abort THIS file — pushing would deploy stale content
+      // under a success toast.
+      if (!(await useStore.getState().saveFile(wsId, c.path))) continue;
       const sent = await pushLinkedFile({
         wsId,
         conn: profileToConn(profile),
         localPath: c.path,
-        link,
+        link: c.link,
         mode: "interactive",
       });
       if (sent) okCount++;
@@ -512,9 +523,16 @@ export function RemoteSftpPanel({ wsId, root }: Props) {
       );
       return;
     }
-    // Save first so we push what the user sees in the editor, not
-    // the last on-disk version (saveFile no-ops when clean).
-    await useStore.getState().saveFile(wsId, activeFilePath);
+    // This explicit push owns the save — keep the auto-push from
+    // double-uploading the same change.
+    const buf = useStore.getState().loaded[wsId]?.files[activeFilePath];
+    if (link.autoPush && buf && buf.contents !== buf.original) {
+      suppressNextAutoPush(activeFilePath);
+    }
+    // Save first so we push what the user sees in the editor, not the
+    // last on-disk version. Abort on save failure — pushing would
+    // deploy stale content under a success toast.
+    if (!(await useStore.getState().saveFile(wsId, activeFilePath))) return;
     const sent = await pushLinkedFile({
       wsId,
       conn: profileToConn(profile),

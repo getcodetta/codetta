@@ -317,6 +317,11 @@ export function SettingsModal() {
   // Deep-link target captured from openSettings(section). Consumed by
   // the TOC discovery effect below once the section list exists.
   const pendingSlugRef = useRef<string | null>(null);
+  // Bumped on every openSettings() call so the discovery effect re-runs
+  // (and consumes pendingSlugRef) even when the modal is ALREADY open —
+  // setOpen(true)/setView("form") are no-ops then and wouldn't retrigger
+  // the effect, leaving a deep-link from the palette unconsumed.
+  const [openNonce, setOpenNonce] = useState(0);
   const modalRef = useRef<HTMLDivElement | null>(null);
   useModalFocus(modalRef, open);
 
@@ -325,9 +330,7 @@ export function SettingsModal() {
       pendingSlugRef.current = section ?? null;
       setOpen(true);
       setView("form");
-      // Re-run discovery even if already open so a deep-link from chat
-      // while Settings is up still navigates.
-      if (section) setActiveSlug("");
+      setOpenNonce((n) => n + 1);
     });
   }, []);
 
@@ -368,7 +371,7 @@ export function SettingsModal() {
       });
     }, 0);
     return () => window.clearTimeout(t);
-  }, [open, view]);
+  }, [open, view, openNonce]);
 
   const jumpTo = (slug: string) => {
     setActiveSlug(slug);

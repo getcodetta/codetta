@@ -19,7 +19,10 @@ import {
 } from "../bookmarks";
 import { Icon } from "./Icon";
 import { basename, relPath } from "../pathUtils";
-import { prompt as dialogPrompt } from "../dialog";
+import {
+  confirm as dialogConfirm,
+  prompt as dialogPrompt,
+} from "../dialog";
 import { info as toastInfo } from "../notify";
 
 interface Props {
@@ -57,11 +60,19 @@ export function BookmarksPanel({ wsId, root }: Props) {
     void useStore.getState().openFile(wsId, b.path);
   };
 
-  // No confirm: removing a bookmark is one click to reverse (re-pin
-  // from the tree or tab star) and the sibling line-bookmarks panel
-  // already removes instantly — a modal here just trained users to
-  // click through confirms.
-  const onRemove = (b: Bookmark) => {
+  // No confirm for plain bookmarks: removal is one click to reverse
+  // (re-pin from the tree or tab star) and the sibling line-bookmarks
+  // panel already removes instantly. Bookmarks WITH a user-written note
+  // still confirm — the note is destroyed with the bookmark and re-
+  // pinning doesn't bring it back.
+  const onRemove = async (b: Bookmark) => {
+    if (b.note?.trim()) {
+      const ok = await dialogConfirm(
+        `Remove ${basename(b.path)} from bookmarks?\n\nIts note will be deleted too:\n"${b.note.slice(0, 200)}"`,
+        { title: "Remove bookmark", okLabel: "Remove", danger: true },
+      );
+      if (!ok) return;
+    }
     removeBookmark(wsId, b.path);
     toastInfo(`Removed bookmark ${basename(b.path)}`);
   };

@@ -183,7 +183,10 @@ export function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
       }
     }
     // Surface lcp.* keys we did NOT apply — a typo'd key in a pasted
-    // backup used to vanish silently behind "Applied N settings".
+    // backup used to vanish silently behind "Applied N settings". The
+    // applied keys still applied, so fall through to the reload offer
+    // either way (returning early left them inert in mounted
+    // components, which read as "the apply failed entirely").
     const unknown = Object.keys(next).filter(
       (k) =>
         k.startsWith("lcp.") &&
@@ -196,9 +199,9 @@ export function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
           unknown.length === 1 ? "" : "s"
         }: ${unknown.join(", ")} (not in the editable allowlist — check for typos)`,
       });
-      return;
+    } else {
+      setStatus({ kind: "ok", count });
     }
-    setStatus({ kind: "ok", count });
     // Offer to reload so every component picks up the new values.
     // Routes through confirmDiscardUnsaved so any open buffer edits
     // get the same "are you sure?" prompt as Ctrl+R.

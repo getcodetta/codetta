@@ -532,6 +532,9 @@ function MainApp() {
       for (const c of commands) {
         if (!c.accel) continue;
         if (handledAbove.has(c.id)) continue;
+        // Keys the shell/input owns (Ctrl+W = delete-word in readline)
+        // must reach it, not close the user's tab.
+        if (c.skipWhenTyping && isChordExemptTarget(e)) continue;
         if (accelMatches(c.accel, e)) {
           e.preventDefault();
           runCommand(c.id);

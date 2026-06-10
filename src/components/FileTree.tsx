@@ -21,7 +21,8 @@ import {
   subscribeActiveSftp,
 } from "../sftpLinks";
 import { findSftpProfile, profileToConn } from "../sftpProfiles";
-import { pushLinkedFile } from "../sftpPush";
+import { pushLinkedFile, suppressNextAutoPush } from "../sftpPush";
+import { appendDeployLog } from "../deployLog";
 import { REVEAL_IN_TREE_EVENT } from "../revealInTree";
 import { basename, dirname, joinPath } from "../pathUtils";
 import { dropRecentFile } from "../recentFiles";
@@ -566,9 +567,20 @@ export function FileTree({ wsId, root }: Props) {
                   return;
                 }
                 // Flush any open dirty buffer so we push what the user
-                // sees, not the last on-disk save.
-                if (useStore.getState().loaded[wsId]?.files[target.path]) {
-                  await useStore.getState().saveFile(wsId, target.path);
+                // sees, not the last on-disk save. Abort on a failed
+                // save (deploying stale content under a success toast),
+                // and stand the auto-push down so autoPush files aren't
+                // uploaded twice.
+                const buf = useStore.getState().loaded[wsId]?.files[
+                  target.path
+                ];
+                if (buf && buf.contents !== buf.original) {
+                  if (link.autoPush) suppressNextAutoPush(target.path);
+                  if (
+                    !(await useStore.getState().saveFile(wsId, target.path))
+                  ) {
+                    return;
+                  }
                 }
                 const sent = await pushLinkedFile({
                   wsId,
@@ -598,12 +610,33 @@ export function FileTree({ wsId, root }: Props) {
               );
               if (!remotePath) return;
               try {
-                await invoke<number>("sftp_upload_from_disk", {
-                  args: {
-                    ...active.conn,
+                let bytes: number;
+                try {
+                  bytes = await invoke<number>("sftp_upload_from_disk", {
+                    args: {
+                      ...active.conn,
+                      remotePath,
+                      localPath: target.path,
+                    },
+                  });
+                } catch (e) {
+                  appendDeployLog(wsId, {
+                    op: "upload",
+                    profileId: active.profileId,
                     remotePath,
                     localPath: target.path,
-                  },
+                    status: "fail",
+                    detail: errMsg(e),
+                  });
+                  throw e;
+                }
+                appendDeployLog(wsId, {
+                  op: "upload",
+                  profileId: active.profileId,
+                  remotePath,
+                  localPath: target.path,
+                  bytes,
+                  status: "ok",
                 });
                 rememberRemoteLink(wsId, target.path, {
                   profileId: active.profileId,

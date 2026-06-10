@@ -4,7 +4,7 @@ import {
   getActiveSftp,
   lookupRemoteLink,
 } from "./sftpLinks";
-import { pushLinkedFile } from "./sftpPush";
+import { consumeAutoPushSuppression, pushLinkedFile } from "./sftpPush";
 import { clearEditorState } from "./editorState";
 import {
   error as toastError,
@@ -543,7 +543,11 @@ interface AppState {
   ): void;
   setSplitRatio(wsId: string, splitId: PaneId, ratio: number): void;
   updateFileContents(wsId: string, path: string, contents: string): void;
-  saveFile(wsId: string, path: string): Promise<void>;
+  /** Resolves true when the buffer hit the disk (or was already
+   *  clean / not open); false when the write failed — callers that
+   *  deploy the on-disk file afterwards must abort on false or they'd
+   *  ship stale content with a success toast. */
+  saveFile(wsId: string, path: string): Promise<boolean>;
   saveAllFiles(wsId: string): Promise<void>;
 
   toggleDir(wsId: string, path: string): void;
@@ -1587,7 +1591,7 @@ export const useStore = create<AppState>((set, get) => {
     saveFile: async (wsId, path) => {
       const ws = get().loaded[wsId];
       const f = ws?.files[path];
-      if (!ws || !f || f.contents === f.original) return;
+      if (!ws || !f || f.contents === f.original) return true;
       const settings = getEditorSettings();
       let content = f.contents;
       if (settings.trimTrailingWhitespace) {
@@ -1612,7 +1616,7 @@ export const useStore = create<AppState>((set, get) => {
         // tab dot keeps signalling unsaved work; without this toast the
         // rejection was swallowed and Ctrl+S looked like it worked.
         toastError(`Save failed for ${basename(path)}: ${errMsg(e)}`);
-        return;
+        return false;
       }
       set((s) => {
         const w = s.loaded[wsId];
@@ -1638,7 +1642,7 @@ export const useStore = create<AppState>((set, get) => {
       // silently clobbering a second writer's edits on every Ctrl+S —
       // and records the outcome in the deploy log.
       const link = lookupRemoteLink(wsId, path);
-      if (link && link.autoPush) {
+      if (link && link.autoPush && !consumeAutoPushSuppression(path)) {
         const active = getActiveSftp(wsId);
         if (active && active.profileId === link.profileId) {
           void pushLinkedFile({
@@ -1652,6 +1656,7 @@ export const useStore = create<AppState>((set, get) => {
           });
         }
       }
+      return true;
     },
 
     saveAllFiles: async (wsId) => {

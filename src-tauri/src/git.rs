@@ -334,8 +334,15 @@ pub async fn git_resolve_conflict(
             "theirs" => "--theirs",
             _ => return Err("side must be 'ours' or 'theirs'".to_string()),
         };
-        run_git(&path, &["checkout", flag, "--", &file])?;
-        run_git(&path, &["add", "--", &file])
+        match run_git(&path, &["checkout", flag, "--", &file]) {
+            Ok(_) => run_git(&path, &["add", "--", &file]),
+            Err(e) if e.contains("does not have") => {
+                // Delete/modify conflicts (DU/UD/AU/DD): the chosen side
+                // has no version — accepting it means removing the file.
+                run_git(&path, &["rm", "-f", "--", &file])
+            }
+            Err(e) => Err(e),
+        }
     })
     .await
 }
@@ -349,7 +356,10 @@ pub async fn git_clean(path: String, files: Vec<String>) -> Result<String, Strin
         if files.is_empty() {
             return Ok(String::new());
         }
-        let mut args: Vec<&str> = vec!["clean", "-f", "--"];
+        // -d: porcelain reports an untracked directory as a single
+        // "?? dir/" entry; without -d `git clean -f` skips directories
+        // but still exits 0 — a false "Deleted" success.
+        let mut args: Vec<&str> = vec!["clean", "-fd", "--"];
         for f in &files {
             args.push(f.as_str());
         }

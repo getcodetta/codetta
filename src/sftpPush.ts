@@ -27,12 +27,35 @@ import {
   errMsg,
   warning as toastWarning,
 } from "./notify";
+import { basename } from "./pathUtils";
 import {
+  normalizeLocalPath,
   rememberRemoteLink,
   type RemoteLink,
 } from "./sftpLinks";
 import type { SftpConnectArgs } from "./sftpProfiles";
 import { appendDeployLog } from "./deployLog";
+
+// Explicit push flows save the buffer first; for autoPush files that
+// save fire-and-forgets its OWN push from store.saveFile, racing the
+// explicit one (double upload + a bogus "remote changed" dialog when
+// the auto-push lands between the explicit push's stat and upload).
+// Explicit flows register the path here; the store's auto-push consumes
+// the entry and stands down for that one save.
+const autoPushSuppressed = new Set<string>();
+
+export function suppressNextAutoPush(localPath: string) {
+  autoPushSuppressed.add(normalizeLocalPath(localPath));
+}
+
+export function consumeAutoPushSuppression(localPath: string): boolean {
+  const k = normalizeLocalPath(localPath);
+  if (autoPushSuppressed.has(k)) {
+    autoPushSuppressed.delete(k);
+    return true;
+  }
+  return false;
+}
 
 interface SftpStat {
   size: number;
@@ -59,24 +82,32 @@ export async function pushLinkedFile(
   opts: PushLinkedFileOpts,
 ): Promise<boolean> {
   const { wsId, conn, localPath, link, mode } = opts;
-  const fileName = localPath.split(/[\\/]/).pop() ?? localPath;
+  const fileName = basename(localPath);
 
-  // 1. Stale check. Stat failures (file doesn't exist yet, transient
-  // error) don't block the push — the upload itself will surface real
-  // connection problems.
+  // 1. Stale check — ONLY when we hold an authoritative server-clock
+  // mtime from a previous push (link.remoteMtime). Comparing the
+  // server's mtime against our local wall clock (downloadedAt) produced
+  // false "remote changed" warnings on every host whose clock runs
+  // ahead — and in auto mode a false positive permanently disabled
+  // auto-push for the file. First push after download is unguarded
+  // (same as the old behavior); every push after that is exact.
+  // Stat failures (file doesn't exist yet, transient error) don't
+  // block the push — the upload itself surfaces real problems.
   let remoteStat: SftpStat | null = null;
-  try {
-    remoteStat = await invoke<SftpStat>("sftp_stat", {
-      args: { ...conn, path: link.remotePath },
-    });
-  } catch {
-    remoteStat = null;
+  if (link.remoteMtime != null) {
+    try {
+      remoteStat = await invoke<SftpStat>("sftp_stat", {
+        args: { ...conn, path: link.remotePath },
+      });
+    } catch {
+      remoteStat = null;
+    }
   }
-  // Prefer the exact post-push mtime when we have it (link.remoteMtime,
-  // seconds); fall back to the wall-clock download time (millis).
-  const knownMtimeS =
-    link.remoteMtime ?? Math.floor(link.downloadedAt / 1000);
-  if (remoteStat && remoteStat.mtime > knownMtimeS + MTIME_SKEW_S) {
+  if (
+    remoteStat &&
+    link.remoteMtime != null &&
+    remoteStat.mtime > link.remoteMtime + MTIME_SKEW_S
+  ) {
     const when = new Date(remoteStat.mtime * 1000).toLocaleString();
     if (mode === "auto") {
       toastWarning(

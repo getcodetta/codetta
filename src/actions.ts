@@ -131,6 +131,11 @@ export interface CommandSpec {
   label: string;
   category: "File" | "View" | "Terminal" | "AI" | "Help" | "Workspace" | "Edit";
   accel?: string;
+  /** Don't dispatch this accel while the user is typing in a terminal
+   *  or plain input — for keys shells/inputs own (Ctrl+W is
+   *  delete-previous-word in every readline; Ctrl+PageUp/Down are tmux
+   *  bindings). The command stays runnable from the palette/menu. */
+  skipWhenTyping?: boolean;
   run: () => void | Promise<void>;
 }
 
@@ -637,6 +642,7 @@ export const commands: CommandSpec[] = [
     label: "Close Tab",
     category: "View",
     accel: "Ctrl+W",
+    skipWhenTyping: true,
     run: () => {
       const at = activeTabsPane();
       if (!at?.pane.active) return;
@@ -648,6 +654,7 @@ export const commands: CommandSpec[] = [
     label: "Next Tab",
     category: "View",
     accel: "Ctrl+PageDown",
+    skipWhenTyping: true,
     run: () => cycleActiveTab(1),
   },
   {
@@ -655,6 +662,7 @@ export const commands: CommandSpec[] = [
     label: "Previous Tab",
     category: "View",
     accel: "Ctrl+PageUp",
+    skipWhenTyping: true,
     run: () => cycleActiveTab(-1),
   },
   {

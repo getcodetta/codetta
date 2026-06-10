@@ -225,7 +225,11 @@ export async function executeTool(
           ? Math.min(1000, Math.max(1, args.max))
           : 200;
       const files = await search.listFiles(ctx.root, max);
-      return files.join("\n");
+      // Hide excluded paths from the listing too — filenames under
+      // secrets/ or .ssh/ are themselves sensitive.
+      return files
+        .filter((p) => !matchExclusion(absPathOf(p, ctx.root)))
+        .join("\n");
     }
     if (name === "read_file") {
       const rel = String(args.path ?? "");

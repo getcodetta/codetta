@@ -775,9 +775,10 @@ export function TerminalCore({
               label: "Paste",
               onClick: () => {
                 void navigator.clipboard.readText().then((t) => {
-                  if (t && ptyIdRef.current) {
-                    void pty.write(ptyIdRef.current, t);
-                  }
+                  // term.paste(), not pty.write(): xterm wraps the text
+                  // in bracketed-paste escapes and converts \n → \r, so
+                  // multi-line pastes don't execute line-by-line.
+                  if (t) termRef.current?.paste(t);
                 });
               },
             },
