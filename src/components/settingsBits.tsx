@@ -85,6 +85,75 @@ export function Row({
   );
 }
 
+/**
+ * Number input that doesn't clamp on every keystroke. The old inline
+ * pattern made common values untypeable: font size "10" first clamped
+ * "1" up to 8, then the appended 0 made 80 → clamped to 32.
+ *
+ * Behavior: values already inside [min,max] commit live (so the
+ * spinner arrows still apply instantly); partial/out-of-range input is
+ * held as a draft and committed-with-clamp on blur or Enter; empty or
+ * non-numeric input reverts to the last committed value on blur.
+ */
+export function NumberRow({
+  label,
+  value,
+  min,
+  max,
+  step,
+  disabled,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  disabled?: boolean;
+  onCommit: (v: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+  const commit = () => {
+    const n = Number(draft);
+    if (draft.trim() === "" || !Number.isFinite(n)) {
+      setDraft(String(value));
+      return;
+    }
+    const clamped = Math.max(min, Math.min(max, Math.round(n)));
+    onCommit(clamped);
+    setDraft(String(clamped));
+  };
+  return (
+    <div className="settings-row">
+      <span className="settings-row-label">{label}</span>
+      <input
+        type="number"
+        className="settings-num"
+        min={min}
+        max={max}
+        step={step}
+        value={draft}
+        disabled={disabled}
+        onChange={(e) => {
+          const next = e.target.value;
+          setDraft(next);
+          const n = Number(next);
+          if (next.trim() !== "" && Number.isFinite(n) && n >= min && n <= max) {
+            onCommit(Math.round(n));
+          }
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+        }}
+      />
+    </div>
+  );
+}
+
 export function ToolPermissionRow({
   label,
   hint,

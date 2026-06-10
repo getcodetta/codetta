@@ -24,6 +24,7 @@ import { SettingsJsonEditor } from "./settingsJsonEditor";
 import {
   ActiveSectionContext,
   ApiKeyRow,
+  NumberRow,
   Row,
   Section,
   Toggle,
@@ -462,40 +463,20 @@ export function SettingsModal() {
           </Section>
 
           <Section title="Editor">
-            <Row label="Font size">
-              <input
-                type="number"
-                min={8}
-                max={32}
-                value={settings.fontSize}
-                onChange={(e) =>
-                  setEditorSettings({
-                    fontSize: Math.max(
-                      8,
-                      Math.min(32, Number(e.target.value) || 13),
-                    ),
-                  })
-                }
-                className="settings-num"
-              />
-            </Row>
-            <Row label="Tab size">
-              <input
-                type="number"
-                min={1}
-                max={8}
-                value={settings.tabSize}
-                onChange={(e) =>
-                  setEditorSettings({
-                    tabSize: Math.max(
-                      1,
-                      Math.min(8, Number(e.target.value) || 2),
-                    ),
-                  })
-                }
-                className="settings-num"
-              />
-            </Row>
+            <NumberRow
+              label="Font size"
+              value={settings.fontSize}
+              min={8}
+              max={32}
+              onCommit={(v) => setEditorSettings({ fontSize: v })}
+            />
+            <NumberRow
+              label="Tab size"
+              value={settings.tabSize}
+              min={1}
+              max={8}
+              onCommit={(v) => setEditorSettings({ tabSize: v })}
+            />
             <Toggle
               label="Word wrap"
               value={settings.wordWrap === "on"}
@@ -596,27 +577,16 @@ export function SettingsModal() {
                 setFootprintSettings({ idleBufferUnloadEnabled: v })
               }
             />
-            <Row label="Idle minutes (file buffer)">
-              <input
-                type="number"
-                min={IDLE_BUFFER_MIN}
-                max={IDLE_BUFFER_MAX}
-                value={footprint.idleBufferUnloadMinutes}
-                onChange={(e) =>
-                  setFootprintSettings({
-                    idleBufferUnloadMinutes: Math.max(
-                      IDLE_BUFFER_MIN,
-                      Math.min(
-                        IDLE_BUFFER_MAX,
-                        Number(e.target.value) || 30,
-                      ),
-                    ),
-                  })
-                }
-                className="settings-num"
-                disabled={!footprint.idleBufferUnloadEnabled}
-              />
-            </Row>
+            <NumberRow
+              label="Idle minutes (file buffer)"
+              value={footprint.idleBufferUnloadMinutes}
+              min={IDLE_BUFFER_MIN}
+              max={IDLE_BUFFER_MAX}
+              disabled={!footprint.idleBufferUnloadEnabled}
+              onCommit={(v) =>
+                setFootprintSettings({ idleBufferUnloadMinutes: v })
+              }
+            />
             <Toggle
               label="Close idle terminals automatically"
               value={footprint.idleTerminalCloseEnabled}
@@ -624,27 +594,16 @@ export function SettingsModal() {
                 setFootprintSettings({ idleTerminalCloseEnabled: v })
               }
             />
-            <Row label="Idle minutes (terminal)">
-              <input
-                type="number"
-                min={IDLE_TERMINAL_MIN}
-                max={IDLE_TERMINAL_MAX}
-                value={footprint.idleTerminalCloseMinutes}
-                onChange={(e) =>
-                  setFootprintSettings({
-                    idleTerminalCloseMinutes: Math.max(
-                      IDLE_TERMINAL_MIN,
-                      Math.min(
-                        IDLE_TERMINAL_MAX,
-                        Number(e.target.value) || 60,
-                      ),
-                    ),
-                  })
-                }
-                className="settings-num"
-                disabled={!footprint.idleTerminalCloseEnabled}
-              />
-            </Row>
+            <NumberRow
+              label="Idle minutes (terminal)"
+              value={footprint.idleTerminalCloseMinutes}
+              min={IDLE_TERMINAL_MIN}
+              max={IDLE_TERMINAL_MAX}
+              disabled={!footprint.idleTerminalCloseEnabled}
+              onCommit={(v) =>
+                setFootprintSettings({ idleTerminalCloseMinutes: v })
+              }
+            />
             <div className="settings-row settings-row-note">
               Trade-off: a tab pointing at a dropped buffer triggers a
               fresh disk read on click. Worth it for memory wins on
@@ -725,25 +684,15 @@ export function SettingsModal() {
               value={settings.autoSave}
               onChange={(v) => setEditorSettings({ autoSave: v })}
             />
-            <Row label="Auto-save delay (ms)">
-              <input
-                type="number"
-                min={100}
-                max={10000}
-                step={100}
-                value={settings.autoSaveDelayMs}
-                onChange={(e) =>
-                  setEditorSettings({
-                    autoSaveDelayMs: Math.max(
-                      100,
-                      Math.min(10000, Number(e.target.value) || 1000),
-                    ),
-                  })
-                }
-                className="settings-num"
-                disabled={!settings.autoSave}
-              />
-            </Row>
+            <NumberRow
+              label="Auto-save delay (ms)"
+              value={settings.autoSaveDelayMs}
+              min={100}
+              max={10000}
+              step={100}
+              disabled={!settings.autoSave}
+              onCommit={(v) => setEditorSettings({ autoSaveDelayMs: v })}
+            />
           </Section>
           </ActiveSectionContext.Provider>
           </div>
