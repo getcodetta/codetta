@@ -50,6 +50,29 @@ function runEditorAction(actionId: string) {
 
 const s = () => useStore.getState();
 
+/** The tabs pane that currently owns keyboard focus (activePaneId),
+ *  searched in both the editor area and the bottom panel. */
+function activeTabsPane() {
+  const wsId = s().activeId;
+  if (!wsId) return null;
+  const ws = s().loaded[wsId];
+  const id = ws?.layout.activePaneId;
+  if (!ws || !id) return null;
+  const pane =
+    findPaneById(ws.layout.editorRoot, id) ??
+    (ws.layout.bottomRoot ? findPaneById(ws.layout.bottomRoot, id) : null);
+  return pane && pane.kind === "tabs" ? { wsId, pane } : null;
+}
+
+function cycleActiveTab(dir: 1 | -1) {
+  const at = activeTabsPane();
+  if (!at || at.pane.tabs.length < 2) return;
+  const len = at.pane.tabs.length;
+  const cur = at.pane.active ? at.pane.tabs.indexOf(at.pane.active) : 0;
+  const next = at.pane.tabs[(cur + dir + len) % len];
+  s().setActiveTab(at.wsId, at.pane.id, next);
+}
+
 /**
  * Scan every loaded workspace for files with unsaved buffer edits and,
  * if any exist, surface a danger-style confirm naming a sample of them.
@@ -610,6 +633,31 @@ export const commands: CommandSpec[] = [
     run: () => toggleMinimap(),
   },
   {
+    id: "view.close_tab",
+    label: "Close Tab",
+    category: "View",
+    accel: "Ctrl+W",
+    run: () => {
+      const at = activeTabsPane();
+      if (!at?.pane.active) return;
+      void s().closeTab(at.wsId, at.pane.active);
+    },
+  },
+  {
+    id: "view.next_tab",
+    label: "Next Tab",
+    category: "View",
+    accel: "Ctrl+PageDown",
+    run: () => cycleActiveTab(1),
+  },
+  {
+    id: "view.prev_tab",
+    label: "Previous Tab",
+    category: "View",
+    accel: "Ctrl+PageUp",
+    run: () => cycleActiveTab(-1),
+  },
+  {
     id: "view.settings",
     label: "Open Settings…",
     category: "View",
@@ -738,10 +786,30 @@ export const commands: CommandSpec[] = [
     },
   },
   {
+    id: "terminal.toggle",
+    label: "Toggle Terminal Panel",
+    category: "Terminal",
+    // Ctrl+` matches the universal convention: show/hide the terminal
+    // panel. It used to spawn a brand-new PTY on every press, so
+    // muscle-memory users accumulated a pile of shells.
+    accel: "Ctrl+`",
+    run: () => {
+      const wsId = s().activeId;
+      if (!wsId) return;
+      const ws = s().loaded[wsId];
+      if (!ws) return;
+      if (ws.layout.bottomVisible && ws.layout.bottomRoot) {
+        s().setBottomVisible(wsId, false);
+      } else {
+        s().setBottomVisible(wsId, true);
+        if (!ws.layout.bottomRoot) s().addTerminal(wsId, "bottom");
+      }
+    },
+  },
+  {
     id: "terminal.new_bottom",
     label: "New Terminal",
     category: "Terminal",
-    accel: "Ctrl+`",
     run: () => {
       const wsId = s().activeId;
       if (wsId) s().addTerminal(wsId, "bottom");

@@ -6,7 +6,11 @@ import {
 } from "./sftpLinks";
 import { pushLinkedFile } from "./sftpPush";
 import { clearEditorState } from "./editorState";
-import { success as toastSuccess } from "./notify";
+import {
+  error as toastError,
+  errMsg,
+  success as toastSuccess,
+} from "./notify";
 import {
   workspaces as wsApi,
   type WorkspaceMeta,
@@ -1228,7 +1232,10 @@ export const useStore = create<AppState>((set, get) => {
       try {
         contents = await fsApi.readFile(path);
       } catch (e) {
-        console.error("openFile failed", e);
+        // The backend's messages are user-worthy ("File is too large…",
+        // "binary file"); a console.error meant double-clicking a PNG
+        // or a 100 MB log just silently did nothing.
+        toastError(`Can't open ${basename(path)}: ${errMsg(e)}`);
         return;
       }
       updateWs(wsId, (w) => {
@@ -1584,9 +1591,11 @@ export const useStore = create<AppState>((set, get) => {
       const settings = getEditorSettings();
       let content = f.contents;
       if (settings.trimTrailingWhitespace) {
+        // Keep an optional \r so CRLF files get trimmed too — the old
+        // `[ \t]+$` never matched lines ending "  \r".
         content = content
           .split("\n")
-          .map((line) => line.replace(/[ \t]+$/, ""))
+          .map((line) => line.replace(/[ \t]+(\r?)$/, "$1"))
           .join("\n");
       }
       if (
@@ -1596,7 +1605,15 @@ export const useStore = create<AppState>((set, get) => {
       ) {
         content += "\n";
       }
-      await fsApi.writeFile(path, content);
+      try {
+        await fsApi.writeFile(path, content);
+      } catch (e) {
+        // Locked / read-only / disk-full. Buffer stays dirty so the
+        // tab dot keeps signalling unsaved work; without this toast the
+        // rejection was swallowed and Ctrl+S looked like it worked.
+        toastError(`Save failed for ${basename(path)}: ${errMsg(e)}`);
+        return;
+      }
       set((s) => {
         const w = s.loaded[wsId];
         if (!w || !w.files[path]) return s;
@@ -2138,7 +2155,11 @@ function runIdleSweep(): void {
     }
     if (settings.idleTerminalCloseEnabled) {
       const termTouches = terminalLastTouched.get(wsId);
-      for (const termId of Object.keys(ws.terminals)) {
+      for (const [termId, term] of Object.entries(ws.terminals)) {
+        // Popped-out terminals live in another window — their activity
+        // never reaches this window's touch map, so without this guard
+        // the sweeper kills a shell the user is actively typing in.
+        if (term.popped) continue;
         let last = termTouches?.get(termId);
         if (last === undefined) {
           touchInMap(terminalLastTouched, wsId, termId);

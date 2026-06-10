@@ -276,7 +276,7 @@ export function StatusBar({ onOpenPalette }: Props) {
         </button>
         <button
           className="sb-btn"
-          title="New Terminal (Ctrl+`)"
+          title="New Terminal"
           aria-label="New terminal"
           disabled={!activeId}
           onClick={() => runCommand("terminal.new_bottom")}

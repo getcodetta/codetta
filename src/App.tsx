@@ -56,6 +56,21 @@ const IS_POPOUT = (() => {
 // recent-files cycling, dirty-buffer guards inline, etc). New accels that
 // just want "press this, run that command" should NOT be added here —
 // that's the whole point of the fallthrough.
+// True when the keystroke belongs to a terminal or a plain text input.
+// Chords must NOT arm there: Ctrl+K is kill-to-end-of-line in a shell,
+// and an armed chord silently swallows the next keystroke (or fires
+// file.save_no_format). Monaco is deliberately exempt-from-the-exemption
+// — app chords should keep working while coding.
+function isChordExemptTarget(e: KeyboardEvent): boolean {
+  const t = e.target as HTMLElement | null;
+  if (!t || typeof t.closest !== "function") return false;
+  if (t.closest(".xterm")) return true;
+  if (t.closest(".monaco-editor")) return false;
+  const tag = t.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return t.isContentEditable === true;
+}
+
 const HANDLED_BY_MANUAL_BRANCHES = new Set<string>([
   "file.save",
   "file.save_all",
@@ -78,7 +93,7 @@ const HANDLED_BY_MANUAL_BRANCHES = new Set<string>([
   "edit.format_document",
   "view.settings",
   "edit.reopen_closed_tab",
-  "terminal.new_bottom",
+  "terminal.toggle",
   // view.quick_open (Ctrl+P) is handled inline by the palette toggle
   // branch — leave it manual so the toggle behaviour survives.
   "view.quick_open",
@@ -315,7 +330,7 @@ function MainApp() {
       // Modifier-only keydowns (Ctrl, Shift, Alt, Meta on their own)
       // are skipped at this layer — otherwise just *holding* Ctrl
       // before pressing K would clear/arm the state spuriously.
-      if (!isModifierOnly(e)) {
+      if (!isModifierOnly(e) && !isChordExemptTarget(e)) {
         // Expire a stale pending chord before doing anything else, so
         // a 5-minutes-later keystroke isn't reinterpreted as the second
         // half of a forgotten chord.
@@ -390,20 +405,32 @@ function MainApp() {
       const ctrl = e.ctrlKey || e.metaKey;
       if (!ctrl) return;
       const k = e.key;
-      // Command palette
-      if (k === "p" || k === "P") {
+      // Command palette. Ctrl+P = quick-open (files); Ctrl+Shift+P =
+      // command mode (the "> " prefix) per universal muscle memory —
+      // they used to be identical, which made Ctrl+Shift+P feel broken
+      // to anyone arriving from VS Code/Sublime.
+      if ((k === "p" || k === "P") && !e.altKey) {
         e.preventDefault();
         if (paletteOpenRef.current) {
           setPaletteOpen(false);
         } else {
-          setPaletteInitial("");
+          setPaletteInitial(e.shiftKey ? "> " : "");
           setPaletteOpen(true);
         }
         return;
       }
-      // Map shortcuts to commands
+      // Map shortcuts to commands. The whole chain is gated on !Alt —
+      // these branches describe plain Ctrl(+Shift) combos, and matching
+      // them while Alt was held meant Ctrl+Alt+T / Ctrl+Alt+P style
+      // registry accels fired the WRONG command instead of falling
+      // through to the generic dispatcher below.
       const lower = k.toLowerCase();
-      if (lower === "s" && !e.shiftKey) {
+      if (e.altKey) {
+        if (lower === "f" && !e.shiftKey) {
+          e.preventDefault();
+          runCommand("view.search_palette");
+        }
+      } else if (lower === "s" && !e.shiftKey) {
         e.preventDefault();
         runCommand("file.save");
       } else if (lower === "s" && e.shiftKey) {
@@ -430,12 +457,9 @@ function MainApp() {
       } else if (lower === "g" && e.shiftKey) {
         e.preventDefault();
         runCommand("view.source_control");
-      } else if (lower === "f" && e.shiftKey && !e.altKey) {
+      } else if (lower === "f" && e.shiftKey) {
         e.preventDefault();
         runCommand("view.search");
-      } else if (lower === "f" && e.altKey && !e.shiftKey) {
-        e.preventDefault();
-        runCommand("view.search_palette");
       } else if (lower === "t" && e.shiftKey) {
         e.preventDefault();
         runCommand("edit.reopen_closed_tab");
@@ -447,7 +471,7 @@ function MainApp() {
         runCommand("view.reload");
       } else if (k === "`") {
         e.preventDefault();
-        runCommand("terminal.new_bottom");
+        runCommand("terminal.toggle");
       } else if (lower === "g" && !e.shiftKey) {
         e.preventDefault();
         runCommand("edit.goto_line");
