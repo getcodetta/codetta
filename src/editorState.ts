@@ -11,6 +11,35 @@ export function getActiveEditor(): editor.IStandaloneCodeEditor | null {
   return _activeEditor;
 }
 
+// ---- Monaco namespace handle + model disposal ----
+//
+// EditorPane mounts <Editor keepCurrentModel path={...}> so text models
+// (and with them the UNDO STACK) survive tab switches — the portal
+// keying remounts the whole editor per tab, and the default behavior
+// disposed the model each time, destroying undo history. The flip side
+// is that nothing disposes models automatically anymore; the store
+// calls disposeModelForPath() at the points where the BUFFER actually
+// goes away (close tab, idle unload, close workspace).
+interface MonacoLike {
+  Uri: { parse(s: string): unknown };
+  editor: { getModel(uri: unknown): { dispose(): void } | null };
+}
+let _monaco: MonacoLike | null = null;
+export function setMonacoInstance(m: unknown) {
+  _monaco = m as MonacoLike;
+}
+export function disposeModelForPath(path: string) {
+  const m = _monaco;
+  if (!m) return;
+  try {
+    // Same Uri derivation @monaco-editor/react uses for its `path`
+    // prop, so we find exactly the model it created.
+    m.editor.getModel(m.Uri.parse(path))?.dispose();
+  } catch {
+    /* ignore — no model, malformed path */
+  }
+}
+
 export interface EditorState {
   filePath: string | null;
   language: string | null;

@@ -10,6 +10,7 @@ import {
   onEditorGoto,
   requestMdPreviewScroll,
   setActiveEditor,
+  setMonacoInstance,
 } from "../editorState";
 import { useEditorSettings } from "../editorSettings";
 import { fs, git as gitApi } from "../ipc";
@@ -512,6 +513,13 @@ export function EditorPane({ wsId, path }: Props) {
       <Editor
         height="100%"
         path={path}
+        // Don't dispose the text model on unmount. Tab switches remount
+        // this whole component (the portal key is pane.id+path), and
+        // disposing the model destroyed the UNDO STACK every time the
+        // user looked at another tab. Models are reused by `path` on
+        // remount; the store disposes them when the buffer truly closes
+        // (closeTab / idle unload / close workspace).
+        keepCurrentModel
         language={language ?? "plaintext"}
         value={file.contents}
         theme={resolvedTheme === "dark" ? "vs-dark" : "vs"}
@@ -545,7 +553,25 @@ export function EditorPane({ wsId, path }: Props) {
         onMount={(ed: editor.IStandaloneCodeEditor, monaco: Monaco) => {
           editorRef.current = ed;
           monacoRef.current = monaco;
+          setMonacoInstance(monaco);
           setActiveEditor(ed);
+          // keepCurrentModel can hand us a model that went stale while
+          // this file was a background tab (the AI's edit_file or an
+          // accepted external-change reload updates the store buffer
+          // without a mounted editor). Re-sync via executeEdits so the
+          // undo stack survives — model.setValue would wipe it.
+          {
+            const model = ed.getModel();
+            if (model && model.getValue() !== file.contents) {
+              ed.executeEdits("codetta-resync", [
+                {
+                  range: model.getFullModelRange(),
+                  text: file.contents,
+                },
+              ]);
+              ed.pushUndoStop();
+            }
+          }
           // Initial view-state restore for this pane's first path.
           // The path-effect above only handles subsequent path
           // swaps; the first one needs handling here because

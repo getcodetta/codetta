@@ -5,7 +5,7 @@ import {
   lookupRemoteLink,
 } from "./sftpLinks";
 import { consumeAutoPushSuppression, pushLinkedFile } from "./sftpPush";
-import { clearEditorState } from "./editorState";
+import { clearEditorState, disposeModelForPath } from "./editorState";
 import {
   error as toastError,
   errMsg,
@@ -1174,6 +1174,11 @@ export const useStore = create<AppState>((set, get) => {
       if (activeId === id) activeId = openIds[openIds.length - 1] ?? null;
       const { [id]: _drop, ...rest } = get().loaded;
       set({ openIds, activeId, loaded: rest });
+      // All of this workspace's buffers are gone — release their
+      // Monaco models (kept alive across tab switches for undo).
+      if (ws) {
+        for (const p of Object.keys(ws.files)) disposeModelForPath(p);
+      }
       void invoke("fs_watch_stop", { wsId: id }).catch(() => {});
       await persistIdx();
     },
@@ -1332,6 +1337,10 @@ export const useStore = create<AppState>((set, get) => {
           },
         };
       });
+      // The buffer is gone — release the Monaco model too (it outlives
+      // unmounts on purpose so undo survives tab SWITCHES; an explicit
+      // close is where its life ends).
+      if (parsed?.kind === "file") disposeModelForPath(parsed.path);
     },
 
     reopenClosedTab: async (wsId) => {
@@ -2076,6 +2085,10 @@ export const useStore = create<AppState>((set, get) => {
       // Drop the per-path tracker so the next open-and-touch starts
       // from a fresh clock instead of inheriting an ancient timestamp.
       fileLastTouched.get(wsId)?.delete(path);
+      // Buffer unloaded → free the Monaco model (and its undo stack)
+      // as well; that's most of the memory the sweeper exists to claw
+      // back. Re-opening re-reads from disk anyway.
+      disposeModelForPath(path);
     },
 
     reorderAIChat: (wsId, id, beforeId) =>
