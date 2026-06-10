@@ -129,7 +129,7 @@ export function PrivacyBanner({
       </div>
       <button
         className="ai-privacy-settings"
-        onClick={() => openSettings()}
+        onClick={() => openSettings("ai-privacy")}
         title="Open privacy settings"
       >
         Manage

@@ -69,9 +69,22 @@ function norm(v: unknown, fallback: ToolPermission): ToolPermission {
   return v === "allow" || v === "ask" || v === "deny" ? v : fallback;
 }
 
+type PolicyListener = () => void;
+const policyListeners = new Set<PolicyListener>();
+
+/** Subscribe to policy writes (Settings rows, chat-side "Allow always").
+ *  Returns an unsubscribe. */
+export function onToolPolicyChange(fn: PolicyListener): () => void {
+  policyListeners.add(fn);
+  return () => {
+    policyListeners.delete(fn);
+  };
+}
+
 export function setToolPolicy(policy: ToolPolicy): void {
   cachedPolicy = policy;
   setJson(KEY, policy);
+  for (const fn of policyListeners) fn();
 }
 
 export function rememberToolAlways(toolName: string): void {

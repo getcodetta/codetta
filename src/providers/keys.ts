@@ -9,7 +9,11 @@ export function getApiKey(providerId: ProviderId): string {
 }
 
 export function setApiKey(providerId: ProviderId, key: string): void {
-  if (key) setString(keyFor(providerId), key);
+  // Trim — keys pasted with a trailing newline/space go verbatim into
+  // fetch headers, where the invalid header value throws a cryptic
+  // TypeError on the first send.
+  const cleaned = key.trim();
+  if (cleaned) setString(keyFor(providerId), cleaned);
   else remove(keyFor(providerId));
 }
 

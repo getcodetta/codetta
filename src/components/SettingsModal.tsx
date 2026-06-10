@@ -268,10 +268,18 @@ export function SettingsModal() {
   );
   const setSidebarSide = useStore((s) => s.setSidebarSide);
 
+  // Deep-link target captured from openSettings(section). Consumed by
+  // the TOC discovery effect below once the section list exists.
+  const pendingSlugRef = useRef<string | null>(null);
+
   useEffect(() => {
-    return onSettingsOpen(() => {
+    return onSettingsOpen((section) => {
+      pendingSlugRef.current = section ?? null;
       setOpen(true);
       setView("form");
+      // Re-run discovery even if already open so a deep-link from chat
+      // while Settings is up still navigates.
+      if (section) setActiveSlug("");
     });
   }, []);
 
@@ -301,9 +309,12 @@ export function SettingsModal() {
         title: s.dataset.title ?? "",
       }));
       setToc(list);
-      // Land on the first section if no selection yet (or if the
-      // previous selection no longer exists).
+      // Deep-link target wins; otherwise keep the prior selection if
+      // it still exists; otherwise land on the first section.
+      const pending = pendingSlugRef.current;
+      pendingSlugRef.current = null;
       setActiveSlug((cur) => {
+        if (pending && list.some((t) => t.slug === pending)) return pending;
         if (cur && list.some((t) => t.slug === cur)) return cur;
         return list[0]?.slug ?? "";
       });
@@ -596,7 +607,7 @@ export function SettingsModal() {
             </div>
           </Section>
 
-          <Section title="AI Privacy — Exclude paths">
+          <Section title="AI Privacy — Exclude paths" id="ai-privacy">
             <AIPrivacyEditor />
           </Section>
 
@@ -647,7 +658,7 @@ export function SettingsModal() {
             <SftpProfilesEditor />
           </Section>
 
-          <Section title="AI Providers (Bring Your Own Key)">
+          <Section title="AI Providers (Bring Your Own Key)" id="ai-providers">
             {PROVIDERS.filter((p) => p.needsApiKey).map((p) => (
               <ApiKeyRow
                 key={p.id}

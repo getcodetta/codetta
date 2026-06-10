@@ -20,15 +20,23 @@ import {
   setString as lsSetString,
 } from "../localStore";
 
+// Key literals must match the STORAGE_KEY / KEY constants in each
+// settings module exactly — "lcp.editor.settings" once drifted from the
+// real "lcp.editorSettings", which silently dropped editor settings
+// from every export AND every pasted backup.
 export const SETTINGS_KEYS = [
   "lcp.theme",
-  "lcp.editor.settings",
+  "lcp.editorSettings",
+  "lcp.footprintSettings",
   "lcp.toolPolicy",
+  "lcp.aiTemplates",
   "lcp.claudeCode.alwaysAllow",
   "lcp.claudeCode.budgetUsd",
   "lcp.sftp.profiles",
   "lcp.ai.privacy.exclusions",
   "lcp.ai.usage.hardCapUsd",
+  "lcp.ai.usage.logPrompts",
+  "lcp.ai.usage.wsBudgetsUsd",
   "lcp.ollama.lastModel",
   "lcp.providers.openai.apiKey",
   "lcp.providers.anthropic.apiKey",
@@ -173,6 +181,22 @@ export function SettingsJsonEditor({ onClose }: { onClose: () => void }) {
       } else if (lsGetString(k) != null) {
         lsRemove(k);
       }
+    }
+    // Surface lcp.* keys we did NOT apply — a typo'd key in a pasted
+    // backup used to vanish silently behind "Applied N settings".
+    const unknown = Object.keys(next).filter(
+      (k) =>
+        k.startsWith("lcp.") &&
+        !(SETTINGS_KEYS as readonly string[]).includes(k),
+    );
+    if (unknown.length > 0) {
+      setStatus({
+        kind: "error",
+        message: `Applied ${count} setting${count === 1 ? "" : "s"}, but skipped unknown key${
+          unknown.length === 1 ? "" : "s"
+        }: ${unknown.join(", ")} (not in the editable allowlist — check for typos)`,
+      });
+      return;
     }
     setStatus({ kind: "ok", count });
     // Offer to reload so every component picks up the new values.

@@ -2278,7 +2278,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               href="#"
               onClick={(e) => {
                 e.preventDefault();
-                openSettings();
+                openSettings("ai-providers");
               }}
             >
               Settings → AI Providers
@@ -2334,7 +2334,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         <div className="ai-empty">
           <p>
             <strong>Ollama is running.</strong> Pull a model to start chatting,
-            or add a cloud provider key in <a href="#" onClick={(e) => { e.preventDefault(); openSettings(); }}>Settings</a>.
+            or add a cloud provider key in <a href="#" onClick={(e) => { e.preventDefault(); openSettings("ai-providers"); }}>Settings</a>.
           </p>
           <ul className="ai-suggested">
             {SUGGESTED_MODELS.map((m) => (
@@ -3391,7 +3391,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             <button
               className="ai-slow-banner-btn"
               onClick={() => {
-                openSettings();
+                openSettings("ai-providers");
                 setRecentTps(null);
               }}
             >
@@ -3423,7 +3423,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         onPull={(name) => void pullSpecific(name)}
         onConfigureKey={() => {
           setBrowserOpen(false);
-          openSettings();
+          openSettings("ai-providers");
         }}
         onInstallClaudeCode={async () => {
           // Spawn a workspace terminal that runs the install. We use the

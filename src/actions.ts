@@ -616,6 +616,18 @@ export const commands: CommandSpec[] = [
     run: () => openSettings(),
   },
   {
+    id: "view.settings_ai_providers",
+    label: "Settings: AI Providers (API Keys)",
+    category: "View",
+    run: () => openSettings("ai-providers"),
+  },
+  {
+    id: "view.settings_ai_privacy",
+    label: "Settings: AI Privacy Exclusions",
+    category: "View",
+    run: () => openSettings("ai-privacy"),
+  },
+  {
     id: "edit.toggle_trim_trailing_ws",
     label: "Toggle: Trim Trailing Whitespace on Save",
     category: "File",

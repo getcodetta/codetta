@@ -8,12 +8,13 @@
 // their own files and import these bits, instead of staying inline in
 // the giant 1600-line SettingsModal.
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getApiKey, setApiKey } from "../providers";
 import type { ProviderId } from "../providers";
 import {
   getToolPolicy,
+  onToolPolicyChange,
   setToolPolicy,
   type ToolPermission,
   type ToolPolicy,
@@ -94,10 +95,15 @@ export function ToolPermissionRow({
   field: keyof ToolPolicy;
 }) {
   const [policy, setPolicy] = useState<ToolPolicy>(() => getToolPolicy());
+  // Stay live: other rows and the chat's "Allow always" flow also write
+  // the policy while this row is mounted.
+  useEffect(() => onToolPolicyChange(() => setPolicy(getToolPolicy())), []);
   const setValue = (v: ToolPermission) => {
-    const next = { ...policy, [field]: v };
-    setPolicy(next);
-    setToolPolicy(next);
+    // Patch a FRESH read. Persisting the mount-time snapshot used to
+    // silently revert every other row changed in the same Settings
+    // visit — set Write to Deny, change another row, and the Deny
+    // un-set itself. Rows must never write a cached full policy.
+    setToolPolicy({ ...getToolPolicy(), [field]: v });
   };
   const cur = policy[field];
   return (
