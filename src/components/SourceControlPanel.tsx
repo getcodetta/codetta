@@ -17,6 +17,7 @@ import {
 } from "../dialog";
 import { langOf } from "../langDetect";
 import { joinPath } from "../pathUtils";
+import { useStore } from "../store";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { Icon } from "./Icon";
 
@@ -52,6 +53,9 @@ function statusLabel(f: GitFile): string {
 }
 
 function statusColor(f: GitFile): string {
+  // Conflicts first: their XY pairs contain U/A/D letters that would
+  // otherwise pick up the cheerful "untracked green".
+  if (f.conflicted) return "#e5734f";
   const tag = statusLabel(f);
   if (tag.includes("U")) return "#73c990";
   if (tag.includes("A")) return "#73c990";
@@ -147,8 +151,51 @@ export function SourceControlPanel({ wsId, root }: Props) {
     setMessage("");
   };
   const pull = () => run("Pulling", "git_pull", { path: root });
-  const push = () => run("Pushing", "git_push", { path: root });
   const fetch_ = () => run("Fetching", "git_fetch", { path: root });
+  // Push with a working "Publish" path for branches with no upstream.
+  // A bare `git push` on a fresh branch fails with a raw fatal that
+  // used to land unexplained in the log pane — the panel's own "New
+  // branch…" flow led straight into that dead end.
+  const push = useCallback(async () => {
+    if (busy) return;
+    const publish = async () => {
+      const ok = await dialogConfirm(
+        `${status?.branch ?? "This branch"} has no upstream yet. Publish it to origin?`,
+        { title: "Publish branch", okLabel: "Publish", cancelLabel: "Cancel" },
+      );
+      if (!ok) return;
+      setBusy("Publishing");
+      try {
+        setLog(await gitApi.push(root, true));
+        toastSuccess(`Published ${status?.branch ?? "branch"} to origin`);
+      } catch (e) {
+        setLog(errMsg(e));
+      } finally {
+        setBusy(null);
+        await refresh();
+      }
+    };
+    if (status && !status.upstream) {
+      await publish();
+      return;
+    }
+    setBusy("Pushing");
+    setLog("");
+    try {
+      setLog(await gitApi.push(root));
+    } catch (e) {
+      const msg = errMsg(e);
+      setLog(msg);
+      if (/no upstream branch/i.test(msg)) {
+        setBusy(null);
+        await publish();
+        return;
+      }
+    } finally {
+      setBusy(null);
+      await refresh();
+    }
+  }, [busy, root, status, refresh]);
   // VS Code-style sync: pull then push so a single click reconciles both
   // sides of the upstream relationship. We bail on pull failure so a
   // merge conflict isn't immediately followed by a push attempt.
@@ -173,8 +220,11 @@ export function SourceControlPanel({ wsId, root }: Props) {
       const abs = joinPath(root, f.path);
       try {
         const original = await gitApi.show(root, "HEAD", f.path);
+        // Empty refspec → git_show builds ":path", the stage-0 index
+        // entry. (":" as the refspec produced "::path", which git
+        // rejects as an ambiguous argument — staged diffs were broken.)
         const modified = staged
-          ? await gitApi.show(root, ":", f.path) // index version
+          ? await gitApi.show(root, "", f.path)
           : await fs.readFile(abs);
         requestDiff({
           path: f.path,
@@ -421,26 +471,61 @@ export function SourceControlPanel({ wsId, root }: Props) {
 
   const discard = useCallback(
     async (f: GitFile) => {
+      // Untracked files can't be `checkout HEAD --`-ed (git has no
+      // version to restore); the honest action is deleting the file,
+      // so say that and route through git clean.
+      const untracked = f.index_status === "?";
       const ok = await dialogConfirm(
-        `Discard changes to ${f.path}?\n\nThis cannot be undone.`,
+        untracked
+          ? `Delete untracked file ${f.path}?\n\nThis cannot be undone.`
+          : `Discard changes to ${f.path}?\n\nThis cannot be undone.`,
         {
-          title: "Discard changes",
-          okLabel: "Discard",
+          title: untracked ? "Delete untracked file" : "Discard changes",
+          okLabel: untracked ? "Delete" : "Discard",
           cancelLabel: "Keep",
           danger: true,
         },
       );
       if (!ok) return;
       try {
-        await gitApi.discard(root, [f.path]);
-        toastSuccess(`Discarded changes to ${f.path}`);
+        if (untracked) {
+          await gitApi.clean(root, [f.path]);
+          toastSuccess(`Deleted ${f.path}`);
+        } else {
+          await gitApi.discard(root, [f.path]);
+          toastSuccess(`Discarded changes to ${f.path}`);
+        }
         await refresh();
       } catch (e) {
-        toastError(`Discard failed: ${errMsg(e)}`);
+        toastError(
+          `${untracked ? "Delete" : "Discard"} failed: ${errMsg(e)}`,
+        );
       }
     },
     [root, refresh],
   );
+
+  // Conflicted rows open the file in the editor (where the conflict
+  // markers live) — a HEAD-vs-index diff is meaningless mid-merge.
+  const openConflict = async (f: GitFile) => {
+    await useStore.getState().openFile(wsId, joinPath(root, f.path));
+  };
+
+  const resolveConflict = async (f: GitFile, side: "ours" | "theirs") => {
+    const label = side === "ours" ? "our version" : "their version";
+    const ok = await dialogConfirm(
+      `Resolve ${f.path} by taking ${label} wholesale?\n\nThe other side's changes to this file are discarded.`,
+      { title: "Resolve conflict", okLabel: "Resolve", danger: true },
+    );
+    if (!ok) return;
+    try {
+      await gitApi.resolveConflict(root, f.path, side);
+      toastSuccess(`Resolved ${f.path} (${label})`);
+      await refresh();
+    } catch (e) {
+      toastError(`Resolve failed: ${errMsg(e)}`);
+    }
+  };
 
   if (!status) {
     return <div className="git-panel"><div className="muted" style={{padding: 12}}>Loading…</div></div>;
@@ -465,8 +550,9 @@ export function SourceControlPanel({ wsId, root }: Props) {
     );
   }
 
+  const conflicts = status.files.filter((f) => f.conflicted);
   const staged = status.files.filter((f) => f.staged);
-  const changes = status.files.filter((f) => !f.staged);
+  const changes = status.files.filter((f) => !f.staged && !f.conflicted);
 
   return (
     <div className="git-panel">
@@ -575,9 +661,13 @@ export function SourceControlPanel({ wsId, root }: Props) {
           <button
             onClick={() => void push()}
             disabled={!!busy}
-            title="Push to upstream"
+            title={
+              status.upstream
+                ? "Push to upstream"
+                : "No upstream — publish this branch to origin"
+            }
           >
-            Push
+            {status.upstream ? "Push" : "Publish"}
           </button>
           {(status.ahead > 0 || status.behind > 0) && status.upstream && (
             <button
@@ -619,13 +709,20 @@ export function SourceControlPanel({ wsId, root }: Props) {
           <button
             className="primary"
             onClick={() => void commit()}
-            disabled={!!busy || !message.trim() || staged.length === 0}
+            disabled={
+              !!busy ||
+              !message.trim() ||
+              staged.length === 0 ||
+              conflicts.length > 0
+            }
             title={
-              staged.length === 0
-                ? "Stage at least one file first"
-                : !message.trim()
-                  ? "Type a commit message"
-                  : "Commit staged changes (Ctrl+Enter from message box)"
+              conflicts.length > 0
+                ? "Resolve merge conflicts first"
+                : staged.length === 0
+                  ? "Stage at least one file first"
+                  : !message.trim()
+                    ? "Type a commit message"
+                    : "Commit staged changes (Ctrl+Enter from message box)"
             }
           >
             Commit
@@ -635,6 +732,46 @@ export function SourceControlPanel({ wsId, root }: Props) {
           </button>
         </div>
       </div>
+
+      {conflicts.length > 0 && (
+        <>
+          <div className="git-section-title" style={{ color: "#e5734f" }}>
+            Merge Conflicts ({conflicts.length})
+          </div>
+          <ul className="git-files">
+            {conflicts.map((f) => (
+              <li
+                key={"x:" + f.path}
+                tabIndex={0}
+                role="button"
+                aria-label={`Open conflicted file ${f.path}`}
+                title="Open in editor to resolve conflict markers — right-click to accept ours/theirs"
+                onClick={() => void openConflict(f)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    void openConflict(f);
+                  }
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setCtx({ x: e.clientX, y: e.clientY, file: f });
+                }}
+              >
+                <span
+                  className="git-status-tag"
+                  style={{ color: statusColor(f) }}
+                >
+                  {statusLabel(f)}
+                </span>
+                <span className="git-file-path" title={f.path}>
+                  {f.path}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <div className="git-section-title">
         Staged ({staged.length})
@@ -891,6 +1028,33 @@ export function SourceControlPanel({ wsId, root }: Props) {
           items={(() => {
             const file = ctx.file;
             const items: (ContextMenuItem | "separator")[] = [];
+            if (file.conflicted) {
+              items.push({
+                label: "Open File (resolve markers)",
+                onClick: () => void openConflict(file),
+              });
+              items.push("separator");
+              items.push({
+                label: "Accept Ours (current branch)",
+                onClick: () => void resolveConflict(file, "ours"),
+              });
+              items.push({
+                label: "Accept Theirs (incoming)",
+                onClick: () => void resolveConflict(file, "theirs"),
+              });
+              items.push("separator");
+              items.push({
+                label: "Copy Path",
+                onClick: async () => {
+                  try {
+                    await navigator.clipboard.writeText(file.path);
+                  } catch {
+                    /* ignore */
+                  }
+                },
+              });
+              return items;
+            }
             items.push({
               label: "View Diff",
               onClick: () => showDiff(file, file.staged),
@@ -908,7 +1072,10 @@ export function SourceControlPanel({ wsId, root }: Props) {
             }
             items.push("separator");
             items.push({
-              label: "Discard Changes",
+              label:
+                file.index_status === "?"
+                  ? "Delete Untracked File"
+                  : "Discard Changes",
               danger: true,
               disabled: file.staged,
               onClick: () => discard(file),

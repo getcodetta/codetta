@@ -200,15 +200,23 @@ fn walk_files<F: FnMut(&Path) -> bool>(
     }
 }
 
+// list_workspace_files / search_text / search_regex walk up to 50k
+// files; as plain sync commands Tauri ran them on the MAIN thread, so
+// search-as-you-type froze the whole window. Same spawn_blocking
+// treatment as scan_todos / find_symbols below.
 #[tauri::command]
-pub fn list_workspace_files(
+pub async fn list_workspace_files(
     root: String,
     max: Option<usize>,
 ) -> Result<Vec<String>, String> {
-    let cap = max.unwrap_or(5000);
-    let mut out = Vec::new();
-    walk_files(Path::new(&root), &mut out, cap, |_p| true);
-    Ok(out)
+    tauri::async_runtime::spawn_blocking(move || {
+        let cap = max.unwrap_or(5000);
+        let mut out = Vec::new();
+        walk_files(Path::new(&root), &mut out, cap, |_p| true);
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize)]
@@ -220,7 +228,29 @@ pub struct SearchHit {
 }
 
 #[tauri::command]
-pub fn search_text(
+pub async fn search_text(
+    root: String,
+    query: String,
+    case_sensitive: Option<bool>,
+    max_results: Option<usize>,
+    include_globs: Option<Vec<String>>,
+    exclude_globs: Option<Vec<String>>,
+) -> Result<Vec<SearchHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        search_text_blocking(
+            root,
+            query,
+            case_sensitive,
+            max_results,
+            include_globs,
+            exclude_globs,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn search_text_blocking(
     root: String,
     query: String,
     case_sensitive: Option<bool>,
@@ -296,7 +326,29 @@ pub fn search_text(
 /// frontend can surface "expected ']' at offset 7" instead of dying
 /// silently. Empty queries return an empty hit list (same as search_text).
 #[tauri::command]
-pub fn search_regex(
+pub async fn search_regex(
+    root: String,
+    pattern: String,
+    case_sensitive: Option<bool>,
+    max_results: Option<usize>,
+    include_globs: Option<Vec<String>>,
+    exclude_globs: Option<Vec<String>>,
+) -> Result<Vec<SearchHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        search_regex_blocking(
+            root,
+            pattern,
+            case_sensitive,
+            max_results,
+            include_globs,
+            exclude_globs,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn search_regex_blocking(
     root: String,
     pattern: String,
     case_sensitive: Option<bool>,

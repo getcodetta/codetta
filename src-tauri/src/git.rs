@@ -31,6 +31,26 @@ fn run_git(cwd: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+// Every command in this file shells out to `git`, and Tauri dispatches
+// non-async commands on the MAIN thread — so a slow `git push` (or even
+// the ~50ms of process spawn on Windows) used to freeze the entire UI.
+// All commands below are async wrappers that run their blocking body on
+// the spawn_blocking pool, same pattern as scan_todos in search.rs.
+async fn off_thread<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn is_repo(path: &str) -> bool {
+    if !Path::new(path).exists() {
+        return false;
+    }
+    run_git(path, &["rev-parse", "--is-inside-work-tree"]).is_ok()
+}
+
 #[derive(Serialize)]
 pub struct GitFile {
     pub path: String,
@@ -38,6 +58,11 @@ pub struct GitFile {
     pub worktree_status: String,
     pub staged: bool,
     pub modified: bool,
+    /// True for merge-conflict XY pairs (UU, AA, AU, …). These files
+    /// look "staged" in porcelain terms but presenting them as staged
+    /// work (with an Unstage button) mid-merge is misleading — the UI
+    /// gives them their own section.
+    pub conflicted: bool,
 }
 
 #[derive(Serialize)]
@@ -51,11 +76,10 @@ pub struct GitStatus {
 }
 
 #[tauri::command]
-pub fn git_is_repo(path: String) -> bool {
-    if !Path::new(&path).exists() {
-        return false;
-    }
-    run_git(&path, &["rev-parse", "--is-inside-work-tree"]).is_ok()
+pub async fn git_is_repo(path: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || is_repo(&path))
+        .await
+        .unwrap_or(false)
 }
 
 fn parse_branch_line(line: &str) -> (Option<String>, Option<String>, u32, u32) {
@@ -97,9 +121,8 @@ fn parse_branch_line(line: &str) -> (Option<String>, Option<String>, u32, u32) {
     (Some(branch), upstream, ahead, behind)
 }
 
-#[tauri::command]
-pub fn git_status(path: String) -> Result<GitStatus, String> {
-    if !git_is_repo(path.clone()) {
+fn git_status_blocking(path: String) -> Result<GitStatus, String> {
+    if !is_repo(&path) {
         return Ok(GitStatus {
             is_repo: false,
             branch: None,
@@ -134,7 +157,11 @@ pub fn git_status(path: String) -> Result<GitStatus, String> {
             rest.to_string()
         };
         let path_part = path_part.trim_matches('"').to_string();
-        let staged = x != ' ' && x != '?';
+        let conflicted = matches!(
+            (x, y),
+            ('D', 'D') | ('A', 'U') | ('U', 'D') | ('U', 'A') | ('D', 'U') | ('A', 'A') | ('U', 'U')
+        );
+        let staged = !conflicted && x != ' ' && x != '?';
         let modified = y != ' ';
         files.push(GitFile {
             path: path_part,
@@ -142,6 +169,7 @@ pub fn git_status(path: String) -> Result<GitStatus, String> {
             worktree_status: y.to_string(),
             staged,
             modified,
+            conflicted,
         });
     }
 
@@ -156,113 +184,196 @@ pub fn git_status(path: String) -> Result<GitStatus, String> {
 }
 
 #[tauri::command]
-pub fn git_stage(path: String, files: Vec<String>) -> Result<String, String> {
-    if files.is_empty() {
-        return Ok(String::new());
-    }
-    let mut args: Vec<&str> = vec!["add", "--"];
-    for f in &files {
-        args.push(f.as_str());
-    }
-    run_git(&path, &args)
+pub async fn git_status(path: String) -> Result<GitStatus, String> {
+    off_thread(move || git_status_blocking(path)).await
 }
 
 #[tauri::command]
-pub fn git_unstage(path: String, files: Vec<String>) -> Result<String, String> {
-    if files.is_empty() {
-        return Ok(String::new());
-    }
-    let mut args: Vec<&str> = vec!["reset", "HEAD", "--"];
-    for f in &files {
-        args.push(f.as_str());
-    }
-    run_git(&path, &args)
+pub async fn git_stage(path: String, files: Vec<String>) -> Result<String, String> {
+    off_thread(move || {
+        if files.is_empty() {
+            return Ok(String::new());
+        }
+        let mut args: Vec<&str> = vec!["add", "--"];
+        for f in &files {
+            args.push(f.as_str());
+        }
+        run_git(&path, &args)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_commit(path: String, message: String) -> Result<String, String> {
-    run_git(&path, &["commit", "-m", &message])
+pub async fn git_unstage(path: String, files: Vec<String>) -> Result<String, String> {
+    off_thread(move || {
+        if files.is_empty() {
+            return Ok(String::new());
+        }
+        let mut args: Vec<&str> = vec!["reset", "HEAD", "--"];
+        for f in &files {
+            args.push(f.as_str());
+        }
+        run_git(&path, &args)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_pull(path: String) -> Result<String, String> {
-    run_git(&path, &["pull"])
+pub async fn git_commit(path: String, message: String) -> Result<String, String> {
+    off_thread(move || run_git(&path, &["commit", "-m", &message])).await
 }
 
 #[tauri::command]
-pub fn git_push(path: String) -> Result<String, String> {
-    run_git(&path, &["push"])
+pub async fn git_pull(path: String) -> Result<String, String> {
+    off_thread(move || run_git(&path, &["pull"])).await
 }
 
 #[tauri::command]
-pub fn git_fetch(path: String) -> Result<String, String> {
-    run_git(&path, &["fetch", "--all", "--prune"])
+pub async fn git_push(path: String, set_upstream: Option<bool>) -> Result<String, String> {
+    off_thread(move || {
+        if set_upstream.unwrap_or(false) {
+            // Publish flow for branches with no upstream: push -u so
+            // the new branch starts tracking origin/<branch>.
+            let branch = run_git(&path, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+            let branch = branch.trim().to_string();
+            run_git(&path, &["push", "-u", "origin", &branch])
+        } else {
+            run_git(&path, &["push"])
+        }
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_init(path: String) -> Result<String, String> {
-    run_git(&path, &["init"])
+pub async fn git_fetch(path: String) -> Result<String, String> {
+    off_thread(move || run_git(&path, &["fetch", "--all", "--prune"])).await
 }
 
 #[tauri::command]
-pub fn git_diff(path: String, file: Option<String>) -> Result<String, String> {
-    if let Some(f) = file {
-        run_git(&path, &["diff", "--", &f])
-    } else {
-        run_git(&path, &["diff"])
-    }
+pub async fn git_init(path: String) -> Result<String, String> {
+    off_thread(move || run_git(&path, &["init"])).await
 }
 
 #[tauri::command]
-pub fn git_diff_staged(path: String, file: Option<String>) -> Result<String, String> {
-    if let Some(f) = file {
-        run_git(&path, &["diff", "--cached", "--", &f])
-    } else {
-        run_git(&path, &["diff", "--cached"])
-    }
+pub async fn git_diff(path: String, file: Option<String>) -> Result<String, String> {
+    off_thread(move || {
+        if let Some(f) = file {
+            run_git(&path, &["diff", "--", &f])
+        } else {
+            run_git(&path, &["diff"])
+        }
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_show(path: String, refspec: String, file: String) -> Result<String, String> {
-    let target = format!("{}:{}", refspec, file);
-    match run_git(&path, &["show", &target]) {
-        Ok(s) => Ok(s),
-        Err(e) => {
-            let lower = e.to_lowercase();
-            if lower.contains("exists on disk, but not in") || lower.contains("does not exist") {
-                Ok(String::new())
-            } else {
-                Err(e)
+pub async fn git_diff_staged(path: String, file: Option<String>) -> Result<String, String> {
+    off_thread(move || {
+        if let Some(f) = file {
+            run_git(&path, &["diff", "--cached", "--", &f])
+        } else {
+            run_git(&path, &["diff", "--cached"])
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_show(path: String, refspec: String, file: String) -> Result<String, String> {
+    off_thread(move || {
+        let target = format!("{}:{}", refspec, file);
+        match run_git(&path, &["show", &target]) {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                let lower = e.to_lowercase();
+                // "exists on disk, but not in <ref>" / "does not exist" →
+                // file absent at that ref (e.g. newly added): diff against
+                // empty. "unknown revision"/"ambiguous argument" shows up
+                // for `:path` on never-committed repos — same treatment.
+                if lower.contains("exists on disk, but not in")
+                    || lower.contains("does not exist")
+                    || lower.contains("unknown revision")
+                    || lower.contains("ambiguous argument")
+                {
+                    Ok(String::new())
+                } else {
+                    Err(e)
+                }
             }
         }
-    }
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_discard(path: String, files: Vec<String>) -> Result<String, String> {
-    if files.is_empty() {
-        return Ok(String::new());
-    }
-    let mut args: Vec<&str> = vec!["checkout", "HEAD", "--"];
-    for f in &files {
-        args.push(f.as_str());
-    }
-    run_git(&path, &args)
+pub async fn git_discard(path: String, files: Vec<String>) -> Result<String, String> {
+    off_thread(move || {
+        if files.is_empty() {
+            return Ok(String::new());
+        }
+        let mut args: Vec<&str> = vec!["checkout", "HEAD", "--"];
+        for f in &files {
+            args.push(f.as_str());
+        }
+        run_git(&path, &args)
+    })
+    .await
+}
+
+/// Resolve a merge conflict by taking one side wholesale, then stage
+/// the result. side: "ours" | "theirs".
+#[tauri::command]
+pub async fn git_resolve_conflict(
+    path: String,
+    file: String,
+    side: String,
+) -> Result<String, String> {
+    off_thread(move || {
+        let flag = match side.as_str() {
+            "ours" => "--ours",
+            "theirs" => "--theirs",
+            _ => return Err("side must be 'ours' or 'theirs'".to_string()),
+        };
+        run_git(&path, &["checkout", flag, "--", &file])?;
+        run_git(&path, &["add", "--", &file])
+    })
+    .await
+}
+
+/// Remove untracked files. `git checkout HEAD --` (git_discard) fails on
+/// files git has never seen ("pathspec did not match"), so the discard
+/// flow routes ?? files here instead.
+#[tauri::command]
+pub async fn git_clean(path: String, files: Vec<String>) -> Result<String, String> {
+    off_thread(move || {
+        if files.is_empty() {
+            return Ok(String::new());
+        }
+        let mut args: Vec<&str> = vec!["clean", "-f", "--"];
+        for f in &files {
+            args.push(f.as_str());
+        }
+        run_git(&path, &args)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_branches(path: String) -> Result<Vec<String>, String> {
-    let out = run_git(&path, &["branch", "--format=%(refname:short)"])?;
-    Ok(out
-        .split('\n')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect())
+pub async fn git_branches(path: String) -> Result<Vec<String>, String> {
+    off_thread(move || {
+        let out = run_git(&path, &["branch", "--format=%(refname:short)"])?;
+        Ok(out
+            .split('\n')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_checkout_branch(path: String, branch: String) -> Result<String, String> {
-    run_git(&path, &["checkout", &branch])
+pub async fn git_checkout_branch(path: String, branch: String) -> Result<String, String> {
+    off_thread(move || run_git(&path, &["checkout", &branch])).await
 }
 
 #[derive(Serialize)]
@@ -283,9 +394,8 @@ pub struct GitCommit {
     pub parents: String,
 }
 
-#[tauri::command]
-pub fn git_log(path: String, limit: Option<u32>) -> Result<Vec<GitCommit>, String> {
-    if !git_is_repo(path.clone()) {
+fn git_log_blocking(path: String, limit: Option<u32>) -> Result<Vec<GitCommit>, String> {
+    if !is_repo(&path) {
         return Ok(vec![]);
     }
     let n = limit.unwrap_or(50).min(500);
@@ -331,70 +441,81 @@ pub fn git_log(path: String, limit: Option<u32>) -> Result<Vec<GitCommit>, Strin
 }
 
 #[tauri::command]
-pub fn git_create_branch(
+pub async fn git_log(path: String, limit: Option<u32>) -> Result<Vec<GitCommit>, String> {
+    off_thread(move || git_log_blocking(path, limit)).await
+}
+
+#[tauri::command]
+pub async fn git_create_branch(
     path: String,
     name: String,
     base: Option<String>,
     checkout: Option<bool>,
 ) -> Result<String, String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err("Branch name is empty.".to_string());
-    }
-    // git's own ref-name rules disallow these. Catch the common
-    // typos before the shell-out so the error message is friendlier
-    // than git's generic "is not a valid branch name".
-    if trimmed.contains("..")
-        || trimmed.contains(' ')
-        || trimmed.contains('~')
-        || trimmed.contains('^')
-        || trimmed.contains(':')
-        || trimmed.contains('?')
-        || trimmed.contains('*')
-        || trimmed.contains('[')
-        || trimmed.contains('\\')
-        || trimmed.starts_with('/')
-        || trimmed.starts_with('-')
-        || trimmed.ends_with('/')
-        || trimmed.ends_with('.')
-    {
-        return Err(format!(
-            "Invalid branch name '{}': git doesn't allow spaces, '..', '~^:?*[\\\\]', leading '-' or '/', or trailing '/' / '.'.",
-            trimmed
-        ));
-    }
-    let want_checkout = checkout.unwrap_or(true);
-    if want_checkout {
-        let mut args: Vec<&str> = vec!["checkout", "-b", trimmed];
-        if let Some(b) = base.as_deref() {
-            if !b.trim().is_empty() {
-                args.push(b);
-            }
+    off_thread(move || {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err("Branch name is empty.".to_string());
         }
-        run_git(&path, &args)
-    } else {
-        let mut args: Vec<&str> = vec!["branch", trimmed];
-        if let Some(b) = base.as_deref() {
-            if !b.trim().is_empty() {
-                args.push(b);
-            }
+        // git's own ref-name rules disallow these. Catch the common
+        // typos before the shell-out so the error message is friendlier
+        // than git's generic "is not a valid branch name".
+        if trimmed.contains("..")
+            || trimmed.contains(' ')
+            || trimmed.contains('~')
+            || trimmed.contains('^')
+            || trimmed.contains(':')
+            || trimmed.contains('?')
+            || trimmed.contains('*')
+            || trimmed.contains('[')
+            || trimmed.contains('\\')
+            || trimmed.starts_with('/')
+            || trimmed.starts_with('-')
+            || trimmed.ends_with('/')
+            || trimmed.ends_with('.')
+        {
+            return Err(format!(
+                "Invalid branch name '{}': git doesn't allow spaces, '..', '~^:?*[\\\\]', leading '-' or '/', or trailing '/' / '.'.",
+                trimmed
+            ));
         }
-        run_git(&path, &args)
-    }
+        let want_checkout = checkout.unwrap_or(true);
+        if want_checkout {
+            let mut args: Vec<&str> = vec!["checkout", "-b", trimmed];
+            if let Some(b) = base.as_deref() {
+                if !b.trim().is_empty() {
+                    args.push(b);
+                }
+            }
+            run_git(&path, &args)
+        } else {
+            let mut args: Vec<&str> = vec!["branch", trimmed];
+            if let Some(b) = base.as_deref() {
+                if !b.trim().is_empty() {
+                    args.push(b);
+                }
+            }
+            run_git(&path, &args)
+        }
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_delete_branch(
+pub async fn git_delete_branch(
     path: String,
     name: String,
     force: Option<bool>,
 ) -> Result<String, String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err("Branch name is empty.".to_string());
-    }
-    let flag = if force.unwrap_or(false) { "-D" } else { "-d" };
-    run_git(&path, &["branch", flag, trimmed])
+    off_thread(move || {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err("Branch name is empty.".to_string());
+        }
+        let flag = if force.unwrap_or(false) { "-D" } else { "-d" };
+        run_git(&path, &["branch", flag, trimmed])
+    })
+    .await
 }
 
 #[derive(Serialize)]
@@ -409,9 +530,8 @@ pub struct GitStash {
     pub timestamp: i64,
 }
 
-#[tauri::command]
-pub fn git_stash_list(path: String) -> Result<Vec<GitStash>, String> {
-    if !git_is_repo(path.clone()) {
+fn git_stash_list_blocking(path: String) -> Result<Vec<GitStash>, String> {
+    if !is_repo(&path) {
         return Ok(vec![]);
     }
     // %gd  → stash ref (stash@{0})
@@ -465,56 +585,67 @@ pub fn git_stash_list(path: String) -> Result<Vec<GitStash>, String> {
 }
 
 #[tauri::command]
-pub fn git_stash_push(
+pub async fn git_stash_list(path: String) -> Result<Vec<GitStash>, String> {
+    off_thread(move || git_stash_list_blocking(path)).await
+}
+
+#[tauri::command]
+pub async fn git_stash_push(
     path: String,
     message: Option<String>,
     include_untracked: Option<bool>,
 ) -> Result<String, String> {
-    let mut args: Vec<String> = vec!["stash".into(), "push".into()];
-    if include_untracked.unwrap_or(false) {
-        args.push("--include-untracked".into());
-    }
-    if let Some(m) = message.as_deref() {
-        if !m.trim().is_empty() {
-            args.push("-m".into());
-            args.push(m.to_string());
+    off_thread(move || {
+        let mut args: Vec<String> = vec!["stash".into(), "push".into()];
+        if include_untracked.unwrap_or(false) {
+            args.push("--include-untracked".into());
         }
-    }
-    let str_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    run_git(&path, &str_args)
+        if let Some(m) = message.as_deref() {
+            if !m.trim().is_empty() {
+                args.push("-m".into());
+                args.push(m.to_string());
+            }
+        }
+        let str_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        run_git(&path, &str_args)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_stash_pop(path: String, ref_spec: String) -> Result<String, String> {
-    run_git(&path, &["stash", "pop", &ref_spec])
+pub async fn git_stash_pop(path: String, ref_spec: String) -> Result<String, String> {
+    off_thread(move || run_git(&path, &["stash", "pop", &ref_spec])).await
 }
 
 #[tauri::command]
-pub fn git_stash_apply(path: String, ref_spec: String) -> Result<String, String> {
-    run_git(&path, &["stash", "apply", &ref_spec])
+pub async fn git_stash_apply(path: String, ref_spec: String) -> Result<String, String> {
+    off_thread(move || run_git(&path, &["stash", "apply", &ref_spec])).await
 }
 
 #[tauri::command]
-pub fn git_stash_drop(path: String, ref_spec: String) -> Result<String, String> {
-    run_git(&path, &["stash", "drop", &ref_spec])
+pub async fn git_stash_drop(path: String, ref_spec: String) -> Result<String, String> {
+    off_thread(move || run_git(&path, &["stash", "drop", &ref_spec])).await
 }
 
 #[tauri::command]
-pub fn git_show_commit(path: String, refspec: String) -> Result<String, String> {
-    // git show with full diff. We use --stat for a header summary line
-    // followed by --patch to get the full unified diff. Limits diff
-    // size implicitly via run_git's stdout buffering — git itself caps
-    // at no fixed size, but Rust's String::from_utf8_lossy will grow
-    // happily for typical commits.
-    run_git(
-        &path,
-        &[
-            "show",
-            "--stat",
-            "--patch",
-            "--no-color",
-            "--no-decorate",
-            &refspec,
-        ],
-    )
+pub async fn git_show_commit(path: String, refspec: String) -> Result<String, String> {
+    off_thread(move || {
+        // git show with full diff. We use --stat for a header summary line
+        // followed by --patch to get the full unified diff. Limits diff
+        // size implicitly via run_git's stdout buffering — git itself caps
+        // at no fixed size, but Rust's String::from_utf8_lossy will grow
+        // happily for typical commits.
+        run_git(
+            &path,
+            &[
+                "show",
+                "--stat",
+                "--patch",
+                "--no-color",
+                "--no-decorate",
+                &refspec,
+            ],
+        )
+    })
+    .await
 }

@@ -218,6 +218,8 @@ export interface GitFile {
   worktree_status: string;
   staged: boolean;
   modified: boolean;
+  /** Merge-conflict entry (UU, AA, AU, …). Never also `staged`. */
+  conflicted: boolean;
 }
 
 export interface GitStatus {
@@ -256,6 +258,16 @@ export const git = {
     invoke<string>("git_show", { path, refspec, file }),
   discard: (path: string, files: string[]) =>
     invoke<string>("git_discard", { path, files }),
+  /** Delete untracked files (git clean -f). git_discard's
+   *  `checkout HEAD --` fails on files git has never tracked. */
+  clean: (path: string, files: string[]) =>
+    invoke<string>("git_clean", { path, files }),
+  /** Take one side of a merge conflict wholesale and stage it. */
+  resolveConflict: (path: string, file: string, side: "ours" | "theirs") =>
+    invoke<string>("git_resolve_conflict", { path, file, side }),
+  /** Push; setUpstream publishes the current branch (-u origin). */
+  push: (path: string, setUpstream = false) =>
+    invoke<string>("git_push", { path, setUpstream }),
   branches: (path: string) => invoke<string[]>("git_branches", { path }),
   checkoutBranch: (path: string, branch: string) =>
     invoke<string>("git_checkout_branch", { path, branch }),

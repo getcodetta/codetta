@@ -83,6 +83,8 @@ pub fn run() {
             git::git_diff_staged,
             git::git_show,
             git::git_discard,
+            git::git_clean,
+            git::git_resolve_conflict,
             git::git_branches,
             git::git_checkout_branch,
             git::git_create_branch,
