@@ -21,6 +21,7 @@ import { confirm as dialogConfirm } from "./dialog";
 import { getEditorSettings } from "./editorSettings";
 import { getFootprintSettings } from "./footprintSettings";
 import { basename } from "./pathUtils";
+import { pathsEqual } from "./fsBus";
 import { pushClosedTab, popClosedTab, forgetClosedTab } from "./closedTabsStack";
 import { getRecentFiles } from "./recentFiles";
 
@@ -1657,8 +1658,12 @@ export const useStore = create<AppState>((set, get) => {
     toggleDir: (wsId, path) =>
       updateWs(wsId, (w) => {
         const cur = w.layout.expandedDirs;
-        const next = cur.includes(path)
-          ? cur.filter((p) => p !== path)
+        // Normalize-aware: reveal-in-tree stores forward-slash paths
+        // while tree clicks store the OS-native form. Exact matching
+        // would leave a phantom variant behind and make the folder
+        // impossible to collapse.
+        const next = cur.some((p) => pathsEqual(p, path))
+          ? cur.filter((p) => !pathsEqual(p, path))
           : [...cur, path];
         return { ...w, layout: { ...w.layout, expandedDirs: next } };
       }),

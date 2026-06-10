@@ -181,6 +181,29 @@ function extractMarkdownOutline(content: string): OutlineSymbol[] {
   return out;
 }
 
+// Control-flow keywords that the TS/JS "method" pattern would otherwise
+// match: every indented `if (cond) {` / `for (…) {` line looks exactly
+// like `name(args) {`. Without this filter a typical React component's
+// outline is dominated by if/for/while noise burying the real symbols.
+const NOT_SYMBOL_NAMES = new Set([
+  "if",
+  "for",
+  "while",
+  "switch",
+  "catch",
+  "return",
+  "typeof",
+  "await",
+  "else",
+  "do",
+  "new",
+  "throw",
+  "delete",
+  "void",
+  "in",
+  "of",
+]);
+
 function leadingWhitespace(line: string): number {
   let n = 0;
   for (const ch of line) {
@@ -212,6 +235,7 @@ export function extractFileOutline(
     for (const { kind, re } of set.patterns) {
       const m = re.exec(line);
       if (m && m[1]) {
+        if (NOT_SYMBOL_NAMES.has(m[1])) continue;
         const depth = Math.floor(leadingWhitespace(line) / set.indent);
         out.push({
           line: i + 1,

@@ -38,6 +38,7 @@ import {
   zoomReset,
 } from "./editorSettings";
 import { joinPath } from "./pathUtils";
+import { revealInTree } from "./revealInTree";
 import { toggleZenMode } from "./zenMode";
 
 function runEditorAction(actionId: string) {
@@ -720,48 +721,7 @@ export const commands: CommandSpec[] = [
       if (!active) return;
       const parsed = parseKey(active);
       if (parsed?.kind !== "file") return;
-      // Expand all parent directories of the file in the tree.
-      const parts = parsed.path
-        .replace(/\\/g, "/")
-        .split("/")
-        .slice(0, -1);
-      const expanded = new Set(ws!.layout.expandedDirs);
-      let acc = "";
-      for (const p of parts) {
-        if (!p) continue;
-        acc = acc ? `${acc}/${p}` : p;
-        // Only add when path is absolute or matches workspace prefix.
-      }
-      // Simpler: walk path components from the workspace root.
-      const root = ws!.meta.root.replace(/\\/g, "/").replace(/\/+$/, "");
-      const rel = parsed.path
-        .replace(/\\/g, "/")
-        .replace(root + "/", "");
-      const segs = rel.split("/").slice(0, -1);
-      let cur = root;
-      for (const seg of segs) {
-        cur = `${cur}/${seg}`;
-        expanded.add(cur);
-      }
-      s().setSidebarVisible(wsId, true);
-      s().setSidebarView(wsId, "files");
-      // Apply expanded dirs in one shot.
-      useStore.setState((st) => {
-        const w = st.loaded[wsId];
-        if (!w) return st;
-        return {
-          loaded: {
-            ...st.loaded,
-            [wsId]: {
-              ...w,
-              layout: {
-                ...w.layout,
-                expandedDirs: Array.from(expanded),
-              },
-            },
-          },
-        };
-      });
+      revealInTree(wsId, parsed.path);
     },
   },
   {

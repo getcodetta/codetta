@@ -22,6 +22,7 @@ import { popOutTerminal, redockTerminal } from "../terminalPopout";
 import { AIIcon } from "./AIIcon";
 import { lookupRemoteLink } from "../sftpLinks";
 import { basename, relPath } from "../pathUtils";
+import { revealInTree } from "../revealInTree";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Icon } from "./Icon";
 import { peekClosedTabs, subscribeClosedTabs } from "../closedTabsStack";
@@ -324,41 +325,10 @@ function TabsPaneView(
       });
       out.push({
         label: "Reveal in File Tree",
-        onClick: () => {
-          // Same path-walking logic as view.reveal_in_tree but
-          // parameterised to the right-clicked tab rather than the
-          // active editor — the user might right-click an unfocused
-          // tab and we should reveal *that* file.
-          const root = ws.meta.root.replace(/\\/g, "/").replace(/\/+$/, "");
-          const rel = parsed.path
-            .replace(/\\/g, "/")
-            .replace(root + "/", "");
-          const segs = rel.split("/").slice(0, -1);
-          let cur = root;
-          const expanded = new Set(ws.layout.expandedDirs);
-          for (const seg of segs) {
-            cur = `${cur}/${seg}`;
-            expanded.add(cur);
-          }
-          useStore.getState().setSidebarVisible(wsId, true);
-          useStore.getState().setSidebarView(wsId, "files");
-          useStore.setState((st) => {
-            const w = st.loaded[wsId];
-            if (!w) return st;
-            return {
-              loaded: {
-                ...st.loaded,
-                [wsId]: {
-                  ...w,
-                  layout: {
-                    ...w.layout,
-                    expandedDirs: Array.from(expanded),
-                  },
-                },
-              },
-            };
-          });
-        },
+        // Parameterised to the right-clicked tab rather than the active
+        // editor — the user might right-click an unfocused tab and we
+        // should reveal *that* file.
+        onClick: () => revealInTree(wsId, parsed.path),
       });
       out.push({
         label:

@@ -3547,6 +3547,12 @@ input {
   font-size: 12px;
   text-align: right;
 }
+/* Rulers field holds a comma list ("80, 120"), not a single number —
+   wider and left-aligned. */
+.settings-num.settings-rulers {
+  width: 140px;
+  text-align: left;
+}
 .settings-row-note {
   display: block;
   font-size: 11px;

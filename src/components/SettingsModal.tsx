@@ -50,6 +50,50 @@ import {
   subscribeTemplates,
 } from "../aiTemplates";
 
+// Vertical-rulers editor. The setting (EditorSettings.rulers) was fully
+// implemented and wired into Monaco but had no UI — dead code from the
+// user's perspective. Commits on blur/Enter so half-typed numbers don't
+// flash guides across the editor.
+function RulersRow({ rulers }: { rulers: number[] }) {
+  const [draft, setDraft] = useState(rulers.join(", "));
+  // Re-sync if the value changes underneath us (JSON editor apply).
+  useEffect(() => {
+    setDraft(rulers.join(", "));
+  }, [rulers]);
+  const commit = () => {
+    const parsed = Array.from(
+      new Set(
+        draft
+          .split(/[,\s]+/)
+          .filter(Boolean)
+          .map((s) => Math.round(Number(s)))
+          .filter((n) => Number.isFinite(n) && n > 0 && n < 1000),
+      ),
+    ).sort((a, b) => a - b);
+    setEditorSettings({ rulers: parsed });
+    setDraft(parsed.join(", "));
+  };
+  return (
+    <>
+      <Row label="Vertical rulers">
+        <input
+          className="settings-num settings-rulers"
+          value={draft}
+          placeholder="e.g. 80, 120"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+          }}
+        />
+      </Row>
+      <div className="settings-row settings-row-note">
+        Comma-separated column guides, e.g. 80, 120. Leave empty for none.
+      </div>
+    </>
+  );
+}
+
 // Per-row local draft state. Edits commit on blur (or on Enter for the
 // label input). We can't mutate templates in place — the underlying
 // store has no updateTemplate — so each blur-commit removes the old
@@ -521,6 +565,7 @@ export function SettingsModal() {
               Reindent surrounding code as you type ; or {"}"}; auto-format
               pasted code. Off by default.
             </div>
+            <RulersRow rulers={settings.rulers} />
           </Section>
 
           <Section title="On save">

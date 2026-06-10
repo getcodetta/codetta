@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { fs, type DirEntry } from "../ipc";
@@ -21,6 +21,7 @@ import {
   subscribeActiveSftp,
 } from "../sftpLinks";
 import { findSftpProfile, profileToConn } from "../sftpProfiles";
+import { REVEAL_IN_TREE_EVENT } from "../revealInTree";
 import { basename, dirname, joinPath } from "../pathUtils";
 import { dropRecentFile } from "../recentFiles";
 import {
@@ -45,8 +46,13 @@ interface NodeProps {
 }
 
 function Node({ wsId, entry, depth, onContext }: NodeProps) {
+  // Normalize-aware match: reveal-in-tree stores forward-slash paths
+  // while entry.path is OS-native (backslashes on Windows). Exact
+  // string compare made "Reveal in Explorer" a silent no-op there.
   const expanded = useStore((s) =>
-    (s.loaded[wsId]?.layout.expandedDirs ?? []).includes(entry.path),
+    (s.loaded[wsId]?.layout.expandedDirs ?? []).some((d) =>
+      pathsEqual(d, entry.path),
+    ),
   );
   const toggleDir = useStore((s) => s.toggleDir);
   const openFile = useStore((s) => s.openFile);
@@ -180,6 +186,7 @@ function Node({ wsId, entry, depth, onContext }: NodeProps) {
       <div
         className={`tree-row ${isActive ? "active" : ""}`}
         style={{ paddingLeft: 6 + depth * 12 }}
+        data-path={entry.path}
         tabIndex={0}
         role={entry.is_dir ? "treeitem" : "button"}
         aria-expanded={entry.is_dir ? expanded : undefined}
@@ -228,6 +235,41 @@ interface Props {
 export function FileTree({ wsId, root }: Props) {
   const [entries, setEntries] = useState<DirEntry[]>([]);
   const [menu, setMenu] = useState<MenuTarget | null>(null);
+  const treeRef = useRef<HTMLDivElement | null>(null);
+
+  // Scroll-into-view half of reveal-in-tree. Lazily-loaded levels need
+  // one listDir round trip each before the row exists, so retry on a
+  // short timer instead of assuming a single fixed delay is enough.
+  useEffect(() => {
+    let timer: number | null = null;
+    const handler = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as {
+        wsId: string;
+        path: string;
+      };
+      if (detail.wsId !== wsId) return;
+      let attempts = 0;
+      const tryScroll = () => {
+        attempts++;
+        const rows =
+          treeRef.current?.querySelectorAll<HTMLElement>("[data-path]") ?? [];
+        for (const row of rows) {
+          if (pathsEqual(row.dataset.path ?? "", detail.path)) {
+            row.scrollIntoView({ block: "center" });
+            row.focus();
+            return;
+          }
+        }
+        if (attempts < 25) timer = window.setTimeout(tryScroll, 80);
+      };
+      tryScroll();
+    };
+    window.addEventListener(REVEAL_IN_TREE_EVENT, handler);
+    return () => {
+      window.removeEventListener(REVEAL_IN_TREE_EVENT, handler);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [wsId]);
   // Subscribe to the active SFTP session so the right-click menu can
   // light up "Push" / "Upload to remote" entries when a connection is
   // live. Stored as a tick counter — we only need to re-render, the
@@ -585,6 +627,7 @@ export function FileTree({ wsId, root }: Props) {
 
   return (
     <div
+      ref={treeRef}
       className="tree"
       role="tree"
       onContextMenu={(e) => {
