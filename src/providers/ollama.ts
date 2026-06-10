@@ -67,6 +67,11 @@ export const ollamaProvider: ChatProvider = {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
+    // Ollama's API returns no tool-call ids. Without one, the chat UI's
+    // id-keyed rendering (blocks log, result pairing, status rows)
+    // collapses every call in a turn onto the same row — synthesize a
+    // unique id per call instead.
+    let callSeq = 0;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -111,7 +116,7 @@ export const ollamaProvider: ChatProvider = {
               yield {
                 kind: "tool_call",
                 call: {
-                  id: c.id,
+                  id: c.id ?? `ollama_${callSeq++}_${fn.name}`,
                   function: { name: fn.name, arguments: args },
                 },
               };

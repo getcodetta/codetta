@@ -378,6 +378,10 @@ export function ToolCallRow({
   call: ToolCall;
   result: string | undefined;
 }) {
+  // Hook before the edit-card early return — a row whose args stream in
+  // can flip between the generic and diff renders across re-renders,
+  // and a conditional hook would then violate React's hook ordering.
+  const [expanded, setExpanded] = useState(false);
   // Edit / Write / MultiEdit get a richer view that shows the actual
   // diff inline, since the bare args summary ("file_path foo.ts") tells
   // the user nothing about *what changed*. Falls through to the generic
@@ -386,8 +390,6 @@ export function ToolCallRow({
   if (editDiffs && editDiffs.length > 0) {
     return <EditDiffCard call={call} diffs={editDiffs} result={result} />;
   }
-
-  const [expanded, setExpanded] = useState(false);
   const label = friendlyToolName(call.function.name);
   const detail = primaryToolDetail(call.function.arguments);
   const hasResult = typeof result === "string";

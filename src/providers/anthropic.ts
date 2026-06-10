@@ -146,65 +146,135 @@ export const anthropicProvider: ChatProvider = {
       { id: string; name: string; argsBuf: string }
     >();
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf("\n")) >= 0) {
-        const rawLine = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        const line = rawLine.trim();
-        if (!line || !line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (!payload) continue;
-        try {
-          const j = JSON.parse(payload) as {
-            type?: string;
-            index?: number;
-            content_block?: {
+    let finished = false;
+    let aborted = false;
+    // Token accounting: message_start carries the prompt-side counts
+    // up front, message_delta carries the cumulative output count near
+    // the end. An aborted turn still bills its input tokens, so we
+    // report whatever arrived even without a message_stop.
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheRead = 0;
+    let cacheCreate = 0;
+    let sawUsage = false;
+
+    try {
+      while (!finished) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const rawLine = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          const line = rawLine.trim();
+          if (!line || !line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (!payload) continue;
+          try {
+            const j = JSON.parse(payload) as {
               type?: string;
-              id?: string;
-              name?: string;
+              index?: number;
+              content_block?: {
+                type?: string;
+                id?: string;
+                name?: string;
+              };
+              delta?: {
+                type?: string;
+                text?: string;
+                partial_json?: string;
+              };
+              message?: {
+                usage?: {
+                  input_tokens?: number;
+                  cache_read_input_tokens?: number;
+                  cache_creation_input_tokens?: number;
+                };
+              };
+              usage?: { output_tokens?: number };
             };
-            delta?: {
-              type?: string;
-              text?: string;
-              partial_json?: string;
-            };
-          };
-          if (j.type === "content_block_start" && j.content_block?.type === "tool_use") {
-            blocks.set(j.index ?? 0, {
-              id: j.content_block.id ?? `tool_${j.index ?? 0}`,
-              name: j.content_block.name ?? "",
-              argsBuf: "",
-            });
-          } else if (j.type === "content_block_delta") {
-            if (j.delta?.type === "text_delta" && j.delta.text) {
-              yield { kind: "content", text: j.delta.text };
-            } else if (j.delta?.type === "input_json_delta" && j.delta.partial_json) {
+            if (j.type === "message_start" && j.message?.usage) {
+              const u = j.message.usage;
+              inputTokens = u.input_tokens ?? 0;
+              cacheRead = u.cache_read_input_tokens ?? 0;
+              cacheCreate = u.cache_creation_input_tokens ?? 0;
+              sawUsage = true;
+            } else if (j.type === "content_block_start" && j.content_block?.type === "tool_use") {
+              blocks.set(j.index ?? 0, {
+                id: j.content_block.id ?? `tool_${j.index ?? 0}`,
+                name: j.content_block.name ?? "",
+                argsBuf: "",
+              });
+            } else if (j.type === "content_block_delta") {
+              if (j.delta?.type === "text_delta" && j.delta.text) {
+                yield { kind: "content", text: j.delta.text };
+              } else if (j.delta?.type === "input_json_delta" && j.delta.partial_json) {
+                const cur = blocks.get(j.index ?? 0);
+                if (cur) cur.argsBuf += j.delta.partial_json;
+              }
+            } else if (j.type === "content_block_stop") {
               const cur = blocks.get(j.index ?? 0);
-              if (cur) cur.argsBuf += j.delta.partial_json;
+              if (cur && cur.name) {
+                yield { kind: "tool_call", call: makeCallFromBlock(cur) };
+                blocks.delete(j.index ?? 0);
+              }
+            } else if (j.type === "message_delta") {
+              // Cumulative, not incremental — replace, don't add.
+              if (typeof j.usage?.output_tokens === "number") {
+                outputTokens = j.usage.output_tokens;
+                sawUsage = true;
+              }
+            } else if (j.type === "message_stop") {
+              finished = true;
+              break;
             }
-          } else if (j.type === "content_block_stop") {
-            const cur = blocks.get(j.index ?? 0);
-            if (cur && cur.name) {
-              yield { kind: "tool_call", call: makeCallFromBlock(cur) };
-              blocks.delete(j.index ?? 0);
-            }
-          } else if (j.type === "message_stop") {
-            return;
+          } catch {
+            /* skip */
           }
-        } catch {
-          /* skip */
         }
       }
+    } catch (e) {
+      // Stop must keep partials: rethrowing the abort makes the chat
+      // panel skip committing the streamed text. End the generator
+      // gracefully instead — everything already yielded survives.
+      if (!isAbortError(e)) throw e;
+      aborted = true;
     }
-    for (const cur of blocks.values()) {
-      if (cur.name) yield { kind: "tool_call", call: makeCallFromBlock(cur) };
+    // Flush any block that never saw content_block_stop — but not on
+    // abort, where half-streamed argument JSON would produce calls
+    // with bogus empty args.
+    if (!aborted) {
+      for (const cur of blocks.values()) {
+        if (cur.name) yield { kind: "tool_call", call: makeCallFromBlock(cur) };
+      }
+    }
+    if (sawUsage) {
+      // No BYOK pricing table exists, so cost stays unset rather than
+      // inventing per-model rates — the dashboard still gets tokens.
+      yield {
+        kind: "usage",
+        model,
+        tokens: {
+          input: inputTokens,
+          output: outputTokens,
+          cacheRead,
+          cacheCreate,
+        },
+      };
     }
   },
 };
+
+// Name-based check rather than instanceof — abort surfaces as a
+// DOMException, whose prototype chain varies across webview versions.
+function isAbortError(e: unknown): boolean {
+  return (
+    !!e &&
+    typeof e === "object" &&
+    (e as { name?: unknown }).name === "AbortError"
+  );
+}
 
 function makeCallFromBlock(c: {
   id: string;
