@@ -13,6 +13,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { pty } from "../ipc";
 import { useStore } from "../store";
 import { useResolvedTheme } from "../theme";
+import { getEditorSettings, useEditorSettings } from "../editorSettings";
 import { setEditorGoto } from "../editorState";
 import { ContextMenu } from "./ContextMenu";
 
@@ -138,6 +139,9 @@ export function TerminalCore({
     cwdRef.current = cwd;
   }, [cwd]);
   const resolvedTheme = useResolvedTheme();
+  // Terminal font tracks the editor's font size so Ctrl+= / Ctrl+- zoom
+  // and the settings slider apply everywhere, not just in Monaco.
+  const { fontSize } = useEditorSettings();
 
   // Right-click context menu. Without it the raw WebView2 menu showed
   // (with a Refresh item that could discard unsaved work).
@@ -198,7 +202,10 @@ export function TerminalCore({
         : xtermDark;
     const term = new Terminal({
       fontFamily: 'Cascadia Mono, Consolas, "Courier New", monospace',
-      fontSize: 13,
+      // Read imperatively — this mount-once effect must not re-run (it
+      // would respawn the PTY); the live-update effect below handles
+      // later font-size changes.
+      fontSize: getEditorSettings().fontSize,
       theme: initialTheme,
       cursorBlink: true,
       convertEol: true,
@@ -519,6 +526,23 @@ export function TerminalCore({
       ptyIdRef.current = null;
     };
   }, []);
+
+  // Apply font-size changes live. Refit after — a bigger glyph means
+  // fewer cols/rows fit, and without the refit the bottom rows clip
+  // until the next resize. Skip the fit while hidden (display:none host
+  // reports 0×0 and would collapse the grid to 1×1).
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    try {
+      term.options.fontSize = fontSize;
+      if (hostNodeRef.current && hostNodeRef.current.offsetWidth > 0) {
+        fitRef.current?.fit();
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [fontSize]);
 
   // Whenever the host node mounts (or remounts in a new portal target),
   // bind xterm to it and refit.

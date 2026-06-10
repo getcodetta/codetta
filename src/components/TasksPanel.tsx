@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useStore } from "../store";
+import { findTabsPaneByTab, termKey, useStore } from "../store";
 import { fs, pty, search } from "../ipc";
 import { errMsg } from "../notify";
 import { Icon } from "./Icon";
@@ -55,6 +55,37 @@ async function detectPackageManager(root: string): Promise<PackageManager> {
   return "npm";
 }
 
+// Session-local task → terminal binding so repeated Run clicks reuse one
+// shell instead of piling up a new terminal per click. Module-level (not
+// store state) on purpose: the store's TerminalShell can't carry a title
+// without also overriding which shell binary spawns, and there's no
+// rename-terminal action — so reuse-by-title isn't expressible without
+// store changes. A plain Map survives panel unmount/remount (sidebar
+// section collapse) but intentionally resets with the page, matching the
+// "this session" semantics. Keyed by wsId + kind + name so a Rust + JS
+// project's two "build" tasks get separate terminals.
+const sessionTaskTerms = new Map<string, string>();
+const taskMapKey = (wsId: string, task: Task) =>
+  `${wsId}|${task.kind}:${task.name}`;
+
+/** Bring an existing terminal tab to the front, revealing the bottom
+ *  panel if that's where it lives. No-op if the tab is gone. */
+function focusTerminalTab(wsId: string, termId: string): void {
+  const state = useStore.getState();
+  const ws = state.loaded[wsId];
+  if (!ws) return;
+  const k = termKey(termId);
+  const inBottom = ws.layout.bottomRoot
+    ? findTabsPaneByTab(ws.layout.bottomRoot, k)
+    : null;
+  const pane = inBottom ?? findTabsPaneByTab(ws.layout.editorRoot, k);
+  if (!pane) return;
+  if (inBottom && !ws.layout.bottomVisible) {
+    state.setBottomVisible(wsId, true);
+  }
+  state.setActiveTab(wsId, pane.id, k);
+}
+
 export function TasksPanel({ wsId, root }: Props) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -106,8 +137,35 @@ export function TasksPanel({ wsId, root }: Props) {
     void refresh();
   }, [refresh]);
 
-  const runTask = (task: Task) => {
+  const runTask = async (task: Task) => {
+    const key = taskMapKey(wsId, task);
+    // Reuse the terminal a previous Run created for this task, but only
+    // when its PTY is still alive — a dead shell would swallow the write.
+    // We deliberately do NOT send Ctrl+C first: we can't tell whether the
+    // previous run is still going, and interrupting a dev server the user
+    // is relying on would be worse than the command queueing at a prompt.
+    const prevTermId = sessionTaskTerms.get(key);
+    if (prevTermId) {
+      const desc = useStore.getState().loaded[wsId]?.terminals[prevTermId];
+      let alive = false;
+      if (desc?.ptyId) {
+        try {
+          alive = await pty.sessionExists(desc.ptyId);
+        } catch {
+          alive = false;
+        }
+      }
+      if (desc?.ptyId && alive) {
+        focusTerminalTab(wsId, prevTermId);
+        void pty.write(desc.ptyId, `${task.runCmd}\r`).catch(() => {});
+        return;
+      }
+      // Terminal was closed or its shell exited — fall through and spawn
+      // a fresh one under the same task key.
+      sessionTaskTerms.delete(key);
+    }
     const termId = useStore.getState().addTerminal(wsId, "bottom");
+    sessionTaskTerms.set(key, termId);
     const cmd = task.runCmd;
     // Wait for the new terminal's PTY id to appear in the store. The
     // subscription fires on every state change, so we capture a stable
@@ -131,6 +189,28 @@ export function TasksPanel({ wsId, root }: Props) {
       unsub();
       cleanup = null;
     };
+  };
+
+  // Reactive read of the workspace's terminals so rows flip between
+  // Run / Run+Stop as task terminals appear and get closed. The map
+  // itself is module-level; this selector is what re-renders us when a
+  // mapped terminal is closed (its descriptor leaves the store).
+  const terminals = useStore((s) => s.loaded[wsId]?.terminals);
+
+  /** The live terminal bound to this task this session, if any. */
+  const taskTerminal = (task: Task) => {
+    const termId = sessionTaskTerms.get(taskMapKey(wsId, task));
+    return termId ? terminals?.[termId] : undefined;
+  };
+
+  // Ctrl+C the task's terminal. We send the interrupt rather than kill
+  // the PTY so the shell (and its scrollback) survives for a re-run.
+  const stopTask = (task: Task) => {
+    const desc = taskTerminal(task);
+    if (desc?.ptyId) {
+      void pty.write(desc.ptyId, "\x03").catch(() => {});
+      focusTerminalTab(wsId, desc.id);
+    }
   };
 
   // Group tasks by kind for rendering. Empty groups disappear.
@@ -166,23 +246,52 @@ export function TasksPanel({ wsId, root }: Props) {
       {grouped.map((group) => (
         <div key={group.kind} className="tasks-list">
           <div className="tasks-group-label">{group.label}</div>
-          {group.items.map((s) => (
-            <div key={`${group.kind}:${s.name}`} className="task-row">
-              <div>
-                <div className="task-name">{s.name}</div>
-                <div className="task-cmd">{s.command}</div>
+          {group.items.map((s) => {
+            const live = taskTerminal(s);
+            return (
+              <div key={`${group.kind}:${s.name}`} className="task-row">
+                <div>
+                  <div className="task-name">
+                    {live && (
+                      <span
+                        className="task-live-dot"
+                        title="Started this session — terminal is open"
+                        aria-hidden
+                      />
+                    )}
+                    {s.name}
+                  </div>
+                  <div className="task-cmd">{s.command}</div>
+                </div>
+                <div className="task-actions">
+                  {live && (
+                    <button
+                      className="task-run task-stop"
+                      onClick={() => stopTask(s)}
+                      title="Send Ctrl+C to this task's terminal"
+                      aria-label={`Stop ${s.name}`}
+                    >
+                      <Icon name="stop" size={12} />
+                      <span>Stop</span>
+                    </button>
+                  )}
+                  <button
+                    className="task-run"
+                    onClick={() => void runTask(s)}
+                    title={
+                      live
+                        ? `Run "${s.runCmd}" in its existing terminal`
+                        : `Run "${s.runCmd}" in a bottom-panel terminal`
+                    }
+                    aria-label={`Run ${s.name}`}
+                  >
+                    <Icon name="play" size={12} />
+                    <span>Run</span>
+                  </button>
+                </div>
               </div>
-              <button
-                className="task-run"
-                onClick={() => runTask(s)}
-                title={`Run "${s.runCmd}" in a new bottom-panel terminal`}
-                aria-label={`Run ${s.name}`}
-              >
-                <Icon name="play" size={12} />
-                <span>Run</span>
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ))}
     </div>

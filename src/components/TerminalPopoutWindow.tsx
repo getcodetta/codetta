@@ -3,6 +3,7 @@ import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TerminalCore } from "./TerminalCore";
 import { bootstrapTheme } from "../theme";
+import { setEditorSettings } from "../editorSettings";
 import { pty } from "../ipc";
 import { Icon } from "./Icon";
 
@@ -66,6 +67,7 @@ function readParams(): PopoutParams | null {
 export function TerminalPopoutWindow() {
   const [params] = useState<PopoutParams | null>(() => readParams());
   const [host, setHost] = useState<HTMLDivElement | null>(null);
+  const [maximized, setMaximized] = useState(false);
   // Ref callback so React re-renders TerminalCore once the host div mounts.
   const setHostRef = useCallback((node: HTMLDivElement | null) => {
     setHost(node);
@@ -94,6 +96,60 @@ export function TerminalPopoutWindow() {
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  // Same cross-window channel for editor settings, so a font-size change
+  // (zoom or settings slider) in main reaches this popout's terminal live.
+  // setEditorSettings re-persists the identical JSON, which by spec does
+  // NOT re-fire a storage event in other windows — no echo loop.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== "lcp.editorSettings" || !e.newValue) return;
+      try {
+        const parsed: unknown = JSON.parse(e.newValue);
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof (parsed as { fontSize?: unknown }).fontSize === "number"
+        ) {
+          setEditorSettings({
+            fontSize: (parsed as { fontSize: number }).fontSize,
+          });
+        }
+      } catch {
+        /* ignore malformed payloads */
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  // Track maximized state so the middle window-control can flip between
+  // the maximize / restore glyphs, mirroring TopBar's pattern.
+  useEffect(() => {
+    let unl: (() => void) | undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const win = getCurrentWindow();
+        const update = async () => {
+          try {
+            const m = await win.isMaximized();
+            if (!cancelled) setMaximized(m);
+          } catch {
+            /* ignore */
+          }
+        };
+        await update();
+        unl = await win.onResized(() => void update());
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unl?.();
+    };
   }, []);
 
   // Mirror the OS title with the terminal name so taskbar/preview is useful.
@@ -179,6 +235,91 @@ export function TerminalPopoutWindow() {
           <Icon name="rotate-ccw" size={12} />
           <span>Re-dock</span>
         </button>
+        <div className="window-controls" data-tauri-drag-region={false}>
+          <button
+            className="winctl"
+            title="Minimize"
+            aria-label="Minimize window"
+            onClick={() => void getCurrentWindow().minimize().catch(() => {})}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10">
+              <rect x="0" y="4.5" width="10" height="1" fill="currentColor" />
+            </svg>
+          </button>
+          <button
+            className="winctl"
+            title={maximized ? "Restore" : "Maximize"}
+            aria-label={maximized ? "Restore window" : "Maximize window"}
+            onClick={() =>
+              void getCurrentWindow().toggleMaximize().catch(() => {})
+            }
+          >
+            {maximized ? (
+              <svg width="10" height="10" viewBox="0 0 10 10">
+                <rect
+                  x="0.5"
+                  y="2.5"
+                  width="7"
+                  height="7"
+                  fill="none"
+                  stroke="currentColor"
+                />
+                <rect
+                  x="2.5"
+                  y="0.5"
+                  width="7"
+                  height="7"
+                  fill="none"
+                  stroke="currentColor"
+                />
+              </svg>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 10 10">
+                <rect
+                  x="0.5"
+                  y="0.5"
+                  width="9"
+                  height="9"
+                  fill="none"
+                  stroke="currentColor"
+                />
+              </svg>
+            )}
+          </button>
+          <button
+            className="winctl winctl-close"
+            title="Close window (terminal re-docks to the main window)"
+            aria-label="Close window"
+            onClick={() => {
+              // Close = re-dock, not kill: the tab (and its PTY) lives on
+              // in main. Routing through the redock event lets main do
+              // the close — self-close is sometimes silently dropped in
+              // Tauri 2 (see the comment above redock()) — with a direct
+              // close as backup for when main isn't listening anymore.
+              redock();
+              void getCurrentWindow().close().catch(() => {});
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10">
+              <line
+                x1="0"
+                y1="0"
+                x2="10"
+                y2="10"
+                stroke="currentColor"
+                strokeWidth="1.2"
+              />
+              <line
+                x1="10"
+                y1="0"
+                x2="0"
+                y2="10"
+                stroke="currentColor"
+                strokeWidth="1.2"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
       <div ref={setHostRef} className="popout-term-host">
         <TerminalCore
