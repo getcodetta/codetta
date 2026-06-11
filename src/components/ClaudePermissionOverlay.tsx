@@ -199,6 +199,20 @@ export function ClaudePermissionOverlay() {
 
     void listen<PermissionRequest>("claude:permission-request", (e) => {
       const req = e.payload;
+      // AskUserQuestion can't work headless — the CLI's question UI
+      // doesn't exist under -p, so the call dies opaquely and the user
+      // never sees the question. Deny with a reason that redirects the
+      // model to ask in plain text; the question then arrives as a
+      // normal assistant message the user can answer in the input.
+      if (req.tool_name === "AskUserQuestion") {
+        void invoke("claude_perm_decide", {
+          requestId: req.request_id,
+          decision: "deny",
+          reason:
+            "Interactive question UI is not available in this editor. Ask the user directly in your response text instead — state the question and list the options plainly, then END YOUR TURN and wait for their reply.",
+        }).catch((err) => console.warn("ask-redirect failed", err));
+        return;
+      }
       // PRIVACY GATE — comes BEFORE always-allow rules. If the
       // requested path matches a privacy exclusion glob, deny
       // immediately and never surface the card. The agent gets a
@@ -258,25 +272,15 @@ export function ClaudePermissionOverlay() {
     };
   }, []);
 
-  if (queue.length === 0) return null;
-  const req = queue[0];
-  const isBash = req.tool_name === "Bash";
-  const bashCmd =
-    isBash && typeof req.tool_input.command === "string"
-      ? req.tool_input.command
-      : "";
-  const bashPrefix = isBash ? bashFirstToken(bashCmd) : "";
-  const canBlanketAllow = !NEVER_BLANKET_ALLOW.has(req.tool_name);
-  // File-extension always-allow only makes sense for tools whose primary
-  // input is a file path (Edit/Write/Read/MultiEdit/NotebookEdit).
-  const fileExt = PATH_TOOLS.has(req.tool_name)
-    ? (() => {
-        const p = pathFromInput(req.tool_input);
-        return p ? extFromPath(p) : null;
-      })()
-    : null;
+  // NOTE: every hook must live ABOVE the early return below — this
+  // component renders null whenever the queue is empty, and a hook
+  // after that return crashes React ("rendered more hooks than during
+  // the previous render") the instant the FIRST permission card
+  // arrives.
+  const req: PermissionRequest | null = queue[0] ?? null;
 
   const respond = async (decision: "allow" | "deny") => {
+    if (!req) return;
     try {
       await invoke("claude_perm_decide", {
         requestId: req.request_id,
@@ -293,6 +297,7 @@ export function ClaudePermissionOverlay() {
   // mousing to the button row each time. Skipped if the user is typing
   // in an input (so Enter inside the chat input still sends a message).
   useEffect(() => {
+    if (!req) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const isTyping =
@@ -314,7 +319,24 @@ export function ClaudePermissionOverlay() {
     // respond closes over req.request_id which changes between cards;
     // re-binding per card is correct.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [req.request_id]);
+  }, [req?.request_id]);
+
+  if (!req) return null;
+  const isBash = req.tool_name === "Bash";
+  const bashCmd =
+    isBash && typeof req.tool_input.command === "string"
+      ? req.tool_input.command
+      : "";
+  const bashPrefix = isBash ? bashFirstToken(bashCmd) : "";
+  const canBlanketAllow = !NEVER_BLANKET_ALLOW.has(req.tool_name);
+  // File-extension always-allow only makes sense for tools whose primary
+  // input is a file path (Edit/Write/Read/MultiEdit/NotebookEdit).
+  const fileExt = PATH_TOOLS.has(req.tool_name)
+    ? (() => {
+        const p = pathFromInput(req.tool_input);
+        return p ? extFromPath(p) : null;
+      })()
+    : null;
 
   const allowAlwaysTool = async () => {
     const next: AllowRules = {

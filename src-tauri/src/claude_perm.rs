@@ -55,8 +55,12 @@ pub enum PermDecision {
 
 /// In-flight permission requests: request_id -> reply channel sender.
 /// Each pending HTTP handler thread parks on its receiver waiting for
-/// the frontend to POST back via `claude_perm_decide`.
-type PendingMap = Arc<Mutex<HashMap<String, mpsc::Sender<PermDecision>>>>;
+/// the frontend to POST back via `claude_perm_decide`. The optional
+/// string is a deny reason surfaced to the MODEL via the hook's
+/// permissionDecisionReason — e.g. "ask the user in plain text" for
+/// AskUserQuestion redirects.
+type PendingMap =
+    Arc<Mutex<HashMap<String, mpsc::Sender<(PermDecision, Option<String>)>>>>;
 
 #[derive(Default)]
 pub struct PermState {
@@ -209,7 +213,7 @@ fn handle_request(
 
     // Set up the reply channel BEFORE emitting the event so we can't
     // miss a fast frontend response.
-    let (tx, rx) = mpsc::channel::<PermDecision>();
+    let (tx, rx) = mpsc::channel::<(PermDecision, Option<String>)>();
     pending.lock().insert(request_id.clone(), tx);
 
     let req_for_frontend = PermissionRequest {
@@ -226,26 +230,30 @@ fn handle_request(
     // Code's 60s hook timeout kills the curl process; otherwise a
     // late user click would land on a card whose request is gone.
     let recv_result = rx.recv_timeout(DECISION_TIMEOUT);
-    let decision = match recv_result {
+    let (decision, reason) = match recv_result {
         Ok(d) => d,
         Err(_) => {
             // Timed out — the hook process is about to die (or has).
             // Tell the frontend to drop this card so the user doesn't
             // see a ghost waiting for their click.
             let _ = app.emit("claude:permission-cancelled", &request_id);
-            PermDecision::Deny
+            (PermDecision::Deny, None)
         }
     };
 
     // Clean up the pending entry.
     pending.lock().remove(&request_id);
 
-    // Hook protocol: exit 0 = allow, exit 2 = deny. The hook command
-    // we install reads our HTTP body for one of those numbers and
-    // exits with it. So the response body literally is "0" or "2".
+    // Body protocol the hook script parses: "0" = allow, "2" = deny,
+    // "2:<reason>" = deny with a permissionDecisionReason the model
+    // reads. Reasons are flattened to one line — the script splits on
+    // the first ':' only.
     let body = match decision {
-        PermDecision::Allow => "0",
-        PermDecision::Deny => "2",
+        PermDecision::Allow => "0".to_string(),
+        PermDecision::Deny => match reason {
+            Some(r) => format!("2:{}", r.replace('\n', " ")),
+            None => "2".to_string(),
+        },
     };
     let _ = request.respond(
         Response::from_string(body)
@@ -268,9 +276,10 @@ pub fn claude_perm_decide(
     state: tauri::State<'_, PermState>,
     request_id: String,
     decision: PermDecision,
+    reason: Option<String>,
 ) -> Result<(), String> {
     if let Some(tx) = state.pending.lock().remove(&request_id) {
-        let _ = tx.send(decision);
+        let _ = tx.send((decision, reason));
         Ok(())
     } else {
         // Already timed out or never existed. Not an error per se —

@@ -109,8 +109,12 @@ pub fn claude_code_check() -> Result<String, String> {
 /// if Claude can `Read .env` without the hook firing). The overlay
 /// auto-allows them immediately after the privacy check — they never
 /// produce a permission card, so day-to-day friction is unchanged.
+/// AskUserQuestion is gated so the overlay can redirect it: in -p
+/// (headless) mode the CLI has no question UI, so the call would just
+/// fail opaquely. The overlay denies it with a reason telling the
+/// model to ask in plain text and end its turn.
 const PERMISSION_GATED_TOOLS: &str =
-    "Bash|Edit|MultiEdit|Write|NotebookEdit|WebFetch|WebSearch|Read|Grep|Glob";
+    "Bash|Edit|MultiEdit|Write|NotebookEdit|WebFetch|WebSearch|Read|Grep|Glob|AskUserQuestion";
 
 /// Cached resolution of the working `claude` executable name. On
 /// Windows, npm-installed Claude Code is `claude.cmd`, which
@@ -393,8 +397,12 @@ fn ensure_pretooluse_hook(workspace: &str, endpoint: &str) -> Result<(), String>
 fn build_hook_command(endpoint: &str) -> String {
     // Node one-liner. Inlined for minimum config-file size.
     // Logic: pipe stdin → POST endpoint → emit hook-protocol JSON.
+    // Server body protocol: "0" = allow, "2" = deny, "2:<reason>" =
+    // deny with a permissionDecisionReason the model gets to read —
+    // used e.g. to redirect AskUserQuestion ("ask in plain text") so
+    // the agent recovers instead of treating it as a hard failure.
     let js = format!(
-        r#"const http=require('http');let b='';process.stdin.on('data',c=>b+=c).on('end',()=>{{let done=false;function out(d){{if(done)return;done=true;process.stdout.write(JSON.stringify({{hookSpecificOutput:{{hookEventName:'PreToolUse',permissionDecision:d}}}}));process.exit(0)}}const t=setTimeout(()=>out('allow'),3000);try{{const u=new URL('{endpoint}');const r=http.request({{hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{{'content-length':Buffer.byteLength(b)}}}},res=>{{let d='';res.on('data',c=>d+=c);res.on('end',()=>{{clearTimeout(t);out(parseInt(String(d).trim(),10)===2?'deny':'allow')}})}});r.on('error',()=>{{clearTimeout(t);out('allow')}});r.write(b);r.end()}}catch(_){{clearTimeout(t);out('allow')}}}});"#,
+        r#"const http=require('http');let b='';process.stdin.on('data',c=>b+=c).on('end',()=>{{let done=false;function out(d,reason){{if(done)return;done=true;const o={{hookEventName:'PreToolUse',permissionDecision:d}};if(reason)o.permissionDecisionReason=reason;process.stdout.write(JSON.stringify({{hookSpecificOutput:o}}));process.exit(0)}}const t=setTimeout(()=>out('allow'),3000);try{{const u=new URL('{endpoint}');const r=http.request({{hostname:u.hostname,port:u.port,path:u.pathname+u.search,method:'POST',headers:{{'content-length':Buffer.byteLength(b)}}}},res=>{{let d='';res.on('data',c=>d+=c);res.on('end',()=>{{clearTimeout(t);const s=String(d).trim();if(s[0]==='2'){{const i=s.indexOf(':');out('deny',i>0?s.slice(i+1):undefined)}}else{{out('allow')}}}})}});r.on('error',()=>{{clearTimeout(t);out('allow')}});r.write(b);r.end()}}catch(_){{clearTimeout(t);out('allow')}}}});"#,
         endpoint = endpoint
     );
     format!("node -e \"{}\"", js.replace('"', "\\\""))

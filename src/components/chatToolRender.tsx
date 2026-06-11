@@ -118,9 +118,16 @@ function resultPreview(result: string): string {
 // names so this works for both Claude Code's tool catalog (file_path,
 // command, url, …) and our own (path, query, …).
 export function toolDetailFor(
-  _name: string,
+  name: string,
   args: Record<string, unknown>,
 ): string {
+  // AskUserQuestion carries its content in a nested questions array —
+  // show the actual question text so the chip isn't a blank
+  // "AskUserQuestion" row the user can't act on.
+  if (name === "AskUserQuestion" && Array.isArray(args.questions)) {
+    const q = args.questions[0] as Record<string, unknown> | undefined;
+    if (q && typeof q.question === "string") return q.question.slice(0, 200);
+  }
   for (const key of [
     "url",
     "path",

@@ -515,6 +515,12 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   useEffect(() => {
     if (status === "ready" || status === "checking") return;
     if (isAnyPulling) return;
+    // Don't keep probing localhost:11434 when the user isn't even on
+    // Ollama — Claude Code / cloud-key users got a console full of
+    // ECONNREFUSED for a runtime they never installed. One mount-time
+    // probe (above) is enough to populate provider availability.
+    const prov = parseQualifiedModel(selected ?? "")?.providerId;
+    if (prov && prov !== "ollama") return;
     let attempt = 0;
     let timer: number | undefined;
     const tick = () => {
@@ -530,7 +536,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     return () => {
       if (timer != null) window.clearTimeout(timer);
     };
-  }, [status, isAnyPulling]);
+  }, [status, isAnyPulling, selected]);
 
   // Expose workspace root globally so the Claude Code provider can spawn
   // its CLI subprocess with the right cwd. Stored via the typed
@@ -2974,6 +2980,16 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   // even though more was coming. Keep the spinner +
                   // active wording until streaming actually closes.
                   const streamStillActive = streaming !== null;
+                  // When the live bubble is rendering the chronological
+                  // blocks log (agentic providers), every tool already
+                  // appears INLINE where it happened — repeating the
+                  // rows down here doubled the list. Keep just the
+                  // one-line progress header in that case; the full
+                  // row list remains for providers whose tools run
+                  // outside the blocks log (local tool loop).
+                  const toolsRenderedInline = streamingBlocks.some(
+                    (b) => b.kind === "tool_call",
+                  );
                   return (
                     <>
                       <span className="ai-thinking ai-running-header">
@@ -2990,7 +3006,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                             ? `Finished ${total} tool${total === 1 ? "" : "s"}`
                             : `${done} of ${total} done · ${total - done} running`}
                       </span>
-                      <RunningToolList entries={activeToolLabels} />
+                      {!toolsRenderedInline && (
+                        <RunningToolList entries={activeToolLabels} />
+                      )}
                     </>
                   );
                 })()}
