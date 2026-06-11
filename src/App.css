@@ -4822,6 +4822,115 @@ input {
   font-size: 11px;
   font-weight: 700;
 }
+/* Task Manager modal — Codetta's own process tree with CPU/RAM. */
+.taskman-modal {
+  width: min(760px, 92vw);
+  height: min(540px, 80vh);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.taskman-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.taskman-totals {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+.taskman-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.taskman-close:hover {
+  color: var(--fg);
+}
+.taskman-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+.taskman-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.taskman-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-elev);
+  text-align: left;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--fg-muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.taskman-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+.taskman-table th.num,
+.taskman-table td.num {
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.taskman-indent {
+  display: inline-block;
+}
+.taskman-role {
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.taskman-pid {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.taskman-actions {
+  text-align: right;
+}
+.taskman-kill {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--err, #dc4646);
+  font-size: 10.5px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.taskman-kill:hover {
+  border-color: var(--err, #dc4646);
+}
+.taskman-empty {
+  text-align: center;
+  color: var(--fg-muted);
+  padding: 20px !important;
+}
+.taskman-foot {
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--fg-muted);
+}
 .ai-ask-option:hover:not(:disabled) {
   border-color: var(--accent);
 }

@@ -53,6 +53,7 @@ async-trait = "0.1"
 # remove_dir_all on a mis-click was unrecoverable; every desktop OS has
 # a native undo path — use it.
 trash = "5"
+sysinfo = "0.39.3"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

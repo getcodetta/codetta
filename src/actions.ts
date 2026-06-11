@@ -6,6 +6,7 @@ declare const __APP_VERSION__: string;
 import { findPaneById, parseKey, useStore } from "./store";
 import { openPalette } from "./paletteBus";
 import { openSettings } from "./settingsBus";
+import { openTaskManager } from "./taskManagerBus";
 import { openShortcuts } from "./shortcutsBus";
 import { openNotifications } from "./notifyBus";
 import { openFootprint } from "./footprintBus";
@@ -789,6 +790,14 @@ export const commands: CommandSpec[] = [
       const parsed = parseKey(active);
       if (parsed?.kind !== "file") return;
       revealInTree(wsId, parsed.path);
+    },
+  },
+  {
+    id: "view.task_manager",
+    label: "Task Manager",
+    category: "View",
+    run: () => {
+      openTaskManager();
     },
   },
   {

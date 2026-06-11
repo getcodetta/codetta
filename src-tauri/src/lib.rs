@@ -7,6 +7,7 @@ mod git;
 mod pty;
 mod search;
 mod sftp;
+mod sysmon;
 mod watcher;
 mod workspace;
 
@@ -25,6 +26,7 @@ pub fn run() {
         .manage(ClaudeCodeState::default())
         .manage(PermState::default())
         .manage(sftp::SftpPoolState::default())
+        .manage(sysmon::SysMonState::default())
         .setup(|app| {
             // Start the permission-callback HTTP server early so
             // settings.local.json hooks always have an endpoint to
@@ -122,6 +124,8 @@ pub fn run() {
             sftp::sftp_download_dir,
             sftp::sftp_disconnect,
             sftp::sftp_forget_host_key,
+            sysmon::process_stats,
+            sysmon::process_kill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

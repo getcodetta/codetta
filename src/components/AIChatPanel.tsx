@@ -1160,6 +1160,78 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     void sendUserText(text);
   };
 
+  // Claude Code slash commands: the CLI expands custom commands
+  // (.claude/commands/*.md in the workspace) and several built-ins
+  // server-side when they arrive as the prompt text. Discover the
+  // custom ones so the slash dropdown can offer them; selecting one
+  // sends it straight through instead of running a local action.
+  const [ccCommands, setCcCommands] = useState<
+    Array<{ name: string; hint: string }>
+  >([]);
+  const selectedIsCC =
+    parseQualifiedModel(selected)?.providerId === "claude-code";
+  useEffect(() => {
+    if (!selectedIsCC || !root) {
+      setCcCommands([]);
+      return;
+    }
+    let cancelled = false;
+    const builtins = [
+      { name: "/compact", hint: "Claude Code — compact session context" },
+      { name: "/init", hint: "Claude Code — generate CLAUDE.md" },
+    ];
+    void fs
+      .listDir(`${root}/.claude/commands`)
+      .then((entries) => {
+        if (cancelled) return;
+        const custom = entries
+          .filter((e) => !e.is_dir && e.name.endsWith(".md"))
+          .map((e) => ({
+            name: `/${e.name.replace(/\.md$/, "")}`,
+            hint: "Claude Code — custom command",
+          }));
+        setCcCommands([...custom, ...builtins]);
+      })
+      .catch(() => {
+        if (!cancelled) setCcCommands(builtins);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedIsCC, root]);
+
+  // Combined slash matches: local commands first, then Claude Code
+  // passthroughs. Used by both the dropdown render and the keyboard
+  // navigation so they can't disagree.
+  const slashMatchesFor = (q: string) => {
+    const local = SLASH_COMMANDS.filter((c) =>
+      c.name.slice(1).toLowerCase().startsWith(q),
+    ).map((c) => ({ kind: "local" as const, name: c.name, hint: c.hint, cmd: c }));
+    const cc = ccCommands
+      .filter(
+        (c) =>
+          c.name.slice(1).toLowerCase().startsWith(q) &&
+          !local.some((l) => l.name === c.name),
+      )
+      .map((c) => ({
+        kind: "cc" as const,
+        name: c.name,
+        hint: c.hint,
+        cmd: undefined,
+      }));
+    return [...local, ...cc];
+  };
+
+  // Send a Claude Code slash command through as the prompt — the CLI
+  // expands it. Keeps any arguments the user typed after the name.
+  const sendCcCommand = (name: string) => {
+    const text = input.trim().toLowerCase().startsWith(name.toLowerCase())
+      ? input.trim()
+      : name;
+    setInput("");
+    answerQuestion(text);
+  };
+
   // A question is "pending" when the turn is over and the LAST message
   // is the assistant's with an AskUserQuestion call — answering (or
   // typing anything) appends a user message, which clears this. The
@@ -3349,10 +3421,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       {(() => {
         const isSlash = input.startsWith("/");
         if (!isSlash || streaming !== null) return null;
-        const q = input.slice(1).toLowerCase();
-        const matches = SLASH_COMMANDS.filter((c) =>
-          c.name.slice(1).toLowerCase().startsWith(q),
-        );
+        const q = input.split(/\s+/)[0].slice(1).toLowerCase();
+        const matches = slashMatchesFor(q);
         if (matches.length === 0) return null;
         const idx = Math.max(0, Math.min(slashIndex, matches.length - 1));
         return (
@@ -3362,7 +3432,11 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 key={c.name}
                 className={`ai-slash-item ${i === idx ? "active" : ""}`}
                 onMouseEnter={() => setSlashIndex(i)}
-                onClick={() => runSlashCommand(c)}
+                onClick={() =>
+                  c.kind === "local"
+                    ? runSlashCommand(c.cmd)
+                    : sendCcCommand(c.name)
+                }
               >
                 <span className="ai-slash-name">{c.name}</span>
                 <span className="ai-slash-hint">{c.hint}</span>
@@ -3577,11 +3651,18 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   (c) => c.name.toLowerCase() === firstWord.toLowerCase(),
                 )
               : undefined;
+            // Exact Claude Code passthrough ("/compact", "/mycmd args")
+            // typed in full — send it through on Enter even when the
+            // suggestion list isn't showing.
+            const exactCc =
+              isSlash && !exactCmd
+                ? ccCommands.find(
+                    (c) => c.name.toLowerCase() === firstWord.toLowerCase(),
+                  )
+                : undefined;
             if (isSlash) {
-              const q = input.slice(1).toLowerCase();
-              const matches = SLASH_COMMANDS.filter((c) =>
-                c.name.slice(1).toLowerCase().startsWith(q),
-              );
+              const q = firstWord.slice(1).toLowerCase();
+              const matches = slashMatchesFor(q);
               if (matches.length > 0) {
                 if (e.key === "ArrowDown") {
                   e.preventDefault();
@@ -3601,7 +3682,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                     0,
                     Math.min(slashIndex, matches.length - 1),
                   );
-                  runSlashCommand(matches[idx]);
+                  const m = matches[idx];
+                  if (m.kind === "local") runSlashCommand(m.cmd);
+                  else sendCcCommand(m.name);
                   return;
                 }
                 if (e.key === "Escape") {
@@ -3617,6 +3700,11 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               ) {
                 e.preventDefault();
                 runSlashCommand(exactCmd);
+                return;
+              }
+              if (exactCc && e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendCcCommand(exactCc.name);
                 return;
               }
             }
