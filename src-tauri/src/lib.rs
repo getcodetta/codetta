@@ -2,6 +2,7 @@ mod atomic;
 mod claude_code;
 mod claude_mcp;
 mod claude_perm;
+mod claude_usage;
 mod fs_ops;
 mod git;
 mod pty;
@@ -108,8 +109,10 @@ pub fn run() {
             claude_code::claude_code_load_session,
             claude_perm::claude_perm_decide,
             claude_perm::claude_perm_endpoint,
+            claude_usage::claude_usage_limits,
             claude_mcp::claude_mcp_list,
             claude_mcp::claude_mcp_add,
+            claude_mcp::claude_mcp_add_remote,
             claude_mcp::claude_mcp_remove,
             sftp::sftp_test_connection,
             sftp::sftp_list_dir,

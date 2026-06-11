@@ -54,6 +54,7 @@ async-trait = "0.1"
 # a native undo path — use it.
 trash = "5"
 sysinfo = "0.39.3"
+ureq = { version = "3.3.0", features = ["json"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

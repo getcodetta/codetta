@@ -2384,6 +2384,23 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       today: Array<{ model: string; tokens: number }>;
     } | null;
     local: { chat: number; wsMonth: number; month: number; today: number };
+    account: {
+      name?: string;
+      email?: string;
+      plan?: string;
+    } | null;
+    limits: Array<{
+      label: string;
+      pct: number;
+      resetsAt: string | null;
+    }>;
+    extra: {
+      used: number;
+      limit: number;
+      pct: number;
+      currency: string;
+    } | null;
+    limitsError: string | null;
   } | null>(null);
 
   const showUsageReport = async () => {
@@ -2427,6 +2444,72 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     } catch {
       cli = null;
     }
+    // Live plan-limit windows — same endpoint the CLI's /usage panel
+    // and the official extension use, via our Rust command (the OAuth
+    // token never reaches the frontend).
+    let account: NonNullable<typeof usageReport>["account"] = null;
+    let limits: NonNullable<typeof usageReport>["limits"] = [];
+    let extra: NonNullable<typeof usageReport>["extra"] = null;
+    let limitsError: string | null = null;
+    try {
+      const res = await invoke<{
+        usage?: Record<
+          string,
+          { utilization?: number; resets_at?: string | null } | null
+        > & {
+          extra_usage?: {
+            is_enabled?: boolean;
+            monthly_limit?: number;
+            used_credits?: number;
+            utilization?: number;
+            currency?: string;
+          } | null;
+        };
+        profile?: {
+          account?: { full_name?: string; email?: string };
+        } | null;
+        subscriptionType?: string | null;
+        rateLimitTier?: string | null;
+      }>("claude_usage_limits");
+      const u = res.usage ?? {};
+      const windows: Array<[string, string]> = [
+        ["five_hour", "Session (5hr)"],
+        ["seven_day", "Weekly (7 day)"],
+        ["seven_day_sonnet", "Weekly Sonnet"],
+        ["seven_day_opus", "Weekly Opus"],
+      ];
+      for (const [key, label] of windows) {
+        const w = u[key];
+        if (w && typeof w.utilization === "number") {
+          limits.push({
+            label,
+            pct: w.utilization,
+            resetsAt: w.resets_at ?? null,
+          });
+        }
+      }
+      const ex = u.extra_usage;
+      if (ex?.is_enabled && typeof ex.used_credits === "number") {
+        extra = {
+          used: ex.used_credits,
+          limit: ex.monthly_limit ?? 0,
+          pct: ex.utilization ?? 0,
+          currency: ex.currency ?? "USD",
+        };
+      }
+      const tier = (res.rateLimitTier ?? "").match(/_(\d+x)$/)?.[1];
+      const planBase = res.subscriptionType
+        ? res.subscriptionType.charAt(0).toUpperCase() +
+          res.subscriptionType.slice(1)
+        : undefined;
+      account = {
+        name: res.profile?.account?.full_name,
+        email: res.profile?.account?.email,
+        plan: planBase ? (tier ? `${planBase} ${tier}` : planBase) : undefined,
+      };
+    } catch (e) {
+      limitsError = errMsg(e);
+    }
     const records = loadUsage();
     const todayKey = new Date().toDateString();
     setUsageReport({
@@ -2439,6 +2522,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           .filter((r) => new Date(r.ts).toDateString() === todayKey)
           .reduce((a, r) => a + r.costUsd, 0),
       },
+      account,
+      limits,
+      extra,
+      limitsError,
     });
   };
 
@@ -3604,7 +3691,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 onMouseDown={(e) => e.stopPropagation()}
               >
                 <div className="usage-head">
-                  <strong>AI Usage</strong>
+                  <strong>Account &amp; Usage</strong>
                   <button
                     className="usage-close"
                     onClick={() => setUsageReport(null)}
@@ -3614,6 +3701,98 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   </button>
                 </div>
                 <div className="usage-body">
+                  {r.account && (
+                    <>
+                      <div className="usage-section-title">Account</div>
+                      <div className="usage-kv">
+                        {r.account.name && (
+                          <div className="usage-kv-row">
+                            <span>Name</span>
+                            <span>{r.account.name}</span>
+                          </div>
+                        )}
+                        {r.account.email && (
+                          <div className="usage-kv-row">
+                            <span>Email</span>
+                            <span>{r.account.email}</span>
+                          </div>
+                        )}
+                        {r.account.plan && (
+                          <div className="usage-kv-row">
+                            <span>Plan</span>
+                            <span>{r.account.plan}</span>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                  {r.limits.length > 0 && (
+                    <>
+                      <div className="usage-section-title">
+                        Plan limits — live
+                      </div>
+                      {r.limits.map((w) => {
+                        const resetsIn = (() => {
+                          if (!w.resetsAt) return null;
+                          const ms =
+                            new Date(w.resetsAt).getTime() - Date.now();
+                          if (ms <= 0) return null;
+                          const h = ms / 3_600_000;
+                          if (h < 1) return `${Math.ceil(ms / 60_000)}m`;
+                          if (h < 48) return `${Math.ceil(h)}h`;
+                          return `${Math.ceil(h / 24)}d`;
+                        })();
+                        const hot = w.pct >= 80;
+                        return (
+                          <div key={w.label} className="usage-window">
+                            <div className="usage-window-head">
+                              <span>{w.label}</span>
+                              <span className="usage-window-pct">
+                                {Math.round(w.pct)}%
+                              </span>
+                            </div>
+                            <div className="usage-bar">
+                              <div
+                                className={`usage-bar-fill ${hot ? "hot" : ""}`}
+                                style={{
+                                  width: `${Math.min(100, Math.max(0, w.pct))}%`,
+                                }}
+                              />
+                            </div>
+                            {resetsIn && (
+                              <div className="usage-window-reset">
+                                Resets in {resetsIn}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {r.extra && (
+                        <div className="usage-window">
+                          <div className="usage-window-head">
+                            <span>Extra usage (monthly)</span>
+                            <span className="usage-window-pct">
+                              {r.extra.used.toFixed(0)} /{" "}
+                              {r.extra.limit.toFixed(0)} {r.extra.currency}
+                            </span>
+                          </div>
+                          <div className="usage-bar">
+                            <div
+                              className={`usage-bar-fill ${r.extra.pct >= 80 ? "hot" : ""}`}
+                              style={{
+                                width: `${Math.min(100, Math.max(0, r.extra.pct))}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {r.limitsError && (
+                    <div className="usage-meta">
+                      Live plan limits unavailable: {r.limitsError}
+                    </div>
+                  )}
                   <div className="usage-section-title">
                     Codetta — API-billed spend
                   </div>
@@ -3695,8 +3874,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 </div>
                 <div className="usage-foot">
                   <span>
-                    Subscription turns bill $0 here. Live plan-limit bars:
-                    run /usage in a claude terminal.
+                    Plan limits are live from your claude.ai account.
+                    Subscription turns bill $0 in the spend cards.
                   </span>
                   <button
                     className="usage-dash-btn"
