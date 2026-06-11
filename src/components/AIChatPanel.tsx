@@ -283,6 +283,88 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   // CLI's "#N" ids, so TaskUpdate's taskId resolves to a row.
   const taskIndexRef = useRef<Map<string, number>>(new Map());
   const taskCounterRef = useRef(0);
+
+  // Rebuild the sticky checklist from saved history. The checklist is
+  // normally driven by LIVE tool_call events, so a reload or chat
+  // switch dropped it even though the tasks sit right there in the
+  // transcript. Replays TodoWrite snapshots and TaskCreate/TaskUpdate
+  // in message order, and re-seeds the task-id mapping so live
+  // TaskUpdate calls in a resumed session still resolve.
+  const rebuildChecklist = (msgs: ChatMessage[]) => {
+    taskIndexRef.current.clear();
+    taskCounterRef.current = 0;
+    let list: Array<{
+      content: string;
+      status: "pending" | "in_progress" | "completed";
+      activeForm?: string;
+    }> = [];
+    for (const m of msgs) {
+      if (m.role !== "assistant" || !m.tool_calls) continue;
+      for (const c of m.tool_calls) {
+        const a = c.function.arguments;
+        if (c.function.name === "TodoWrite" && Array.isArray(a.todos)) {
+          list = (a.todos as unknown[])
+            .filter(
+              (t): t is Record<string, unknown> =>
+                !!t && typeof t === "object",
+            )
+            .map((t) => ({
+              content:
+                typeof t.content === "string" ? t.content : "(untitled)",
+              status:
+                t.status === "in_progress" || t.status === "completed"
+                  ? (t.status as "in_progress" | "completed")
+                  : ("pending" as const),
+              activeForm:
+                typeof t.activeForm === "string" ? t.activeForm : undefined,
+            }));
+        } else if (c.function.name === "TaskCreate") {
+          const subject =
+            typeof a.subject === "string" && a.subject
+              ? a.subject
+              : typeof a.description === "string" && a.description
+                ? a.description
+                : "(task)";
+          const taskId = String(++taskCounterRef.current);
+          taskIndexRef.current.set(taskId, list.length);
+          list.push({
+            content: subject,
+            status: "pending",
+            activeForm:
+              typeof a.activeForm === "string" ? a.activeForm : undefined,
+          });
+        } else if (c.function.name === "TaskUpdate") {
+          const taskId =
+            typeof a.taskId === "string"
+              ? a.taskId
+              : typeof a.task_id === "string"
+                ? a.task_id
+                : a.taskId != null
+                  ? String(a.taskId)
+                  : "";
+          const idx = taskIndexRef.current.get(taskId);
+          if (idx !== undefined && list[idx]) {
+            const cur = { ...list[idx] };
+            const st = a.status;
+            if (
+              st === "pending" ||
+              st === "in_progress" ||
+              st === "completed"
+            ) {
+              cur.status = st;
+            } else if (st === "cancelled" || st === "deleted") {
+              cur.status = "completed";
+            }
+            if (typeof a.subject === "string" && a.subject) {
+              cur.content = a.subject;
+            }
+            list[idx] = cur;
+          }
+        }
+      }
+    }
+    setTodos(list.length > 0 ? list : null);
+  };
   // Cumulative USD spend across every turn in this chat. Persisted
   // alongside the conversation so the running tally survives reloads.
   // Used by the spend chip in the footer + the budget-warning toast.
@@ -899,7 +981,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       setClaudeSessionId(found?.claudeSessionId);
       setChatTotalCost(found?.totalCostUsd ?? 0);
       if (found) {
-        setMessages(cleanStaleToolMessages(found.messages));
+        const msgs = cleanStaleToolMessages(found.messages);
+        setMessages(msgs);
+        rebuildChecklist(msgs);
         if (found.model) {
           const q = parseQualifiedModel(found.model)
             ? found.model
@@ -919,7 +1003,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       // Filter out stale "Unknown tool: X" result messages from older
       // sessions where we incorrectly tried to execute the agentic
       // provider's tool calls on our side. They're meaningless garbage.
-      setMessages(cleanStaleToolMessages(list[0].messages));
+      const msgs = cleanStaleToolMessages(list[0].messages);
+      setMessages(msgs);
+      rebuildChecklist(msgs);
       if (list[0].model) {
         const q = parseQualifiedModel(list[0].model)
           ? list[0].model
@@ -2133,6 +2219,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     setChatTotalCost(s.totalCostUsd ?? 0);
     resetTurnTransients();
     setMessages(s.messages);
+    rebuildChecklist(s.messages);
     setInput("");
     setHistoryOpen(false);
     if (s.model) {
