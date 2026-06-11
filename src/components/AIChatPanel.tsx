@@ -60,7 +60,13 @@ import {
 import { matchExclusion } from "../aiPrivacy";
 import { loadWorkspaceRules } from "../workspaceRules";
 import { ClaudePermissionOverlay } from "./ClaudePermissionOverlay";
-import { recordUsage, wouldExceedHardCap } from "../aiUsageLog";
+import {
+  loadUsage,
+  recordUsage,
+  thisMonthTotal,
+  thisMonthWorkspaceTotal,
+  wouldExceedHardCap,
+} from "../aiUsageLog";
 import { captureSnapshot } from "../composeSnapshots";
 import {
   error as toastError,
@@ -2360,9 +2366,100 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     }
   };
 
+  // /usage — modal report, NOT injected into the chat. The CLI's
+  // interactive /usage panel (plan-window limit bars) isn't reachable
+  // headlessly, but the CLI keeps per-model lifetime/daily stats in
+  // ~/.claude/stats-cache.json, and Codetta's own usage log covers
+  // API-billed spend. Combine both.
+  const [usageReport, setUsageReport] = useState<{
+    cli: {
+      sessions?: number;
+      messages?: number;
+      models: Array<{
+        model: string;
+        tokIn: number;
+        tokOut: number;
+        cost?: number;
+      }>;
+      today: Array<{ model: string; tokens: number }>;
+    } | null;
+    local: { chat: number; wsMonth: number; month: number; today: number };
+  } | null>(null);
+
+  const showUsageReport = async () => {
+    let cli: NonNullable<typeof usageReport>["cli"] = null;
+    try {
+      const { homeDir } = await import("@tauri-apps/api/path");
+      const home = (await homeDir()).replace(/[\\/]+$/, "");
+      const raw = await fs.readFile(`${home}/.claude/stats-cache.json`);
+      const st = JSON.parse(raw) as {
+        modelUsage?: Record<
+          string,
+          { inputTokens?: number; outputTokens?: number; costUSD?: number }
+        >;
+        dailyModelTokens?: Array<{
+          date: string;
+          tokensByModel: Record<string, number>;
+        }>;
+        totalSessions?: number;
+        totalMessages?: number;
+      };
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const todayRow = (st.dailyModelTokens ?? []).find(
+        (d) => d.date === todayKey,
+      );
+      cli = {
+        sessions: st.totalSessions,
+        messages: st.totalMessages,
+        models: Object.entries(st.modelUsage ?? {}).map(([model, u]) => ({
+          model,
+          tokIn: u.inputTokens ?? 0,
+          tokOut: u.outputTokens ?? 0,
+          cost: u.costUSD || undefined,
+        })),
+        today: todayRow
+          ? Object.entries(todayRow.tokensByModel).map(([model, tokens]) => ({
+              model,
+              tokens,
+            }))
+          : [],
+      };
+    } catch {
+      cli = null;
+    }
+    const records = loadUsage();
+    const todayKey = new Date().toDateString();
+    setUsageReport({
+      cli,
+      local: {
+        chat: chatTotalCost,
+        wsMonth: thisMonthWorkspaceTotal(wsId, records),
+        month: thisMonthTotal(records),
+        today: records
+          .filter((r) => new Date(r.ts).toDateString() === todayKey)
+          .reduce((a, r) => a + r.costUsd, 0),
+      },
+    });
+  };
+
+  // Esc closes the usage modal.
+  useEffect(() => {
+    if (!usageReport) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setUsageReport(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [usageReport]);
+
   const runSlashCommand = (cmd: SlashCommand) => {
     if (cmd.action === "new") {
       startNewChat();
+      return;
+    }
+    if (cmd.action === "usage") {
+      setInput("");
+      void showUsageReport();
       return;
     }
     if (cmd.action === "clear") {
@@ -3485,6 +3582,136 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           </div>
         );
       })()}
+      {/* /usage report modal — chat stays untouched. */}
+      {usageReport &&
+        (() => {
+          const fmtTok = (n: number) =>
+            n >= 1_000_000
+              ? `${(n / 1_000_000).toFixed(1)}M`
+              : n >= 1_000
+                ? `${(n / 1_000).toFixed(1)}k`
+                : String(n);
+          const r = usageReport;
+          return (
+            <div
+              className="settings-backdrop"
+              onMouseDown={() => setUsageReport(null)}
+            >
+              <div
+                className="usage-modal"
+                role="dialog"
+                aria-label="AI usage"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="usage-head">
+                  <strong>AI Usage</strong>
+                  <button
+                    className="usage-close"
+                    onClick={() => setUsageReport(null)}
+                    title="Close (Esc)"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="usage-body">
+                  <div className="usage-section-title">
+                    Codetta — API-billed spend
+                  </div>
+                  <div className="usage-cards">
+                    <div className="usage-card">
+                      <span className="usage-card-num">
+                        ${r.local.chat.toFixed(4)}
+                      </span>
+                      <span className="usage-card-label">this chat</span>
+                    </div>
+                    <div className="usage-card">
+                      <span className="usage-card-num">
+                        ${r.local.today.toFixed(2)}
+                      </span>
+                      <span className="usage-card-label">today</span>
+                    </div>
+                    <div className="usage-card">
+                      <span className="usage-card-num">
+                        ${r.local.wsMonth.toFixed(2)}
+                      </span>
+                      <span className="usage-card-label">
+                        workspace · month
+                      </span>
+                    </div>
+                    <div className="usage-card">
+                      <span className="usage-card-num">
+                        ${r.local.month.toFixed(2)}
+                      </span>
+                      <span className="usage-card-label">all · month</span>
+                    </div>
+                  </div>
+                  <div className="usage-section-title">
+                    Claude Code CLI — all projects, lifetime
+                  </div>
+                  {r.cli ? (
+                    <>
+                      {(r.cli.sessions != null ||
+                        r.cli.messages != null) && (
+                        <div className="usage-meta">
+                          {r.cli.sessions ?? "?"} sessions ·{" "}
+                          {r.cli.messages ?? "?"} messages
+                        </div>
+                      )}
+                      <table className="usage-table">
+                        <thead>
+                          <tr>
+                            <th>Model</th>
+                            <th className="num">In</th>
+                            <th className="num">Out</th>
+                            <th className="num">Today</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {r.cli.models.map((m) => {
+                            const today = r.cli!.today.find(
+                              (t) => t.model === m.model,
+                            );
+                            return (
+                              <tr key={m.model}>
+                                <td title={m.model}>
+                                  {m.model.replace(/^claude-/, "")}
+                                </td>
+                                <td className="num">{fmtTok(m.tokIn)}</td>
+                                <td className="num">{fmtTok(m.tokOut)}</td>
+                                <td className="num">
+                                  {today ? fmtTok(today.tokens) : "—"}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </>
+                  ) : (
+                    <div className="usage-meta">
+                      No CLI stats cache found (~/.claude/stats-cache.json).
+                    </div>
+                  )}
+                </div>
+                <div className="usage-foot">
+                  <span>
+                    Subscription turns bill $0 here. Live plan-limit bars:
+                    run /usage in a claude terminal.
+                  </span>
+                  <button
+                    className="usage-dash-btn"
+                    onClick={() => {
+                      setUsageReport(null);
+                      openSettings("ai-usage-cross-chat-dashboard");
+                    }}
+                  >
+                    Full dashboard
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       {/* Docked question card: when Claude's turn ended on an
           AskUserQuestion, the interactive radio/checkbox card sits
           right above the composer where the user is already looking —

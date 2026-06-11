@@ -14,7 +14,7 @@ export interface SlashCommand {
   /** When provided, the command rewrites the input to this prompt. */
   prompt?: string;
   /** When provided, runs an in-app action (clear, new, etc.). */
-  action?: "new" | "clear" | "tree" | "terminal" | "file";
+  action?: "new" | "clear" | "tree" | "terminal" | "file" | "usage";
   /** Whether the user is expected to type an argument after the name. */
   takesArg?: boolean;
 }
@@ -76,4 +76,9 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   },
   { name: "/new", hint: "Start a new chat", action: "new" },
   { name: "/clear", hint: "Clear current chat", action: "clear" },
+  {
+    name: "/usage",
+    hint: "Claude account + local AI usage report",
+    action: "usage",
+  },
 ];
