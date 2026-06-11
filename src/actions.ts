@@ -42,6 +42,7 @@ import {
 import { joinPath } from "./pathUtils";
 import { revealInTree } from "./revealInTree";
 import { toggleZenMode } from "./zenMode";
+import { toggleAgentMode } from "./agentMode";
 
 function runEditorAction(actionId: string) {
   const ed = getActiveEditor();
@@ -364,6 +365,15 @@ export const commands: CommandSpec[] = [
     accel: "F11",
     run: () => {
       toggleZenMode();
+    },
+  },
+  {
+    id: "view.toggle_agent",
+    label: "Toggle Agent Mode",
+    category: "View",
+    accel: "Ctrl+Shift+A",
+    run: () => {
+      toggleAgentMode();
     },
   },
   {
@@ -796,6 +806,8 @@ export const commands: CommandSpec[] = [
     id: "view.task_manager",
     label: "Task Manager",
     category: "View",
+    // Ctrl+Shift+Esc belongs to Windows; Ctrl+Alt+M is the minimap.
+    accel: "Ctrl+Alt+U",
     run: () => {
       openTaskManager();
     },

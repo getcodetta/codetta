@@ -4639,6 +4639,164 @@ input {
   text-overflow: ellipsis;
   min-width: 0;
 }
+/* /effort and /mode chips — visible session knobs, click to reset. */
+.ai-meta-flag-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: 4px;
+}
+.ai-meta-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ai-meta-flag:hover,
+.ai-meta-flag.open {
+  background: var(--bg-hi);
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.ai-meta-flag svg {
+  opacity: 0.6;
+}
+/* Upward popover (the composer sits at the bottom of the panel). */
+.ai-flag-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.ai-flag-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 41;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ai-flag-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 12px;
+  text-align: left;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+.ai-flag-menu-item:hover {
+  background: var(--bg-hi);
+}
+.ai-flag-menu-item.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+/* Slash-commands button + permission-mode dropdown in the input row.
+   All input-row controls stretch to the textarea's height so the row
+   reads as one aligned control group, not floating pills. */
+.ai-input-slash {
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-family: var(--mono);
+  font-size: 13px;
+  cursor: pointer;
+}
+.ai-input-slash:hover {
+  color: var(--fg);
+  border-color: var(--border-strong, var(--border));
+}
+.ai-mode-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: stretch;
+  display: flex;
+}
+.ai-mode-btn {
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  padding: 0 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ai-mode-btn:hover {
+  color: var(--fg);
+  border-color: var(--border-strong, var(--border));
+}
+.ai-mode-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+.ai-mode-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 95;
+  min-width: 230px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+.ai-mode-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  padding: 6px 9px;
+  cursor: pointer;
+  color: var(--fg);
+}
+.ai-mode-item:hover {
+  background: var(--bg-alt);
+}
+.ai-mode-item.active .ai-mode-item-label {
+  color: var(--accent);
+}
+.ai-mode-item-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.ai-mode-item-desc {
+  font-size: 10.5px;
+  color: var(--fg-muted);
+}
 /* Interactive AskUserQuestion card — clickable options inline in the
    conversation. */
 .ai-ask-card {
@@ -4857,12 +5015,249 @@ input {
   gap: 1px;
 }
 .ai-tcall-group-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
   font-size: 10.5px;
   font-weight: 600;
   color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.4px;
   padding: 2px 4px 4px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.ai-tcall-group-head:hover {
+  color: var(--fg);
+}
+.ai-tcall-group-label {
+  flex-shrink: 0;
+}
+.ai-tcall-chips {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+  color: var(--fg-muted);
+  text-transform: none;
+}
+.ai-tcall-chip-more {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+/* Action strip — compact-chat activity chips (reads / searches / runs) */
+.ai-actionstrip {
+  margin: 6px 0 2px;
+}
+.ai-actionstrip-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ai-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.ai-chip:hover {
+  background: var(--bg-hi);
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+.ai-chip.active {
+  background: var(--bg-hi);
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.ai-chip svg {
+  color: var(--fg-muted);
+}
+.ai-chip.active svg {
+  color: var(--accent);
+}
+.ai-actionstrip-detail {
+  margin-top: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Inline action chips — a run of tool calls in the compact chat rendered
+   as a row of icon chips (grouped by type). Icon-only by default; the
+   target label reveals on hover, full detail expands on click. */
+.ai-iarow {
+  margin: 4px 0;
+}
+.ai-iarow-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.ai-ichip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  max-width: 100%;
+  padding: 0 8px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.ai-ichip:hover {
+  background: var(--bg-hi);
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+.ai-ichip.active {
+  background: var(--bg-hi);
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.ai-ichip svg {
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+.ai-ichip.active svg {
+  color: var(--accent);
+}
+.ai-ichip-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fg-muted);
+  min-width: 12px;
+  text-align: center;
+}
+.ai-ichip-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 11px;
+  max-width: 240px;
+}
+/* Outcome status: a small dot + accent. Error is loud; success is quiet;
+   pending pulses while the turn is still running. */
+.ai-ichip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--fg-muted);
+}
+.ai-ichip.status-ok .ai-ichip-dot {
+  background: var(--ok, #2ecc71);
+}
+.ai-ichip.status-error {
+  border-color: color-mix(in srgb, var(--danger, #e5484d) 60%, var(--border));
+}
+.ai-ichip.status-error .ai-ichip-dot {
+  background: var(--danger, #e5484d);
+}
+.ai-ichip.status-error svg,
+.ai-ichip.status-error .ai-ichip-label {
+  color: var(--danger, #e5484d);
+}
+.ai-ichip.status-pending .ai-ichip-dot {
+  background: var(--accent);
+  animation: ichip-pulse 1.1s ease-in-out infinite;
+}
+@keyframes ichip-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+/* Visual hierarchy: exploration is quiet, changes are loud. */
+.ai-ichip.tone-muted {
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-muted);
+  height: 22px;
+  padding: 0 6px;
+}
+.ai-ichip.tone-muted:hover {
+  background: var(--bg-alt);
+  border-color: var(--border);
+}
+.ai-ichip.tone-muted .ai-ichip-dot {
+  display: none;
+}
+.ai-ichip.tone-muted .ai-ichip-label {
+  font-family: inherit;
+}
+.ai-ichip.tone-edit {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.ai-ichip.tone-edit .ai-ichip-label {
+  color: var(--fg);
+  font-weight: 600;
+}
+.ai-ichip.tone-edit svg {
+  color: var(--accent);
+}
+/* Error always wins over tone. */
+.ai-ichip.status-error.tone-edit,
+.ai-ichip.status-error.tone-muted {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--danger, #e5484d) 60%, var(--border));
+}
+.ai-iaction-detail {
+  margin-top: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Compact (agent-mode) chat: denser, less tool noise. Scoped to
+   .ai-panel.compact so the docked chat is untouched. */
+.ai-panel.compact .ai-msg {
+  gap: 2px;
+}
+.ai-panel.compact .ai-tcalls {
+  margin: 2px 0;
+}
+.ai-panel.compact .ai-tcall-group {
+  padding: 2px 6px;
+}
+.ai-panel.compact .ai-tcall-group-head {
+  padding: 3px 4px;
+}
+.ai-panel.compact .ai-msg-assistant .ai-msg-body {
+  padding-left: 10px;
+}
+.ai-panel.compact .ai-tcall-chips :is(svg, .ai-tcall-chip-more) {
+  opacity: 0.8;
 }
 .ai-tcall-group .ai-tcall {
   border: none;
@@ -8160,6 +8555,9 @@ input {
 }
 .ai-send-btn {
   white-space: nowrap;
+  align-self: stretch;
+  border-radius: 6px;
+  padding: 4px 16px;
 }
 /* Distinct treatment for the Stop button so it's obvious during a long
    stream (and matches what the placeholder/Esc hint promises). */
@@ -8780,6 +9178,32 @@ input {
   line-height: 1.6;
   color: var(--fg);
   max-width: 880px;
+}
+/* GFM tables. Wrapped so a wide table scrolls horizontally instead of
+   blowing out the chat width. */
+.md-table-wrap {
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.md-table {
+  border-collapse: collapse;
+  width: auto;
+  max-width: 100%;
+  font-size: 0.95em;
+}
+.md-table th,
+.md-table td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-table th {
+  background: var(--bg-alt);
+  font-weight: 600;
+}
+.md-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-alt) 50%, transparent);
 }
 /* Click-to-jump affordance on heading anchors. Only applied when the
    preview is rendered with `interactive` (the markdown split view) —
@@ -9945,7 +10369,192 @@ input {
   background: var(--bg);
 }
 
-/* Sessions column */
+/* Left side = workspace-initials rail + agents panel. The rail mirrors
+   the main app's ActivityBar so agent mode reads as the same Codetta. */
+.agent-sidebar {
+  flex: 0 0 auto;
+  display: flex;
+  min-height: 0;
+}
+.agent-wsrail {
+  flex: 0 0 52px;
+  width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  background: var(--bg-alt);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.agent-wsrail-icon {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.agent-wsrail-icon:hover {
+  background: var(--bg-hi);
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+.agent-wsrail-icon.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.agent-wsrail-text {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.agent-wsrail-count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  border: 1.5px solid var(--bg-alt);
+}
+.agent-wsrail-icon.active .agent-wsrail-count {
+  background: var(--bg-elev);
+  color: var(--fg);
+}
+.agent-wsrail-add {
+  border-style: dashed;
+  background: transparent;
+}
+
+.agent-agents {
+  flex: 0 0 232px;
+  width: 232px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-alt);
+  border-right: 1px solid var(--border);
+}
+.agent-agents-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.agent-agents-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.agent-agents-list {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  overflow-y: auto;
+}
+
+/* Agent task checklist — a section below the sessions list */
+.agent-tasks {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  max-height: 38%;
+}
+.agent-tasks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px 4px;
+}
+.agent-tasks-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+.agent-tasks-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fg-muted);
+  background: var(--bg-hi);
+  border-radius: 9px;
+  padding: 1px 7px;
+}
+.agent-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 6px 6px;
+  overflow-y: auto;
+}
+.agent-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-dim);
+}
+.agent-task-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--fg-muted);
+  display: flex;
+}
+.agent-task-text {
+  min-width: 0;
+}
+.agent-task.status-completed {
+  color: var(--fg-muted);
+}
+.agent-task.status-completed .agent-task-text {
+  text-decoration: line-through;
+}
+.agent-task.status-completed .agent-task-icon {
+  color: var(--ok, #2ecc71);
+}
+.agent-task.status-in_progress {
+  color: var(--fg);
+}
+.agent-task.status-in_progress .agent-task-icon {
+  color: var(--accent);
+}
+.agent-task.status-in_progress .agent-task-text {
+  font-weight: 600;
+}
+
+/* Sessions column (legacy — kept for reference) */
 .agent-sessions {
   flex: 0 0 260px;
   width: 260px;
@@ -10789,4 +11398,196 @@ input {
 .cust-foot-hint {
   font-size: 11.5px;
   color: var(--fg-muted);
+}
+
+/* Plugins tab */
+.plugins-intro {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+.plugins-intro code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.plugins-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.plugins-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  font-size: 12.5px;
+  outline: none;
+}
+.plugins-input:focus {
+  border-color: var(--accent);
+}
+.plugins-search {
+  width: 100%;
+  margin-bottom: 8px;
+}
+.plugins-market {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+.plugins-market-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-alt);
+}
+.plugins-market-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 0;
+}
+.plugins-market-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-market-count {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 0 6px;
+}
+.plugins-market-repo {
+  flex: 1 1 auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.plugins-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  max-height: 360px;
+  overflow-y: auto;
+}
+.plugins-list-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-muted);
+}
+.plugins-list-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font-size: 12.5px;
+}
+.plugins-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.plugins-item:last-child {
+  border-bottom: none;
+}
+.plugins-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.plugins-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.plugins-item-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.plugins-item-cat {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.plugins-item-desc {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.plugins-install {
+  flex-shrink: 0;
+  height: 26px;
+}
+
+/* Inline reasoning block in the compact chat */
+.ai-think-inline {
+  margin: 4px 0;
+}
+/* Plan preview inside the ExitPlanMode confirmation card */
+.cc-perm-plan {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 14px;
+  background: var(--bg);
+}
+.cc-perm-plan .md-preview {
+  padding: 6px 0;
+  font-size: 13px;
+  max-width: none;
+}
+/* Plan-review variant of the permission card — reads as "here's the plan,
+   approve it?" rather than a tool-permission gate. */
+.cc-perm-plan-card {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.cc-perm-plan-card .cc-perm-head {
+  color: var(--fg);
+}
+.cc-perm-plan-card .cc-perm-title {
+  font-weight: 600;
 }

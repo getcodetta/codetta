@@ -56,6 +56,14 @@ export interface ChatProvider {
      * Claude Code's tools at workspace B after the user switched.
      */
     cwd?: string;
+    /** Claude Code --effort (low|medium|high|xhigh|max). */
+    effort?: string;
+    /** Claude Code --permission-mode (default|plan|acceptEdits|auto|
+     *  dontAsk). bypassPermissions is rejected backend-side. */
+    permissionMode?: string;
+    /** Claude Code extended-thinking toggle (MAX_THINKING_TOKENS env:
+     *  true = forced on, false = off, undefined = CLI default). */
+    thinking?: boolean;
   }): AsyncGenerator<ChatStreamEvent, void, unknown>;
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { claudeMcp, type McpServer } from "../ipc";
 import { useStore } from "../store";
 import { error as toastError, errMsg, success as toastSuccess } from "../notify";
@@ -200,6 +200,20 @@ export function McpServerBrowser() {
   );
   const [installed, setInstalled] = useState<McpServer[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [addKind, setAddKind] = useState<AddKind | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Close the add-type menu on outside click.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
 
   const refresh = async () => {
     if (!cwd) return;
@@ -312,28 +326,114 @@ export function McpServerBrowser() {
     }
   };
 
+  const q = query.trim().toLowerCase();
+  const filteredInstalled = (installed ?? []).filter(
+    (s) =>
+      !q ||
+      s.name.toLowerCase().includes(q) ||
+      s.command.toLowerCase().includes(q) ||
+      (s.url ?? "").toLowerCase().includes(q),
+  );
+  const filteredCatalog = CURATED.filter(
+    (e) =>
+      !q ||
+      e.name.toLowerCase().includes(q) ||
+      e.description.toLowerCase().includes(q),
+  );
+
   return (
     <>
+      {/* Toolbar: search + "Add server" type menu. */}
+      <div className="mcp-toolbar">
+        <div className="mcp-search">
+          <Icon name="search" size={13} />
+          <input
+            type="text"
+            placeholder="Search installed & catalog…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
+            <button
+              className="mcp-search-clear"
+              onClick={() => setQuery("")}
+              aria-label="Clear search"
+            >
+              <Icon name="x" size={11} />
+            </button>
+          )}
+        </div>
+        <div className="mcp-add-wrap" ref={menuRef}>
+          <button
+            className="mcp-add-btn"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            <Icon name="plus" size={12} /> Add server
+            <Icon name="chevron-down" size={11} />
+          </button>
+          {menuOpen && (
+            <div className="mcp-add-menu" role="menu">
+              {ADD_TYPES.map((t) => (
+                <button
+                  key={t.kind}
+                  className="mcp-add-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setAddKind(t.kind);
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span className="mcp-add-menu-label">{t.label}</span>
+                  <span className="mcp-add-menu-desc">{t.desc}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {addKind && (
+        <AddServerForm
+          kind={addKind}
+          cwd={cwd}
+          onCancel={() => setAddKind(null)}
+          onDone={async () => {
+            setAddKind(null);
+            await refresh();
+          }}
+        />
+      )}
+
       <div className="mcp-section-head">Installed</div>
-      {installed && installed.length === 0 && (
+      {installed && filteredInstalled.length === 0 && (
         <div className="settings-row settings-row-note">
-          No MCP servers configured. Pick one from the catalog below to
-          one-click install.
+          {installed.length === 0
+            ? "No MCP servers configured. Add one above, or one-click install from the catalog below."
+            : "No installed servers match your search."}
         </div>
       )}
-      {installed && installed.length > 0 && (
+      {filteredInstalled.length > 0 && (
         <div className="mcp-list">
-          {installed.map((s) => (
+          {filteredInstalled.map((s) => (
             <div key={`${s.scope}:${s.name}`} className="mcp-row">
               <div className="mcp-row-main">
                 <span className="mcp-name">{s.name}</span>
                 <span className={`mcp-scope-badge mcp-scope-${s.scope}`}>
                   {s.scope}
                 </span>
+                {s.transport && s.transport !== "stdio" && (
+                  <span className="mcp-transport-badge">
+                    {s.transport.toUpperCase()}
+                  </span>
+                )}
               </div>
               <div className="mcp-row-cmd">
                 <code>
-                  {s.command} {(s.args ?? []).join(" ")}
+                  {s.transport === "http" || s.transport === "sse"
+                    ? s.url
+                    : `${s.command} ${(s.args ?? []).join(" ")}`}
                 </code>
               </div>
               <button
@@ -371,8 +471,14 @@ export function McpServerBrowser() {
         = checked into <code>.mcp.json</code> for this workspace only
         (good for sharing with your team).
       </div>
+      {filteredCatalog.length === 0 && (
+        <div className="settings-row settings-row-note">
+          No catalog servers match your search. Use <strong>Add server</strong>{" "}
+          above to add a custom one.
+        </div>
+      )}
       <div className="mcp-catalog">
-        {CURATED.map((entry) => {
+        {filteredCatalog.map((entry) => {
           const scopes = scopesByName.get(entry.name);
           const inUser = !!scopes?.has("user");
           const inProject = !!scopes?.has("project");
@@ -484,4 +590,322 @@ function hasShadowing(list: McpServer[]): boolean {
     if (s.scope === "user") seen.add(s.name);
   }
   return list.some((s) => s.scope === "project" && seen.has(s.name));
+}
+
+// ── Manual add ──────────────────────────────────────────────────────
+type AddKind = "stdio" | "remote" | "npm" | "pip" | "docker";
+
+const ADD_TYPES: { kind: AddKind; label: string; desc: string }[] = [
+  { kind: "stdio", label: "Command (stdio)", desc: "Run a local command that speaks MCP" },
+  { kind: "remote", label: "Remote (HTTP / SSE)", desc: "Connect to a remote MCP URL" },
+  { kind: "npm", label: "NPM package", desc: "Run an npm package via npx" },
+  { kind: "pip", label: "Pip package", desc: "Run a Python package via uvx" },
+  { kind: "docker", label: "Docker image", desc: "Run an MCP server in a container" },
+];
+
+/** Split a space-separated argument string. Naive but predictable —
+ *  users wanting literal spaces in one arg can use the stdio form's
+ *  command field plus the raw config files. */
+function splitArgs(s: string): string[] {
+  const t = s.trim();
+  return t ? t.split(/\s+/) : [];
+}
+
+/** Parse KEY=VALUE lines (env / headers) into a record. Blank lines and
+ *  lines without "=" are skipped. */
+function parseKv(s: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of s.split("\n")) {
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const k = line.slice(0, eq).trim();
+    const v = line.slice(eq + 1).trim();
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
+function AddServerForm({
+  kind,
+  cwd,
+  onCancel,
+  onDone,
+}: {
+  kind: AddKind;
+  cwd: string;
+  onCancel: () => void;
+  onDone: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [scope, setScope] = useState<"user" | "project">("project");
+  const [command, setCommand] = useState("");
+  const [argsStr, setArgsStr] = useState("");
+  const [pkg, setPkg] = useState("");
+  const [image, setImage] = useState("");
+  const [url, setUrl] = useState("");
+  const [transport, setTransport] = useState<"http" | "sse">("http");
+  const [envStr, setEnvStr] = useState("");
+  const [headersStr, setHeadersStr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const title = ADD_TYPES.find((t) => t.kind === kind)?.label ?? "Add server";
+
+  const submit = async () => {
+    const nm = name.trim();
+    if (!nm) {
+      toastError("Name is required.");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (kind === "remote") {
+        if (!url.trim()) {
+          toastError("URL is required.");
+          setBusy(false);
+          return;
+        }
+        await claudeMcp.addRemote(
+          cwd,
+          nm,
+          scope,
+          transport,
+          url.trim(),
+          parseKv(headersStr),
+        );
+      } else {
+        let cmd = command.trim();
+        const extra = splitArgs(argsStr);
+        let args: string[] = extra;
+        if (kind === "npm") {
+          if (!pkg.trim()) {
+            toastError("Package name is required.");
+            setBusy(false);
+            return;
+          }
+          cmd = "npx";
+          args = ["-y", pkg.trim(), ...extra];
+        } else if (kind === "pip") {
+          if (!pkg.trim()) {
+            toastError("Package name is required.");
+            setBusy(false);
+            return;
+          }
+          cmd = "uvx";
+          args = [pkg.trim(), ...extra];
+        } else if (kind === "docker") {
+          if (!image.trim()) {
+            toastError("Image is required.");
+            setBusy(false);
+            return;
+          }
+          cmd = "docker";
+          args = ["run", "-i", "--rm", ...extra, image.trim()];
+        }
+        if (!cmd) {
+          toastError("Command is required.");
+          setBusy(false);
+          return;
+        }
+        await claudeMcp.add(cwd, nm, scope, cmd, args, parseKv(envStr));
+      }
+      toastSuccess(`Added ${nm} (${scope})`);
+      onDone();
+    } catch (e) {
+      toastError(`Add failed: ${errMsg(e)}`);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mcp-addform">
+      <div className="mcp-addform-head">
+        <span className="mcp-addform-title">{title}</span>
+        <button className="mcp-addform-x" onClick={onCancel} aria-label="Cancel">
+          <Icon name="x" size={12} />
+        </button>
+      </div>
+
+      <label className="mcp-field">
+        <span className="mcp-field-label">Name</span>
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="my-server"
+        />
+      </label>
+
+      {kind === "stdio" && (
+        <>
+          <label className="mcp-field">
+            <span className="mcp-field-label">Command</span>
+            <input
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              placeholder="node / python / npx / …"
+            />
+          </label>
+          <label className="mcp-field">
+            <span className="mcp-field-label">Arguments</span>
+            <input
+              value={argsStr}
+              onChange={(e) => setArgsStr(e.target.value)}
+              placeholder="server.js --port 3000"
+            />
+          </label>
+        </>
+      )}
+
+      {kind === "npm" && (
+        <>
+          <label className="mcp-field">
+            <span className="mcp-field-label">NPM package</span>
+            <input
+              value={pkg}
+              onChange={(e) => setPkg(e.target.value)}
+              placeholder="@scope/server-name"
+            />
+          </label>
+          <label className="mcp-field">
+            <span className="mcp-field-label">Extra args</span>
+            <input
+              value={argsStr}
+              onChange={(e) => setArgsStr(e.target.value)}
+              placeholder="(optional)"
+            />
+          </label>
+          <div className="mcp-field-hint">Runs: npx -y {pkg || "<package>"} {argsStr}</div>
+        </>
+      )}
+
+      {kind === "pip" && (
+        <>
+          <label className="mcp-field">
+            <span className="mcp-field-label">Pip package</span>
+            <input
+              value={pkg}
+              onChange={(e) => setPkg(e.target.value)}
+              placeholder="mcp-server-name"
+            />
+          </label>
+          <label className="mcp-field">
+            <span className="mcp-field-label">Extra args</span>
+            <input
+              value={argsStr}
+              onChange={(e) => setArgsStr(e.target.value)}
+              placeholder="(optional)"
+            />
+          </label>
+          <div className="mcp-field-hint">
+            Runs: uvx {pkg || "<package>"} {argsStr} · needs `uv` installed
+          </div>
+        </>
+      )}
+
+      {kind === "docker" && (
+        <>
+          <label className="mcp-field">
+            <span className="mcp-field-label">Docker image</span>
+            <input
+              value={image}
+              onChange={(e) => setImage(e.target.value)}
+              placeholder="org/mcp-image:latest"
+            />
+          </label>
+          <label className="mcp-field">
+            <span className="mcp-field-label">Extra args</span>
+            <input
+              value={argsStr}
+              onChange={(e) => setArgsStr(e.target.value)}
+              placeholder="(optional, before image)"
+            />
+          </label>
+          <div className="mcp-field-hint">
+            Runs: docker run -i --rm {argsStr} {image || "<image>"}
+          </div>
+        </>
+      )}
+
+      {kind === "remote" && (
+        <>
+          <div className="mcp-field">
+            <span className="mcp-field-label">Transport</span>
+            <div className="mcp-seg">
+              {(["http", "sse"] as const).map((t) => (
+                <button
+                  key={t}
+                  className={`mcp-seg-btn ${transport === t ? "active" : ""}`}
+                  onClick={() => setTransport(t)}
+                >
+                  {t.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="mcp-field">
+            <span className="mcp-field-label">URL</span>
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://example.com/mcp"
+            />
+          </label>
+          <label className="mcp-field mcp-field-col">
+            <span className="mcp-field-label">Headers (KEY=VALUE per line)</span>
+            <textarea
+              value={headersStr}
+              onChange={(e) => setHeadersStr(e.target.value)}
+              placeholder={"Authorization=Bearer …"}
+              rows={2}
+            />
+          </label>
+        </>
+      )}
+
+      {kind !== "remote" && (
+        <label className="mcp-field mcp-field-col">
+          <span className="mcp-field-label">Env (KEY=VALUE per line)</span>
+          <textarea
+            value={envStr}
+            onChange={(e) => setEnvStr(e.target.value)}
+            placeholder={"API_KEY=…"}
+            rows={2}
+          />
+        </label>
+      )}
+
+      <div className="mcp-field">
+        <span className="mcp-field-label">Scope</span>
+        <div className="mcp-seg">
+          {(["project", "user"] as const).map((sc) => (
+            <button
+              key={sc}
+              className={`mcp-seg-btn ${scope === sc ? "active" : ""}`}
+              onClick={() => setScope(sc)}
+              title={
+                sc === "user"
+                  ? "~/.claude.json — every workspace"
+                  : ".mcp.json — this workspace, checked into git"
+              }
+            >
+              {sc}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mcp-addform-actions">
+        <button className="mcp-card-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="mcp-card-btn mcp-card-btn-install"
+          disabled={busy}
+          onClick={() => void submit()}
+        >
+          {busy ? "Adding…" : "Add server"}
+        </button>
+      </div>
+    </div>
+  );
 }

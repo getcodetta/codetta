@@ -8,6 +8,8 @@ import { basename } from "../pathUtils";
 import { Icon, type IconName } from "./Icon";
 import { git as gitApi, type GitStatus } from "../ipc";
 import { openPalette } from "../paletteBus";
+import { invoke } from "@tauri-apps/api/core";
+import { openTaskManager } from "../taskManagerBus";
 
 interface Props {
   onOpenPalette: () => void;
@@ -55,6 +57,37 @@ export function StatusBar({ onOpenPalette }: Props) {
   const bottomVisible = ws?.layout.bottomVisible ?? true;
   const sidebarView = ws?.layout.sidebarView ?? "files";
 
+  // Live resource glance for Codetta's own process tree (app + PTY
+  // shells + Claude Code subprocesses), polled every 5s. Clicking it
+  // opens the Task Manager. CPU is summed per-core percent.
+  const [procTotals, setProcTotals] = useState<{
+    cpu: number;
+    mem: number;
+  } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const stats =
+          await invoke<Array<{ cpu: number; mem: number }>>("process_stats");
+        if (!cancelled) {
+          setProcTotals({
+            cpu: stats.reduce((a, p) => a + p.cpu, 0),
+            mem: stats.reduce((a, p) => a + p.mem, 0),
+          });
+        }
+      } catch {
+        /* keep last reading */
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
   // Lightweight git status pulled every 15s — branch + ahead/behind +
   // working-tree change count for the status-bar chip. The Source
   // Control panel does its own richer fetch when open; this is the
@@ -88,6 +121,20 @@ export function StatusBar({ onOpenPalette }: Props) {
   return (
     <div className="statusbar" role="status">
       <div className="sb-section sb-left">
+        {procTotals && (
+          <button
+            type="button"
+            className="sb-item sb-proc"
+            onClick={openTaskManager}
+            title="Codetta process tree — CPU (sum of per-core %) · RAM. Click for Task Manager (Ctrl+Alt+U)"
+          >
+            <Icon name="monitor" size={11} />
+            {Math.round(procTotals.cpu)}% ·{" "}
+            {procTotals.mem >= 1024 * 1024 * 1024
+              ? `${(procTotals.mem / (1024 * 1024 * 1024)).toFixed(1)} GB`
+              : `${Math.round(procTotals.mem / (1024 * 1024))} MB`}
+          </button>
+        )}
         {ws && (
           <span className="sb-item sb-ws" title={ws.meta.root}>
             <span className="sb-icon">⌥</span>

@@ -9,6 +9,8 @@ import {
 import { useTheme, type ThemeMode } from "../theme";
 import { getActiveEditor } from "../editorState";
 import { Icon } from "./Icon";
+import { AIIcon } from "./AIIcon";
+import { useAgentMode, toggleAgentMode } from "../agentMode";
 
 // Edit-menu actions delegate to the active Monaco editor when one is
 // focused (its built-in commands handle the editor's undo stack +
@@ -210,6 +212,7 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
   const [menu, setMenu] = useState<string | null>(null);
   const [theme, setTheme] = useTheme();
   const [maximized, setMaximized] = useState(false);
+  const agentMode = useAgentMode();
 
   const closeMenu = () => setMenu(null);
   const toggleMenu = (k: string) => setMenu((cur) => (cur === k ? null : k));
@@ -322,6 +325,7 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
     "view.toggle_sidebar",
     "view.toggle_panel",
     "view.toggle_zen",
+    "view.toggle_agent",
     "view.settings",
     "view.settings_ai_providers",
     "view.settings_ai_privacy",
@@ -525,6 +529,7 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
             "view.toggle_sidebar",
             "view.toggle_panel",
             "view.toggle_zen",
+            "view.toggle_agent",
           ])}
           {ungroupedView.length > 0 && (
             <>
@@ -609,6 +614,21 @@ export function TopBar({ onOpenPalette }: TopBarProps) {
       </div>
 
       <div className="topbar-spacer" data-tauri-drag-region />
+
+      <button
+        className={`topbar-agent-toggle ${agentMode ? "active" : ""}`}
+        onClick={() => toggleAgentMode()}
+        title={
+          agentMode
+            ? "Switch back to the editor layout (Ctrl+Shift+A)"
+            : "Switch to Agent Mode — sessions, chat & changes (Ctrl+Shift+A)"
+        }
+        aria-pressed={agentMode}
+        data-tauri-drag-region={false}
+      >
+        <AIIcon size={13} />
+        <span className="topbar-agent-toggle-label">Agent</span>
+      </button>
 
       <button
         className="topbar-search"

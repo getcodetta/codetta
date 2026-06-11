@@ -392,6 +392,49 @@ function tokenize(md: string): Block[] {
       blocks.push({ kind: "ol", items, line: blockLine });
       continue;
     }
+    // Table (GFM): a header row (`| a | b |`) immediately followed by a
+    // separator row (`| --- | :--: |`). AI assistants emit these for
+    // comparison / result grids; without this they fell through to a
+    // paragraph and rendered as raw pipes.
+    if (
+      line.includes("|") &&
+      i + 1 < lines.length &&
+      lines[i + 1].includes("|") &&
+      /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/.test(lines[i + 1])
+    ) {
+      const splitRow = (row: string): string[] =>
+        row
+          .trim()
+          .replace(/^\|/, "")
+          .replace(/\|$/, "")
+          .split(/(?<!\\)\|/)
+          .map((c) => c.replace(/\\\|/g, "|").trim());
+      const header = splitRow(line);
+      const aligns = splitRow(lines[i + 1]).map((c) => {
+        const left = c.startsWith(":");
+        const right = c.endsWith(":");
+        if (left && right) return "center" as const;
+        if (right) return "right" as const;
+        if (left) return "left" as const;
+        return null;
+      });
+      i += 2;
+      const rows: string[][] = [];
+      while (
+        i < lines.length &&
+        lines[i].includes("|") &&
+        lines[i].trim() !== ""
+      ) {
+        rows.push(splitRow(lines[i]));
+        i++;
+      }
+      blocks.push({
+        kind: "table",
+        table: { header, rows, aligns },
+        line: blockLine,
+      });
+      continue;
+    }
     // Blank
     if (line.trim() === "") {
       blocks.push({ kind: "blank" });
@@ -487,6 +530,29 @@ export function renderMarkdown(md: string): string {
               return `<li class="md-task${isChecked ? " md-task-done" : ""}">${box} ${inlineMd(it)}</li>`;
             })
             .join("")}</ul>`,
+        );
+        break;
+      }
+      case "table": {
+        const t = b.table;
+        if (!t) break;
+        const alignAttr = (idx: number) => {
+          const a = t.aligns[idx] ?? null;
+          return a ? ` style="text-align:${a}"` : "";
+        };
+        const head = t.header
+          .map((c, idx) => `<th${alignAttr(idx)}>${inlineMd(c)}</th>`)
+          .join("");
+        const body = t.rows
+          .map(
+            (r) =>
+              `<tr>${r
+                .map((c, idx) => `<td${alignAttr(idx)}>${inlineMd(c)}</td>`)
+                .join("")}</tr>`,
+          )
+          .join("");
+        parts.push(
+          `<div class="md-table-wrap"${lineAttr(b)}><table class="md-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`,
         );
         break;
       }

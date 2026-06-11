@@ -136,6 +136,9 @@ export const claudeCodeProvider: ChatProvider = {
     resumeSessionId,
     chatSessionId,
     cwd: cwdArg,
+    effort,
+    permissionMode,
+    thinking,
   }) {
     // When resuming an existing Claude Code session, send only the LATEST
     // user message — the CLI already has the server-side history. Sending
@@ -157,6 +160,9 @@ export const claudeCodeProvider: ChatProvider = {
         resumeSessionId,
         chatSessionId,
         allowUnguarded: getAllowUnguarded(),
+        effort,
+        permissionMode,
+        thinking,
       });
     } catch (e) {
       const msg = String(e);

@@ -43,12 +43,24 @@ pub struct McpServer {
     pub name: String,
     /// "user" or "project" — where the server config lives.
     pub scope: String,
+    /// Transport: "stdio" (local command) or "http" / "sse" (remote URL).
+    /// Claude Code keys remote servers off a `type` field; local ones
+    /// have a `command`. We surface this so the UI can render each kind.
+    pub transport: String,
     /// Command to launch the server (typically `npx`, `node`, `python`, …).
+    /// Empty for remote (http/sse) servers.
+    #[serde(default)]
     pub command: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// Endpoint URL for remote (http/sse) servers; None for stdio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Optional HTTP headers for remote servers (e.g. Authorization).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
 }
 
 fn user_config_path() -> Result<PathBuf, String> {
@@ -88,26 +100,43 @@ fn read_servers_from(path: &Path, scope: &str) -> Vec<McpServer> {
                     .collect()
             })
             .unwrap_or_default();
-        let env = def
-            .get("env")
-            .and_then(|x| x.as_object())
-            .map(|o| {
-                o.iter()
-                    .filter_map(|(k, v)| {
-                        v.as_str().map(|s| (k.clone(), s.to_string()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let env = parse_string_map(def.get("env"));
+        let url = def
+            .get("url")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string());
+        let headers = parse_string_map(def.get("headers"));
+        // Transport: explicit `type` wins (remote http/sse); otherwise a
+        // `url` with no command implies remote; else it's a local stdio
+        // command server.
+        let transport = match def.get("type").and_then(|x| x.as_str()) {
+            Some("http") => "http".to_string(),
+            Some("sse") => "sse".to_string(),
+            _ if url.is_some() && command.is_empty() => "http".to_string(),
+            _ => "stdio".to_string(),
+        };
         out.push(McpServer {
             name: name.clone(),
             scope: scope.to_string(),
+            transport,
             command,
             args,
             env,
+            url,
+            headers,
         });
     }
     out
+}
+
+fn parse_string_map(v: Option<&serde_json::Value>) -> BTreeMap<String, String> {
+    v.and_then(|x| x.as_object())
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, val)| val.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// List every MCP server reachable from this workspace, merged from
@@ -149,6 +178,34 @@ pub fn claude_mcp_add(
         other => return Err(format!("unknown scope: {}", other)),
     };
     write_server(&target, &name, &command, &args, &env)?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Add (or replace) a remote (HTTP / SSE) MCP server in the given scope.
+/// `transport` must be "http" or "sse". Returns the written file path.
+#[tauri::command]
+pub fn claude_mcp_add_remote(
+    cwd: String,
+    name: String,
+    scope: String,
+    transport: String,
+    url: String,
+    headers: BTreeMap<String, String>,
+) -> Result<String, String> {
+    if transport != "http" && transport != "sse" {
+        return Err(format!("unknown transport: {}", transport));
+    }
+    let target = match scope.as_str() {
+        "user" => user_config_path()?,
+        "project" => project_config_path(&cwd),
+        other => return Err(format!("unknown scope: {}", other)),
+    };
+    let entry = if headers.is_empty() {
+        serde_json::json!({ "type": transport, "url": url })
+    } else {
+        serde_json::json!({ "type": transport, "url": url, "headers": headers })
+    };
+    write_entry(&target, &name, entry)?;
     Ok(target.to_string_lossy().into_owned())
 }
 
@@ -200,6 +257,22 @@ fn write_server(
     args: &[String],
     env: &BTreeMap<String, String>,
 ) -> Result<(), String> {
+    let entry = serde_json::json!({
+        "command": command,
+        "args": args,
+        "env": env,
+    });
+    write_entry(target, name, entry)
+}
+
+/// Insert a prebuilt server entry (stdio or remote) under
+/// `mcpServers[name]`, preserving the rest of the config file. Shared by
+/// both the stdio and remote add paths.
+fn write_entry(
+    target: &Path,
+    name: &str,
+    entry: serde_json::Value,
+) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -231,11 +304,6 @@ fn write_server(
     if !servers.is_object() {
         *servers = serde_json::json!({});
     }
-    let entry = serde_json::json!({
-        "command": command,
-        "args": args,
-        "env": env,
-    });
     servers
         .as_object_mut()
         .unwrap()

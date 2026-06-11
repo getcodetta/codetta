@@ -178,9 +178,15 @@ export const claudeCode = {
 export interface McpServer {
   name: string;
   scope: "user" | "project";
+  /** "stdio" (local command) or "http" / "sse" (remote URL). */
+  transport: "stdio" | "http" | "sse";
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Endpoint for remote (http/sse) servers. */
+  url?: string | null;
+  /** Optional HTTP headers for remote servers. */
+  headers?: Record<string, string>;
 }
 
 export const claudeMcp = {
@@ -205,9 +211,40 @@ export const claudeMcp = {
       args,
       env,
     }),
+  /** Add or replace a remote (HTTP / SSE) MCP server in the given scope. */
+  addRemote: (
+    cwd: string,
+    name: string,
+    scope: "user" | "project",
+    transport: "http" | "sse",
+    url: string,
+    headers: Record<string, string>,
+  ) =>
+    invoke<string>("claude_mcp_add_remote", {
+      cwd,
+      name,
+      scope,
+      transport,
+      url,
+      headers,
+    }),
   /** Remove an MCP server from the given scope (no-op if absent). */
   remove: (cwd: string, name: string, scope: "user" | "project") =>
     invoke<void>("claude_mcp_remove", { cwd, name, scope }),
+};
+
+export interface PluginCmdOutput {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export const claudePlugin = {
+  /** Run a `claude plugin …` subcommand and capture its output. The CLI
+   *  clones/validates marketplaces and writes the correct settings scope,
+   *  so this is preferred over hand-editing the plugin config JSON. */
+  run: (args: string[], cwd?: string) =>
+    invoke<PluginCmdOutput>("claude_plugin_cmd", { cwd: cwd ?? null, args }),
 };
 
 export interface GitFile {

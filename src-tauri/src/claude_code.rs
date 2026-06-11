@@ -114,7 +114,7 @@ pub fn claude_code_check() -> Result<String, String> {
 /// fail opaquely. The overlay denies it with a reason telling the
 /// model to ask in plain text and end its turn.
 const PERMISSION_GATED_TOOLS: &str =
-    "Bash|Edit|MultiEdit|Write|NotebookEdit|WebFetch|WebSearch|Read|Grep|Glob|AskUserQuestion";
+    "Bash|Edit|MultiEdit|Write|NotebookEdit|WebFetch|WebSearch|Read|Grep|Glob|AskUserQuestion|ExitPlanMode";
 
 /// Cached resolution of the working `claude` executable name. On
 /// Windows, npm-installed Claude Code is `claude.cmd`, which
@@ -171,6 +171,50 @@ fn resolve_claude_executable() -> Option<String> {
     None
 }
 
+#[derive(serde::Serialize)]
+pub struct PluginCmdOutput {
+    pub code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Run a `claude` subcommand (e.g. `plugin marketplace add owner/repo`,
+/// `plugin install name@marketplace`, `plugin marketplace list --json`)
+/// and capture its output. The agent-mode Plugins UI uses this so the CLI
+/// does the cloning/validation and writes the correct settings scope —
+/// far more robust than hand-editing the plugin config JSON. Blocking (a
+/// repo clone can take a few seconds), consistent with the git_* commands.
+#[tauri::command]
+pub fn claude_plugin_cmd(
+    cwd: Option<String>,
+    args: Vec<String>,
+) -> Result<PluginCmdOutput, String> {
+    let exe = resolve_claude_executable().ok_or_else(|| {
+        "Claude Code CLI not found. Install it and run `claude /login` first.".to_string()
+    })?;
+    let mut cmd = Command::new(&exe);
+    cmd.args(&args);
+    if let Some(c) = cwd {
+        if !c.is_empty() {
+            cmd.current_dir(c);
+        }
+    }
+    cmd.env("NO_COLOR", "1")
+        .env("FORCE_COLOR", "0")
+        .env("TERM", "dumb");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    Ok(PluginCmdOutput {
+        code: out.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    })
+}
+
 /// Build a Command that will invoke claude WITHOUT passing the prompt as an
 /// argument — the prompt is piped via stdin instead, which sidesteps the
 /// Windows ~8191-char command-line limit (otherwise blown by inlined file
@@ -183,6 +227,8 @@ fn build_claude_command(
     resume: Option<&str>,
     cwd: Option<&str>,
     use_hooks: bool,
+    effort: Option<&str>,
+    permission_mode: Option<&str>,
 ) -> Command {
     // "default" sentinel = don't pass --model, let Claude Code use its
     // own configured default (whatever `claude /login` set up).
@@ -213,9 +259,17 @@ fn build_claude_command(
         //     didn't come up. Skip prompts entirely so the agent loop
         //     can run; user accepts the same blast radius as before.
         if use_hooks {
-            cmd.arg("--permission-mode").arg("default");
+            // User-chosen mode (plan / acceptEdits / auto / dontAsk) —
+            // every one of these still fires PreToolUse hooks, so the
+            // GUI permission cards keep working. bypassPermissions is
+            // rejected upstream in claude_code_chat.
+            cmd.arg("--permission-mode")
+                .arg(permission_mode.unwrap_or("default"));
         } else {
             cmd.arg("--dangerously-skip-permissions");
+        }
+        if let Some(e) = effort {
+            cmd.arg("--effort").arg(e);
         }
         if let Some(m) = model_to_pass {
             cmd.arg("--model").arg(m);
@@ -232,14 +286,21 @@ fn build_claude_command(
 
     // Fall back to shell-mediated invocation — also stdin-driven.
     let perm_flag = if use_hooks {
-        "--permission-mode default"
+        format!(
+            "--permission-mode {}",
+            shell_quote(permission_mode.unwrap_or("default"))
+        )
     } else {
-        "--dangerously-skip-permissions"
+        "--dangerously-skip-permissions".to_string()
     };
     let mut shell_cmd = format!(
         "claude -p --output-format stream-json --verbose --include-partial-messages {}",
         perm_flag
     );
+    if let Some(e) = effort {
+        shell_cmd.push_str(" --effort ");
+        shell_cmd.push_str(&shell_quote(e));
+    }
     if let Some(m) = model_to_pass {
         shell_cmd.push_str(" --model ");
         shell_cmd.push_str(&shell_quote(m));
@@ -471,7 +532,19 @@ pub fn claude_code_chat(
     resume_session_id: Option<String>,
     chat_session_id: Option<String>,
     allow_unguarded: Option<bool>,
+    effort: Option<String>,
+    permission_mode: Option<String>,
+    thinking: Option<bool>,
 ) -> Result<String, String> {
+    // Whitelist both knobs — they land on a command line. Anything
+    // unexpected (including bypassPermissions, which would silently
+    // disable the hook-based permission guard) is dropped.
+    let effort = effort.filter(|e| {
+        matches!(e.as_str(), "low" | "medium" | "high" | "xhigh" | "max")
+    });
+    let permission_mode = permission_mode.filter(|m| {
+        matches!(m.as_str(), "default" | "plan" | "acceptEdits" | "auto" | "dontAsk")
+    });
     let id = Uuid::new_v4().to_string();
     let event_name = format!("claude-stream:{}", id);
 
@@ -555,7 +628,15 @@ pub fn claude_code_chat(
         resume_session_id.as_deref(),
         cwd.as_deref(),
         use_hooks,
+        effort.as_deref(),
+        permission_mode.as_deref(),
     );
+    // Extended-thinking toggle. There's no headless CLI flag for it,
+    // but the CLI honors MAX_THINKING_TOKENS: 0 disables thinking,
+    // a large budget forces it on. None = CLI default behavior.
+    if let Some(t) = thinking {
+        cmd.env("MAX_THINKING_TOKENS", if t { "31999" } else { "0" });
+    }
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());

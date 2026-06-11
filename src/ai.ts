@@ -141,6 +141,9 @@ export async function* chatStream(
   resumeSessionId?: string,
   chatSessionId?: string,
   cwd?: string,
+  effort?: string,
+  permissionMode?: string,
+  thinking?: boolean,
 ): AsyncGenerator<ChatStreamEvent, void, unknown> {
   const parsed = parseQualifiedModel(model);
   const providerId: ProviderId = parsed?.providerId ?? "ollama";
@@ -154,6 +157,9 @@ export async function* chatStream(
     resumeSessionId,
     chatSessionId,
     cwd,
+    effort,
+    permissionMode,
+    thinking,
   });
 }
 

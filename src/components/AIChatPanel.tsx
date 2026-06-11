@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Icon } from "./Icon";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
@@ -42,6 +49,7 @@ import { executeTool, TOOLS } from "../aiTools";
 import { SLASH_COMMANDS, type SlashCommand } from "../slashCommands";
 import {
   AskQuestionCard,
+  CompactChat,
   extractEditDiffs,
   InterleavedBlocks,
   RunningToolList,
@@ -58,6 +66,7 @@ import {
   UsageChip,
 } from "./chatPanelChrome";
 import { matchExclusion } from "../aiPrivacy";
+import { publishTasks } from "../aiTaskStore";
 import { loadWorkspaceRules } from "../workspaceRules";
 import { ClaudePermissionOverlay } from "./ClaudePermissionOverlay";
 import {
@@ -181,7 +190,68 @@ function insertIntoActiveEditor(text: string): boolean {
   return true;
 }
 
+// A composer meta badge (effort / thinking) that's always visible so its
+// current value is glanceable, and opens a small upward popover to change
+// it. Replaces the old "only shows once you've set a non-default value,
+// click to reset" behaviour.
+function MetaFlag({
+  label,
+  current,
+  options,
+}: {
+  label: string;
+  current: string;
+  options: { key: string; label: string; active: boolean; onSelect: () => void }[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="ai-meta-flag-wrap">
+      <button
+        type="button"
+        className={`ai-meta-flag ${open ? "open" : ""}`}
+        title={`${label} — click to change (applies from your next message)`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label}: {current}
+        <Icon name="chevron-down" size={10} />
+      </button>
+      {open && (
+        <>
+          <div
+            className="ai-flag-menu-overlay"
+            onClick={() => setOpen(false)}
+          />
+          <div className="ai-flag-menu" role="menu">
+            {options.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                role="menuitemradio"
+                aria-checked={o.active}
+                className={`ai-flag-menu-item ${o.active ? "active" : ""}`}
+                onClick={() => {
+                  o.onSelect();
+                  setOpen(false);
+                }}
+              >
+                <span>{o.label}</span>
+                {o.active && <Icon name="check" size={11} />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function AIChatPanel({ wsId, root, aiChatId }: Props) {
+  // Agent mode supplies this via context to render denser (tool bursts
+  // collapse to an icon row, tighter spacing). Default false → the docked
+  // chat is unchanged.
+  const compact = useContext(CompactChat);
   // Start in "ready" rather than "checking" so the panel renders the
   // normal UI immediately on open. "Checking for Ollama…" used to flash
   // up before model discovery finished, which was confusing for users
@@ -289,6 +359,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   // CLI's "#N" ids, so TaskUpdate's taskId resolves to a row.
   const taskIndexRef = useRef<Map<string, number>>(new Map());
   const taskCounterRef = useRef(0);
+
+  // Mirror the checklist into the shared store so the agent-mode sidebar's
+  // Tasks section can render it. Keyed by aiChatId; singleton (no id) chats
+  // don't publish since nothing reads them.
+  useEffect(() => {
+    if (aiChatId) publishTasks(aiChatId, todos);
+  }, [todos, aiChatId]);
 
   // Rebuild the sticky checklist from saved history. The checklist is
   // normally driven by LIVE tool_call events, so a reload or chat
@@ -1174,6 +1251,91 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const [ccCommands, setCcCommands] = useState<
     Array<{ name: string; hint: string }>
   >([]);
+  // Per-chat Claude Code session knobs, set via /effort and /mode.
+  // Applied to every subsequent spawn; null = CLI default.
+  const [ccEffort, setCcEffort] = useState<string | null>(null);
+  const [ccPermMode, setCcPermMode] = useState<string | null>(null);
+  // Extended thinking: null = CLI default, true = forced on, false = off.
+  const [ccThinking, setCcThinking] = useState<boolean | null>(null);
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+
+  // Argument submenu for /effort, /mode and /thinking: once the command
+  // name is complete ("/effort "), the slash window switches to the
+  // VALUE list — click or Enter applies it directly, no typing needed.
+  const slashArgMenu = ():
+    | Array<{ name: string; hint: string; run: () => void }>
+    | null => {
+    if (!input.startsWith("/") || !input.includes(" ")) return null;
+    const parts = input.split(/\s+/);
+    const fw = parts[0].toLowerCase();
+    const partial = (parts[1] ?? "").toLowerCase();
+    if (fw === "/effort") {
+      const opts: Array<[string, string]> = [
+        ["off", "Claude Code's default effort"],
+        ["low", "Fastest — minimal reasoning"],
+        ["medium", "Balanced"],
+        ["high", "More reasoning"],
+        ["xhigh", "Heavy reasoning"],
+        ["max", "Maximum reasoning"],
+      ];
+      return opts
+        .filter(([o]) => o.startsWith(partial))
+        .map(([o, h]) => ({
+          name: `/effort ${o}`,
+          hint:
+            h +
+            ((o === "off" ? ccEffort === null : ccEffort === o)
+              ? "  ✓ current"
+              : ""),
+          run: () => {
+            setCcEffort(o === "off" ? null : o);
+            toastInfo(
+              o === "off"
+                ? "Effort reset to default"
+                : `Effort: ${o} (applies from the next message)`,
+            );
+          },
+        }));
+    }
+    if (fw === "/mode") {
+      const opts: Array<[string, string | null, string]> = [
+        ["ask", null, "Confirm each edit / command (default)"],
+        ["plan", "plan", "Plan only — no edits"],
+        ["auto-edit", "acceptEdits", "Auto-accept file edits"],
+        ["auto", "auto", "Claude Code's auto mode"],
+      ];
+      return opts
+        .filter(([o]) => o.startsWith(partial))
+        .map(([o, v, h]) => ({
+          name: `/mode ${o}`,
+          hint: h + (ccPermMode === v ? "  ✓ current" : ""),
+          run: () => {
+            setCcPermMode(v);
+            toastInfo(`Mode: ${o} (applies from the next message)`);
+          },
+        }));
+    }
+    if (fw === "/thinking") {
+      const opts: Array<[string, boolean | null, string]> = [
+        ["on", true, "Force extended thinking on every turn"],
+        ["off", false, "Disable extended thinking"],
+        ["default", null, "Let Claude Code decide"],
+      ];
+      return opts
+        .filter(([o]) => o.startsWith(partial))
+        .map(([o, v, h]) => ({
+          name: `/thinking ${o}`,
+          hint: h + (ccThinking === v ? "  ✓ current" : ""),
+          run: () => {
+            setCcThinking(v);
+            toastInfo(
+              `Extended thinking: ${o} (applies from the next message)`,
+            );
+          },
+        }));
+    }
+    return null;
+  };
   const selectedIsCC =
     parseQualifiedModel(selected)?.providerId === "claude-code";
   useEffect(() => {
@@ -1242,7 +1404,18 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const slashMatchesFor = (q: string) => {
     const local = SLASH_COMMANDS.filter((c) =>
       c.name.slice(1).toLowerCase().startsWith(q),
-    ).map((c) => ({ kind: "local" as const, name: c.name, hint: c.hint, cmd: c }));
+    ).map((c) => ({
+      kind: "local" as const,
+      name: c.name,
+      // /thinking's row IS the toggle — show the live state.
+      hint:
+        c.action === "thinking"
+          ? `Extended thinking: ${
+              ccThinking === null ? "CLI default" : ccThinking ? "ON" : "OFF"
+            } — Enter toggles`
+          : c.hint,
+      cmd: c,
+    }));
     const cc = ccCommands
       .filter(
         (c) =>
@@ -1718,6 +1891,12 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         // when adjacent so 200 deltas don't become 200 markdown
         // bubbles.
         const blocksThisRound: NonNullable<ChatMessage["blocks"]> = [];
+        // Some providers (Claude Code stream-json) surface the same
+        // tool_use twice — once in a partial message, once in the final.
+        // Processing it twice double-rendered every Edit row AND ran
+        // TaskCreate/TaskUpdate twice (the duplicated checklist). Track
+        // ids we've already handled this round and skip repeats.
+        const seenToolCallIds = new Set<string>();
         const appendTextBlock = (text: string) => {
           if (!text) return;
           const last = blocksThisRound[blocksThisRound.length - 1];
@@ -1758,6 +1937,16 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           // THIS chat's workspace root — not whichever workspace is
           // active when the turn fires (multi-workspace isolation).
           root,
+          // Per-chat /effort, /mode and /thinking knobs (Claude Code only).
+          selectedProvider === "claude-code"
+            ? (ccEffort ?? undefined)
+            : undefined,
+          selectedProvider === "claude-code"
+            ? (ccPermMode ?? undefined)
+            : undefined,
+          selectedProvider === "claude-code"
+            ? (ccThinking ?? undefined)
+            : undefined,
         )) {
           // Any event from the provider is a sign of life — reset the
           // staleness timer so the "still working" badge only fires
@@ -1835,6 +2024,12 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               setTokensPerSec(acc.length / 4 / elapsedSec);
             }
           } else if (ev.kind === "tool_call") {
+            // Skip a re-emitted tool_use: same id already handled this
+            // round. Prevents double rows + double TaskCreate/TaskUpdate.
+            if (ev.call.id && seenToolCallIds.has(ev.call.id)) {
+              continue;
+            }
+            if (ev.call.id) seenToolCallIds.add(ev.call.id);
             toolCallsThisRound.push(ev.call);
             setStreamingToolCalls([...toolCallsThisRound]);
             if (ev.call.id) {
@@ -2549,6 +2744,87 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       void showUsageReport();
       return;
     }
+    if (cmd.action === "effort") {
+      const arg = input.split(/\s+/)[1]?.toLowerCase() ?? "";
+      setInput("");
+      const levels = ["low", "medium", "high", "xhigh", "max"];
+      if (!arg) {
+        // No argument — reopen as the value submenu so the user picks
+        // from a list instead of reading a syntax toast.
+        setInput("/effort ");
+        setSlashIndex(0);
+        inputRef.current?.focus();
+        return;
+      }
+      if (arg === "off" || arg === "default") {
+        setCcEffort(null);
+        toastInfo("Effort reset to Claude Code's default");
+        return;
+      }
+      if (!levels.includes(arg)) {
+        toastError(`Unknown effort "${arg}" — use ${levels.join("|")}`);
+        return;
+      }
+      setCcEffort(arg);
+      toastInfo(`Effort: ${arg} (applies from the next message)`);
+      return;
+    }
+    if (cmd.action === "mode") {
+      const arg = input.split(/\s+/)[1]?.toLowerCase() ?? "";
+      setInput("");
+      // Friendly aliases → CLI --permission-mode values. No bypass:
+      // that would disable the permission guard entirely.
+      const map: Record<string, string> = {
+        ask: "default",
+        default: "default",
+        plan: "plan",
+        "auto-edit": "acceptEdits",
+        "accept-edits": "acceptEdits",
+        acceptedits: "acceptEdits",
+        auto: "auto",
+        dontask: "dontAsk",
+        "dont-ask": "dontAsk",
+      };
+      if (!arg) {
+        setInput("/mode ");
+        setSlashIndex(0);
+        inputRef.current?.focus();
+        return;
+      }
+      if (arg === "off") {
+        setCcPermMode(null);
+        toastInfo("Permission mode reset to ask (default)");
+        return;
+      }
+      const mode = map[arg];
+      if (!mode) {
+        toastError(
+          `Unknown mode "${arg}" — use ask, plan, auto-edit, or auto`,
+        );
+        return;
+      }
+      setCcPermMode(mode);
+      toastInfo(
+        `Mode: ${mode}${mode === "plan" ? " — Claude will plan without editing" : ""} (applies from the next message)`,
+      );
+      return;
+    }
+    if (cmd.action === "thinking") {
+      const arg = input.split(/\s+/)[1]?.toLowerCase() ?? "";
+      setInput("");
+      let next: boolean | null;
+      if (arg === "on") next = true;
+      else if (arg === "off") next = false;
+      else if (arg === "default") next = null;
+      // Bare /thinking is a toggle — the slash row doubles as the
+      // on/off switch.
+      else next = ccThinking !== true;
+      setCcThinking(next);
+      toastInfo(
+        `Extended thinking: ${next === null ? "CLI default" : next ? "ON" : "OFF"} (applies from the next message)`,
+      );
+      return;
+    }
     if (cmd.action === "clear") {
       setMessages([]);
       // Wipe Claude Code session context too — /clear means "forget what
@@ -2884,7 +3160,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
 
   if (status === "missing") {
     return (
-      <div className="ai-panel">
+      <div className={`ai-panel${compact ? " compact" : ""}`}>
         <div className="ai-empty">
           <p>
             <strong>Ollama isn't reachable on localhost:11434.</strong>
@@ -2967,7 +3243,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
 
   if (status === "no-models") {
     return (
-      <div className="ai-panel">
+      <div className={`ai-panel${compact ? " compact" : ""}`}>
         <div className="ai-empty">
           <p>
             <strong>Ollama is running.</strong> Pull a model to start chatting,
@@ -3014,7 +3290,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       {renderHeader()}
       {renderHistoryDropdown()}
       <PrivacyBanner activeFilePath={editorState.filePath} />
-      {todos && todos.length > 0 && <TodosCard items={todos} />}
+      {/* In compact (agent) mode the checklist lives in the sidebar Tasks
+          section, so the sticky in-chat card would just duplicate it. */}
+      {!compact && todos && todos.length > 0 && <TodosCard items={todos} />}
       {messages.length >= 4 && streaming === null && !runningTools && (
         <TimelineScrubber
           totalMessages={messages.length}
@@ -3284,14 +3562,19 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   </div>
                 );
               })()}
-              {isAssistant && split.thinking.length > 0 && (
-                <details className="ai-think-block">
-                  <summary>
-                    <span>💭</span> Reasoning
-                  </summary>
-                  <div className="ai-think-body">{split.thinking}</div>
-                </details>
-              )}
+              {/* In compact mode, CompactBlocks renders thinking inline
+                  where it happened — but only when the message has a blocks
+                  log. Block-less messages still need this outer panel. */}
+              {!(compact && m.blocks && m.blocks.length > 0) &&
+                isAssistant &&
+                split.thinking.length > 0 && (
+                  <details className="ai-think-block">
+                    <summary>
+                      <span>💭</span> Reasoning
+                    </summary>
+                    <div className="ai-think-body">{split.thinking}</div>
+                  </details>
+                )}
               <div className="ai-msg-body">
                 {showThinking ? (
                   <span className="ai-thinking">
@@ -3302,15 +3585,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                     <span className="ai-spinner" /> Preparing tool call…
                   </span>
                 ) : isAssistant && m.blocks && m.blocks.length > 0 ? (
-                  // Chronological render: walk the recorded blocks
-                  // log so text and tool calls appear in the order
-                  // the model emitted them, not "all text first then
-                  // all tools." Works during streaming too — the
-                  // live bubble's blocks come from streamingBlocks
-                  // state, which is updated in real time. Falls
-                  // back to MarkdownPreview below for messages
-                  // without a blocks log (older sessions, non-
-                  // agentic providers).
+                  // Chronological render so narration stays attached to the
+                  // action it introduces ("Now hook into X:" → the chip for
+                  // that edit). In compact (agent) mode the tool calls render
+                  // as slim inline chips instead of VS-Code-style rows.
                   <InterleavedBlocks
                     blocks={m.blocks}
                     callsById={
@@ -3329,6 +3607,15 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                       }
                       return out;
                     })()}
+                    erroredIds={(() => {
+                      const out = new Set<string>();
+                      for (const tr of m.tool_results ?? []) {
+                        if (tr.tool_use_id && tr.is_error)
+                          out.add(tr.tool_use_id);
+                      }
+                      return out;
+                    })()}
+                    streaming={isStreamingThis}
                   />
                 ) : isAssistant ? (
                   <>
@@ -3645,6 +3932,31 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       {(() => {
         const isSlash = input.startsWith("/");
         if (!isSlash || streaming !== null) return null;
+        // Value submenu ("/effort " → pick low/medium/…) wins over the
+        // command list once the command name is complete.
+        const argMenu = slashArgMenu();
+        if (argMenu) {
+          if (argMenu.length === 0) return null;
+          const aidx = Math.max(0, Math.min(slashIndex, argMenu.length - 1));
+          return (
+            <div className="ai-slash-suggestions">
+              {argMenu.map((c, i) => (
+                <button
+                  key={c.name}
+                  className={`ai-slash-item ${i === aidx ? "active" : ""}`}
+                  onMouseEnter={() => setSlashIndex(i)}
+                  onClick={() => {
+                    setInput("");
+                    c.run();
+                  }}
+                >
+                  <span className="ai-slash-name">{c.name}</span>
+                  <span className="ai-slash-hint">{c.hint}</span>
+                </button>
+              ))}
+            </div>
+          );
+        }
         const q = input.split(/\s+/)[0].slice(1).toLowerCase();
         const matches = slashMatchesFor(q);
         if (matches.length === 0) return null;
@@ -3771,9 +4083,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                         <div className="usage-window">
                           <div className="usage-window-head">
                             <span>Extra usage (monthly)</span>
+                            {/* used_credits / monthly_limit arrive in
+                                CENTS (4720/10000 + utilization 47.2%
+                                = $47.20 of $100). */}
                             <span className="usage-window-pct">
-                              {r.extra.used.toFixed(0)} /{" "}
-                              {r.extra.limit.toFixed(0)} {r.extra.currency}
+                              ${(r.extra.used / 100).toFixed(2)} / $
+                              {(r.extra.limit / 100).toFixed(2)}{" "}
+                              {r.extra.currency}
                             </span>
                           </div>
                           <div className="usage-bar">
@@ -3911,6 +4227,69 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           index.html" + "MODEL default") eating ~50px above the input. */}
       <div className="ai-composer-meta">
         {renderModelChip()}
+        {parseQualifiedModel(selected)?.providerId === "claude-code" && (
+          <>
+            <MetaFlag
+              label="effort"
+              current={ccEffort ?? "default"}
+              options={[
+                {
+                  key: "default",
+                  label: "Default (CLI)",
+                  active: ccEffort === null,
+                  onSelect: () => {
+                    setCcEffort(null);
+                    toastInfo("Effort: default");
+                  },
+                },
+                ...["low", "medium", "high", "xhigh", "max"].map((o) => ({
+                  key: o,
+                  label: o,
+                  active: ccEffort === o,
+                  onSelect: () => {
+                    setCcEffort(o);
+                    toastInfo(`Effort: ${o} (from your next message)`);
+                  },
+                })),
+              ]}
+            />
+            <MetaFlag
+              label="thinking"
+              current={
+                ccThinking === null ? "auto" : ccThinking ? "on" : "off"
+              }
+              options={[
+                {
+                  key: "auto",
+                  label: "Auto (CLI default)",
+                  active: ccThinking === null,
+                  onSelect: () => {
+                    setCcThinking(null);
+                    toastInfo("Extended thinking: auto");
+                  },
+                },
+                {
+                  key: "on",
+                  label: "On",
+                  active: ccThinking === true,
+                  onSelect: () => {
+                    setCcThinking(true);
+                    toastInfo("Extended thinking: on (from your next message)");
+                  },
+                },
+                {
+                  key: "off",
+                  label: "Off",
+                  active: ccThinking === false,
+                  onSelect: () => {
+                    setCcThinking(false);
+                    toastInfo("Extended thinking: off (from your next message)");
+                  },
+                },
+              ]}
+            />
+          </>
+        )}
         {contextLabel && (
           <button
             type="button"
@@ -4109,6 +4488,36 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                   )
                 : undefined;
             if (isSlash) {
+              // Value submenu has priority — arrows pick a value,
+              // Enter/Tab applies it immediately.
+              const argMenu = slashArgMenu();
+              if (argMenu && argMenu.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashIndex((i) => Math.min(i + 1, argMenu.length - 1));
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSlashIndex((i) => Math.max(i - 1, 0));
+                  return;
+                }
+                if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                  e.preventDefault();
+                  const aidx = Math.max(
+                    0,
+                    Math.min(slashIndex, argMenu.length - 1),
+                  );
+                  setInput("");
+                  argMenu[aidx].run();
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setInput("");
+                  return;
+                }
+              }
               const q = firstWord.slice(1).toLowerCase();
               const matches = slashMatchesFor(q);
               if (matches.length > 0) {
@@ -4210,6 +4619,92 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             }
           }}
         />
+        <button
+          type="button"
+          className="ai-input-slash"
+          title="Slash commands"
+          onClick={() => {
+            setInput("/");
+            setSlashIndex(0);
+            inputRef.current?.focus();
+          }}
+        >
+          /
+        </button>
+        {selectedIsCC && (
+          <div className="ai-mode-wrap">
+            {modeMenuOpen && (
+              <>
+                <div
+                  className="ai-mode-backdrop"
+                  onClick={() => setModeMenuOpen(false)}
+                />
+                <div className="ai-mode-menu" role="menu">
+                  {(
+                    [
+                      {
+                        v: null,
+                        label: "Ask",
+                        desc: "Confirm each edit / command",
+                      },
+                      {
+                        v: "plan",
+                        label: "Plan",
+                        desc: "Plan only — no edits",
+                      },
+                      {
+                        v: "acceptEdits",
+                        label: "Auto-edit",
+                        desc: "Auto-accept file edits, ask for the rest",
+                      },
+                      {
+                        v: "auto",
+                        label: "Auto",
+                        desc: "Claude Code's auto mode",
+                      },
+                    ] as Array<{ v: string | null; label: string; desc: string }>
+                  ).map((o) => (
+                    <button
+                      key={o.label}
+                      type="button"
+                      className={`ai-mode-item ${ccPermMode === o.v ? "active" : ""}`}
+                      onClick={() => {
+                        setCcPermMode(o.v);
+                        setModeMenuOpen(false);
+                        toastInfo(
+                          `Mode: ${o.label} (applies from the next message)`,
+                        );
+                      }}
+                    >
+                      <span className="ai-mode-item-label">
+                        {ccPermMode === o.v ? "● " : ""}
+                        {o.label}
+                      </span>
+                      <span className="ai-mode-item-desc">{o.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            <button
+              type="button"
+              className="ai-mode-btn"
+              onClick={() => setModeMenuOpen((v) => !v)}
+              title="Claude Code permission mode (also /mode)"
+            >
+              {ccPermMode === "plan"
+                ? "Plan"
+                : ccPermMode === "acceptEdits"
+                  ? "Auto-edit"
+                  : ccPermMode === "auto"
+                    ? "Auto"
+                    : ccPermMode === "dontAsk"
+                      ? "Don't ask"
+                      : "Ask"}{" "}
+              ▾
+            </button>
+          </div>
+        )}
         {streaming !== null || runningTools ? (
           <button
             className="ai-send-btn ai-stop-btn"

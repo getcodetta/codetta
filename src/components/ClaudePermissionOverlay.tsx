@@ -5,6 +5,7 @@ import { matchExclusion } from "../aiPrivacy";
 import { error as toastError } from "../notify";
 import { getJson as lsGetJson, setJson as lsSetJson } from "../localStore";
 import { Icon } from "./Icon";
+import { MarkdownPreview } from "./MarkdownPreview";
 
 /**
  * Per-user always-allow rules persisted in localStorage. Three kinds:
@@ -108,8 +109,10 @@ function extFromPath(path: string): string | null {
   return base.slice(dot).toLowerCase();
 }
 
-/** Tools we refuse to add as bare-name always-allow even if user clicks. */
-const NEVER_BLANKET_ALLOW = new Set(["Bash"]);
+/** Tools we refuse to add as bare-name always-allow even if user clicks.
+ *  ExitPlanMode is a per-plan approval — blanket-allowing it would defeat
+ *  the whole point of the confirmation. */
+const NEVER_BLANKET_ALLOW = new Set(["Bash", "ExitPlanMode"]);
 
 /** First whitespace-delimited token of a Bash command. */
 function bashFirstToken(cmd: string): string {
@@ -322,6 +325,7 @@ export function ClaudePermissionOverlay() {
   }, [req?.request_id]);
 
   if (!req) return null;
+  const isPlan = req.tool_name === "ExitPlanMode";
   const isBash = req.tool_name === "Bash";
   const bashCmd =
     isBash && typeof req.tool_input.command === "string"
@@ -399,29 +403,35 @@ export function ClaudePermissionOverlay() {
   // led to the ask. Mounted by AIChatPanel; App.tsx no longer renders it.
   return (
     <div className="cc-perm-inline">
-      <div className="cc-perm-card">
+      <div className={`cc-perm-card ${isPlan ? "cc-perm-plan-card" : ""}`}>
         <PermissionCardBody req={req} />
         <div className="cc-perm-actions">
           <button
             className="cc-perm-btn cc-perm-deny"
             onClick={() => void respond("deny")}
-            title="Block this tool call. The agent treats it as a failure and may try a different approach."
-          >
-            <Icon name="x" size={12} />
-            <span>Deny</span>
-          </button>
-          <button
-            className="cc-perm-btn cc-perm-allow-session"
-            onClick={() => void allowThisSession()}
             title={
-              isBash && bashPrefix
-                ? `Auto-allow any "${bashPrefix} ..." for the rest of this Codetta session (resets on restart).`
-                : `Auto-allow ${req.tool_name} for the rest of this Codetta session (resets on restart).`
+              isPlan
+                ? "Don't start yet — Claude keeps planning and you can refine it."
+                : "Block this tool call. The agent treats it as a failure and may try a different approach."
             }
           >
-            <Icon name="check" size={12} />
-            <span>Allow this session</span>
+            <Icon name="x" size={12} />
+            <span>{isPlan ? "Keep planning" : "Deny"}</span>
           </button>
+          {!isPlan && (
+            <button
+              className="cc-perm-btn cc-perm-allow-session"
+              onClick={() => void allowThisSession()}
+              title={
+                isBash && bashPrefix
+                  ? `Auto-allow any "${bashPrefix} ..." for the rest of this Codetta session (resets on restart).`
+                  : `Auto-allow ${req.tool_name} for the rest of this Codetta session (resets on restart).`
+              }
+            >
+              <Icon name="check" size={12} />
+              <span>Allow this session</span>
+            </button>
+          )}
           {isBash && bashPrefix && (
             <button
               className="cc-perm-btn cc-perm-allow-always"
@@ -461,14 +471,19 @@ export function ClaudePermissionOverlay() {
           <button
             className="cc-perm-btn cc-perm-allow"
             onClick={() => void respond("allow")}
-            title="Run this single call. You'll be prompted again next time."
+            title={
+              isPlan
+                ? "Approve the plan — Claude exits plan mode and starts building."
+                : "Run this single call. You'll be prompted again next time."
+            }
           >
             <Icon name="check" size={12} />
-            <span>Allow once</span>
+            <span>{isPlan ? "Approve & start" : "Allow once"}</span>
           </button>
         </div>
         <div className="cc-perm-shortcut-hint">
-          <kbd>Enter</kbd> Allow once · <kbd>Esc</kbd> Deny
+          <kbd>Enter</kbd> {isPlan ? "Approve" : "Allow once"} ·{" "}
+          <kbd>Esc</kbd> {isPlan ? "Keep planning" : "Deny"}
           {queue.length > 1 && (
             <span className="cc-perm-queue-inline">
               {" · "}+{queue.length - 1} more pending
@@ -483,13 +498,20 @@ export function ClaudePermissionOverlay() {
 function PermissionCardBody({ req }: { req: PermissionRequest }) {
   const { tool_name: tool, tool_input: input, cwd } = req;
   const wsName = cwd ? cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : null;
+  const isPlan = tool === "ExitPlanMode";
 
   return (
     <>
       <div className="cc-perm-head">
-        <span className="cc-perm-icon">🔒</span>
+        <span className="cc-perm-icon">{isPlan ? "📋" : "🔒"}</span>
         <span className="cc-perm-title">
-          Claude Code wants to use <code>{tool}</code>
+          {isPlan ? (
+            <>Claude has a plan — ready to start</>
+          ) : (
+            <>
+              Claude Code wants to use <code>{tool}</code>
+            </>
+          )}
         </span>
         {wsName && <span className="cc-perm-ws">in {wsName}</span>}
       </div>
@@ -581,6 +603,16 @@ function PermissionInputRenderer({
         <span className="cc-perm-label">Notebook</span>
         <code className="cc-perm-path">{path}</code>
       </div>
+    );
+  }
+  if (tool === "ExitPlanMode") {
+    const plan = typeof input.plan === "string" ? input.plan : "";
+    return plan ? (
+      <div className="cc-perm-plan">
+        <MarkdownPreview content={plan} />
+      </div>
+    ) : (
+      <div className="cc-perm-hint">(No plan text provided.)</div>
     );
   }
   return (

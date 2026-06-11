@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { fs, type DirEntry } from "../ipc";
@@ -48,6 +55,13 @@ interface MenuTarget {
   y: number;
   entry: DirEntry | null; // null = root background
 }
+
+// When provided, file (non-directory) clicks call this instead of the
+// store's openFile. Agent mode uses it to open files in a popup viewer,
+// since it has no editor pane. Directories still toggle normally.
+export const FileOpenOverride = createContext<
+  ((wsId: string, path: string) => void) | null
+>(null);
 
 interface NodeProps {
   wsId: string;
@@ -117,8 +131,10 @@ function Node({ wsId, entry, depth, onContext }: NodeProps) {
     return () => fsBus.removeEventListener("dir", handler);
   }, [entry, wsId, expanded, refresh]);
 
+  const openOverride = useContext(FileOpenOverride);
   const onClick = () => {
     if (entry.is_dir) toggleDir(wsId, entry.path);
+    else if (openOverride) openOverride(wsId, entry.path);
     else void openFile(wsId, entry.path);
   };
 
@@ -267,9 +283,11 @@ function Node({ wsId, entry, depth, onContext }: NodeProps) {
 interface Props {
   wsId: string;
   root: string;
+  /** Override file clicks (e.g. agent mode opens files in a popup). */
+  onOpenFile?: (wsId: string, path: string) => void;
 }
 
-export function FileTree({ wsId, root }: Props) {
+export function FileTree({ wsId, root, onOpenFile }: Props) {
   const [entries, setEntries] = useState<DirEntry[]>([]);
   const [menu, setMenu] = useState<MenuTarget | null>(null);
   const [historyFile, setHistoryFile] = useState<string | null>(null);
@@ -710,6 +728,7 @@ export function FileTree({ wsId, root }: Props) {
   })();
 
   return (
+    <FileOpenOverride.Provider value={onOpenFile ?? null}>
     <div
       ref={treeRef}
       className="tree"
@@ -750,5 +769,6 @@ export function FileTree({ wsId, root }: Props) {
         />
       )}
     </div>
+    </FileOpenOverride.Provider>
   );
 }

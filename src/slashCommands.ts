@@ -14,7 +14,16 @@ export interface SlashCommand {
   /** When provided, the command rewrites the input to this prompt. */
   prompt?: string;
   /** When provided, runs an in-app action (clear, new, etc.). */
-  action?: "new" | "clear" | "tree" | "terminal" | "file" | "usage";
+  action?:
+    | "new"
+    | "clear"
+    | "tree"
+    | "terminal"
+    | "file"
+    | "usage"
+    | "effort"
+    | "mode"
+    | "thinking";
   /** Whether the user is expected to type an argument after the name. */
   takesArg?: boolean;
 }
@@ -80,5 +89,23 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: "/usage",
     hint: "Claude account + local AI usage report",
     action: "usage",
+  },
+  {
+    name: "/effort",
+    hint: "/effort low|medium|high|xhigh|max — Claude Code reasoning effort",
+    action: "effort",
+    takesArg: true,
+  },
+  {
+    name: "/mode",
+    hint: "/mode ask|plan|auto-edit|auto — Claude Code permission mode",
+    action: "mode",
+    takesArg: true,
+  },
+  {
+    name: "/thinking",
+    hint: "Toggle Claude Code extended thinking",
+    action: "thinking",
+    takesArg: true,
   },
 ];

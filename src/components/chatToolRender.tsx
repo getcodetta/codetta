@@ -8,11 +8,86 @@
 // No closures over chat panel state, no IPC, no localStorage. Anything
 // that needs more is still in AIChatPanel.
 
-import { useEffect, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import type { ChatMessage, ToolCall } from "../ai";
-import { balanceFences } from "../chatTextUtils";
+import { balanceFences, splitThinking } from "../chatTextUtils";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { Icon, type IconName } from "./Icon";
+
+// Agent mode turns this on to render the chat denser: grouped tool bursts
+// collapse to an icon row by default, expandable on click. The normal
+// docked chat leaves it false and renders exactly as before.
+export const CompactChat = createContext(false);
+
+// Agent mode provides an opener so an edit chip can deep-link to the file
+// it changed (opens the agent-mode file popup). Null elsewhere → chips
+// just expand inline.
+export const AgentFileOpen = createContext<((path: string) => void) | null>(
+  null,
+);
+
+// Past-tense verb for a chip label — reads as "edited run.ts" / "ran tsc"
+// rather than the raw tool name.
+function toolVerb(name: string): string {
+  switch (name) {
+    case "Edit":
+    case "MultiEdit":
+      return "edited";
+    case "Write":
+      return "wrote";
+    case "create_file":
+      return "created";
+    case "Read":
+    case "NotebookRead":
+      return "read";
+    case "Grep":
+    case "Glob":
+    case "ToolSearch":
+      return "searched";
+    case "Bash":
+      return "ran";
+    case "WebSearch":
+      return "searched web";
+    case "WebFetch":
+      return "fetched";
+    default:
+      return friendlyToolName(name).toLowerCase();
+  }
+}
+
+// Small glyph per tool, for the Replit-style icon row on collapsed groups.
+function toolIconName(name: string): IconName {
+  switch (name) {
+    case "Read":
+      return "file-text";
+    case "Edit":
+    case "MultiEdit":
+      return "edit";
+    case "Write":
+    case "create_file":
+      return "file";
+    case "Grep":
+    case "Glob":
+    case "ToolSearch":
+      return "search";
+    case "Bash":
+      return "terminal";
+    case "WebSearch":
+    case "WebFetch":
+      return "globe";
+    case "TaskCreate":
+    case "TaskUpdate":
+      return "check-square";
+    default:
+      return "code";
+  }
+}
 
 // ---------- Tool-name labelling ----------
 
@@ -335,6 +410,10 @@ export function RunningToolRow({
     status?: "running" | "done" | "error";
   };
 }) {
+  // In compact (agent) mode, drop the bulky tool-output preview — the live
+  // list stays a tight one-line-per-tool ticker instead of dumping file
+  // contents / command output mid-stream.
+  const compact = useContext(CompactChat);
   // Compact display detail. For paths: keep the last two segments
   // ("…/projects/index.html"). For URLs: hostname + truncated path
   // ("example.com/blog/post"). Plain strings: untouched.
@@ -392,7 +471,7 @@ export function RunningToolRow({
           </span>
         )}
       </div>
-      {previewLines && (
+      {!compact && previewLines && (
         <pre className="ai-running-row-preview">
           {previewLines}
           {previewTruncated ? "\n…" : ""}
@@ -415,11 +494,34 @@ export function InterleavedBlocks({
   blocks,
   callsById,
   resultsById,
+  erroredIds,
+  streaming = false,
 }: {
   blocks: NonNullable<ChatMessage["blocks"]>;
   callsById: Map<string, ToolCall>;
   resultsById: Map<string, string>;
+  /** Tool ids whose result was an error (for outcome-aware chips). */
+  erroredIds?: Set<string>;
+  /** True while this message is the in-flight turn (drives the live
+   *  "working now" pulse on the last unfinished chip). */
+  streaming?: boolean;
 }) {
+  const compact = useContext(CompactChat);
+  // Compact (agent) mode: a distinct, inline render — narration prose with
+  // runs of tool calls collapsed into a row of icon chips (grouped by type)
+  // that reveal their target on hover and expand on click. Task tools are
+  // omitted (the sidebar owns them).
+  if (compact) {
+    return (
+      <CompactBlocks
+        blocks={blocks}
+        callsById={callsById}
+        resultsById={resultsById}
+        erroredIds={erroredIds ?? EMPTY_ID_SET}
+        streaming={streaming}
+      />
+    );
+  }
   // Claude sometimes retries AskUserQuestion after the redirect deny,
   // which would render two identical question cards back to back.
   // Keep only the LAST occurrence of each identical question set.
@@ -434,6 +536,19 @@ export function InterleavedBlocks({
       const prev = seen.get(sig);
       if (prev !== undefined) askDupSkip.add(prev);
       seen.set(sig, i);
+    });
+  }
+  // Drop re-emitted tool_use blocks (same callId twice) — some providers
+  // surface a tool call in both a partial and the final message, which
+  // otherwise renders every row twice. Also covers transcripts saved
+  // before the stream-level dedup landed.
+  const dupCallSkip = new Set<number>();
+  {
+    const seenIds = new Set<string>();
+    blocks.forEach((b, i) => {
+      if (b.kind !== "tool_call") return;
+      if (seenIds.has(b.callId)) dupCallSkip.add(i);
+      else seenIds.add(b.callId);
     });
   }
   // Merge RUNS of the same read-ish tool into one grouped card: an
@@ -464,7 +579,7 @@ export function InterleavedBlocks({
       runName = null;
     };
     blocks.forEach((b, i) => {
-      if (b.kind !== "tool_call" || askDupSkip.has(i)) {
+      if (b.kind !== "tool_call" || askDupSkip.has(i) || dupCallSkip.has(i)) {
         if (b.kind !== "text" || b.text) flush();
         return;
       }
@@ -495,7 +610,8 @@ export function InterleavedBlocks({
             />
           );
         }
-        if (askDupSkip.has(i) || inGroup.has(i)) return null;
+        if (askDupSkip.has(i) || dupCallSkip.has(i) || inGroup.has(i))
+          return null;
         const group = groupAt.get(i);
         if (group) {
           const calls = group
@@ -509,24 +625,7 @@ export function InterleavedBlocks({
               (c): c is { id: string; call: ToolCall } => !!c && !!c.call,
             );
           if (calls.length === 0) return null;
-          return (
-            <div
-              key={`g${i}`}
-              className="ai-tcalls ai-tcalls-inline ai-tcall-group"
-            >
-              <div className="ai-tcall-group-head">
-                {friendlyToolName(calls[0].call.function.name)} ×{" "}
-                {calls.length}
-              </div>
-              {calls.map(({ id, call }) => (
-                <ToolCallRow
-                  key={id}
-                  call={call}
-                  result={resultsById.get(id)}
-                />
-              ))}
-            </div>
-          );
+          return <ToolGroupCard key={`g${i}`} calls={calls} resultsById={resultsById} />;
         }
         const call = callsById.get(b.callId);
         if (!call) return null;
@@ -540,6 +639,385 @@ export function InterleavedBlocks({
         );
       })}
     </>
+  );
+}
+
+const EMPTY_ID_SET: Set<string> = new Set();
+
+/** Last path segment of an editing tool's target, or its primary detail
+ *  (search query, bash command) for non-file tools. */
+function shortTarget(call: ToolCall): string {
+  const path = pathOf(call);
+  if (path && path !== "(unknown)")
+    return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+  return primaryToolDetail(call.function.arguments);
+}
+
+/** Full file path of an editing tool, or "" if it isn't file-targeted. */
+function fullPathOf(call: ToolCall): string {
+  if (!EDIT_NAMES.has(call.function.name)) return "";
+  const p = pathOf(call);
+  return p && p !== "(unknown)" ? p : "";
+}
+
+// Read-only "looking around" tools. They get collapsed into ONE muted
+// summary chip so they don't compete with the actions that actually
+// changed something.
+const EXPLORE_NAMES = new Set([
+  "Read",
+  "NotebookRead",
+  "Grep",
+  "Glob",
+  "ToolSearch",
+  "WebSearch",
+  "WebFetch",
+]);
+
+// A run of consecutive tool calls, rendered with hierarchy: all the
+// read/search "exploration" collapses into one quiet chip ("read 16
+// files"), while changes (edits/writes) and commands stand out as their
+// own prominent chips. Clicking an edit chip opens that file; any chip
+// expands its full detail inline.
+function InlineActionRow({
+  items,
+  resultsById,
+  erroredIds,
+  streaming,
+}: {
+  items: { id: string; call: ToolCall }[];
+  resultsById: Map<string, string>;
+  erroredIds: Set<string>;
+  streaming: boolean;
+}) {
+  const onOpenFile = useContext(AgentFileOpen);
+  const [open, setOpen] = useState<string | null>(null);
+
+  const explore = items.filter((it) =>
+    EXPLORE_NAMES.has(it.call.function.name),
+  );
+  const actionItems = items.filter(
+    (it) => !EXPLORE_NAMES.has(it.call.function.name),
+  );
+  // Merge consecutive same-tool action calls into one chip.
+  const groups: { name: string; calls: { id: string; call: ToolCall }[] }[] = [];
+  for (const it of actionItems) {
+    const last = groups[groups.length - 1];
+    if (last && last.name === it.call.function.name) last.calls.push(it);
+    else groups.push({ name: it.call.function.name, calls: [it] });
+  }
+
+  const statusOf = (calls: { id: string; call: ToolCall }[]) => {
+    if (calls.some((c) => erroredIds.has(c.id))) return "error";
+    if (streaming && !calls.every((c) => resultsById.has(c.id)))
+      return "pending";
+    return "ok";
+  };
+
+  // Quiet exploration summary chip.
+  const reads = explore.filter((it) =>
+    /Read/.test(it.call.function.name),
+  ).length;
+  const searches = explore.length - reads;
+  const exLabel =
+    searches === 0
+      ? `read ${reads} file${reads === 1 ? "" : "s"}`
+      : reads === 0
+        ? `${searches} search${searches === 1 ? "" : "es"}`
+        : `explored ${explore.length}`;
+
+  return (
+    <div className="ai-iarow">
+      <div className="ai-iarow-chips">
+        {explore.length > 0 && (
+          <button
+            className={`ai-ichip tone-muted status-${statusOf(explore)} ${open === "explore" ? "active" : ""}`}
+            title={`${reads} read · ${searches} search`}
+            aria-expanded={open === "explore"}
+            onClick={() => setOpen(open === "explore" ? null : "explore")}
+          >
+            <span className="ai-ichip-dot" aria-hidden="true" />
+            <Icon name="search" size={12} />
+            <span className="ai-ichip-label">{exLabel}</span>
+          </button>
+        )}
+        {groups.map((g, gi) => {
+          const n = g.calls.length;
+          const verb = toolVerb(g.name);
+          const targets = [
+            ...new Set(g.calls.map((c) => shortTarget(c.call)).filter(Boolean)),
+          ];
+          const label =
+            targets.length === 1
+              ? `${verb} ${targets[0]}${n > 1 ? ` ×${n}` : ""}`
+              : verb;
+          const key = `a${gi}`;
+          const tone = EDIT_NAMES.has(g.name) ? "tone-edit" : "tone-action";
+          const file = targets.length === 1 ? fullPathOf(g.calls[0].call) : "";
+          const canOpen = !!onOpenFile && !!file;
+          return (
+            <button
+              key={key}
+              className={`ai-ichip ${tone} status-${statusOf(g.calls)} ${open === key ? "active" : ""}`}
+              title={`${verb} ${targets.join(", ")}`}
+              aria-expanded={open === key}
+              onClick={() => {
+                if (canOpen) onOpenFile!(file);
+                else setOpen(open === key ? null : key);
+              }}
+            >
+              <span className="ai-ichip-dot" aria-hidden="true" />
+              <Icon name={toolIconName(g.name)} size={13} />
+              {targets.length > 1 && n > 1 && (
+                <span className="ai-ichip-count">{n}</span>
+              )}
+              <span className="ai-ichip-label">{label}</span>
+            </button>
+          );
+        })}
+      </div>
+      {open !== null &&
+        (() => {
+          const calls =
+            open === "explore"
+              ? explore
+              : (groups[parseInt(open.slice(1), 10)]?.calls ?? []);
+          if (calls.length === 0) return null;
+          return (
+            <div className="ai-iaction-detail">
+              {calls.map((it, idx) => (
+                <ToolCallRow
+                  key={it.id ?? idx}
+                  call={it.call}
+                  result={it.id ? resultsById.get(it.id) : undefined}
+                />
+              ))}
+            </div>
+          );
+        })()}
+    </div>
+  );
+}
+
+// Foldable extended-thinking block, rendered inline in the compact chat
+// where the model reasoned. Collapsed by default (the answer matters more
+// than the scratch work) but one click away.
+function ThinkingBlock({ text }: { text: string }) {
+  return (
+    <details className="ai-think-block ai-think-inline">
+      <summary>
+        <span>💭</span> Reasoning
+      </summary>
+      <div className="ai-think-body">{text}</div>
+    </details>
+  );
+}
+
+// Compact-mode walk of an assistant turn's blocks: prose between runs of
+// icon chips, in chronological order, so narration stays attached to the
+// actions it introduces. Skips task tools + AskUserQuestion (surfaced in
+// the sidebar / question dock) and de-duplicates re-emitted tool ids.
+function CompactBlocks({
+  blocks,
+  callsById,
+  resultsById,
+  erroredIds,
+  streaming,
+}: {
+  blocks: NonNullable<ChatMessage["blocks"]>;
+  callsById: Map<string, ToolCall>;
+  resultsById: Map<string, string>;
+  erroredIds: Set<string>;
+  streaming: boolean;
+}) {
+  const seen = new Set<string>();
+  const out: ReactNode[] = [];
+  let run: { id: string; call: ToolCall }[] = [];
+  let runKey = 0;
+  const flush = () => {
+    if (run.length) {
+      out.push(
+        <InlineActionRow
+          key={`r${runKey++}`}
+          items={run}
+          resultsById={resultsById}
+          erroredIds={erroredIds}
+          streaming={streaming}
+        />,
+      );
+      run = [];
+    }
+  };
+  blocks.forEach((b, i) => {
+    if (b.kind === "text") {
+      flush();
+      if (b.text) {
+        // Pull extended-thinking (<think>…</think>) out of the text and
+        // render it as a foldable Reasoning block in place — otherwise it
+        // either leaks as raw tags or gets dropped in the compact layout.
+        const { thinking, visible } = splitThinking(b.text);
+        if (thinking.trim())
+          out.push(<ThinkingBlock key={`tk${i}`} text={thinking} />);
+        if (visible.trim())
+          out.push(
+            <MarkdownPreview key={`t${i}`} content={balanceFences(visible)} />,
+          );
+      }
+      return;
+    }
+    if (seen.has(b.callId)) return;
+    seen.add(b.callId);
+    const call = callsById.get(b.callId);
+    if (!call) return;
+    if (TASK_NAMES.has(call.function.name)) return; // tasks live in the sidebar
+    run.push({ id: b.callId, call });
+  });
+  flush();
+  return <>{out}</>;
+}
+
+// A merged burst of read-ish tools (Read × 8, Grep × 3…). In compact
+// (agent) mode it starts collapsed to just a Replit-style icon row; click
+// the head to expand the individual rows. Normal mode renders expanded as
+// before, now also collapsible.
+function ToolGroupCard({
+  calls,
+  resultsById,
+}: {
+  calls: { id: string; call: ToolCall }[];
+  resultsById: Map<string, string>;
+}) {
+  const compact = useContext(CompactChat);
+  const [open, setOpen] = useState(!compact);
+  const name = calls[0].call.function.name;
+  return (
+    <div className="ai-tcalls ai-tcalls-inline ai-tcall-group">
+      <button
+        className="ai-tcall-group-head"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <span className="ai-tcall-caret">{open ? "▾" : "▸"}</span>
+        <span className="ai-tcall-group-label">
+          {friendlyToolName(name)} × {calls.length}
+        </span>
+        {!open && (
+          <span className="ai-tcall-chips" aria-hidden="true">
+            {calls.slice(0, 12).map(({ id }, idx) => (
+              <Icon key={id + idx} name={toolIconName(name)} size={12} />
+            ))}
+            {calls.length > 12 && (
+              <span className="ai-tcall-chip-more">+{calls.length - 12}</span>
+            )}
+          </span>
+        )}
+      </button>
+      {open &&
+        calls.map(({ id, call }) => (
+          <ToolCallRow key={id} call={call} result={resultsById.get(id)} />
+        ))}
+    </div>
+  );
+}
+
+// ── Action strip (compact / agent chat) ────────────────────────────
+// Non-edit, non-task tool calls collapse to categorized chips ("6 reads ·
+// 2 searches · ➜ tsc"). Clicking a chip expands its rows. Edits are NOT
+// here — they roll into the ComposeCard; tasks live in the sidebar.
+const ACTION_CATS: {
+  key: string;
+  icon: IconName;
+  sing: string;
+  plur: string;
+  names: string[];
+}[] = [
+  { key: "read", icon: "file-text", sing: "read", plur: "reads", names: ["Read", "NotebookRead"] },
+  { key: "search", icon: "search", sing: "search", plur: "searches", names: ["Grep", "Glob", "ToolSearch"] },
+  { key: "run", icon: "terminal", sing: "command", plur: "commands", names: ["Bash", "BashOutput", "KillShell"] },
+  { key: "web", icon: "globe", sing: "web call", plur: "web calls", names: ["WebSearch", "WebFetch"] },
+];
+const EDIT_NAMES = new Set(["Edit", "MultiEdit", "Write", "create_file", "NotebookEdit"]);
+const TASK_NAMES = new Set([
+  "TaskCreate",
+  "TaskUpdate",
+  "TaskList",
+  "TodoWrite",
+  "AskUserQuestion",
+]);
+
+function actionCategoryKey(name: string): string {
+  for (const c of ACTION_CATS) if (c.names.includes(name)) return c.key;
+  return "other";
+}
+
+export function ActionStrip({
+  calls,
+  resultsById,
+}: {
+  calls: ToolCall[];
+  resultsById: Map<string, string>;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  // Keep only the "activity" tools — edits and tasks are surfaced
+  // elsewhere (Changes card / sidebar), so they don't belong here.
+  const activity = calls.filter(
+    (c) => !EDIT_NAMES.has(c.function.name) && !TASK_NAMES.has(c.function.name),
+  );
+  if (activity.length === 0) return null;
+
+  const groups = new Map<string, ToolCall[]>();
+  for (const c of activity) {
+    const k = actionCategoryKey(c.function.name);
+    (groups.get(k) ?? groups.set(k, []).get(k)!).push(c);
+  }
+  // Stable order: defined categories first, then "other".
+  const ordered = [
+    ...ACTION_CATS.filter((c) => groups.has(c.key)).map((c) => ({
+      key: c.key,
+      icon: c.icon,
+      label: (n: number) => `${n} ${n === 1 ? c.sing : c.plur}`,
+      items: groups.get(c.key)!,
+    })),
+    ...(groups.has("other")
+      ? [
+          {
+            key: "other",
+            icon: "code" as IconName,
+            label: (n: number) => `${n} ${n === 1 ? "action" : "actions"}`,
+            items: groups.get("other")!,
+          },
+        ]
+      : []),
+  ];
+
+  const openItems = ordered.find((g) => g.key === open)?.items;
+
+  return (
+    <div className="ai-actionstrip">
+      <div className="ai-actionstrip-chips">
+        {ordered.map((g) => (
+          <button
+            key={g.key}
+            className={`ai-chip ${open === g.key ? "active" : ""}`}
+            onClick={() => setOpen(open === g.key ? null : g.key)}
+            aria-expanded={open === g.key}
+          >
+            <Icon name={g.icon} size={12} />
+            <span>{g.label(g.items.length)}</span>
+          </button>
+        ))}
+      </div>
+      {openItems && (
+        <div className="ai-actionstrip-detail">
+          {openItems.map((c, i) => (
+            <ToolCallRow
+              key={c.id ?? i}
+              call={c}
+              result={c.id ? resultsById.get(c.id) : undefined}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

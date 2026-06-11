@@ -4,6 +4,53 @@ All notable changes to Codetta. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-06-11
+
+Agent Mode — a dedicated, agent-centric workspace — plus a plugin system,
+a reimagined chat, and a richer MCP browser.
+
+### Added
+
+- **Agent Mode** — a global view toggle (the title-bar Agent button or
+  `Ctrl+Shift+A`) that swaps the editor-centric shell for an agent
+  layout: a workspace-initials rail, a per-workspace sessions list, a
+  conversation-first chat as the primary surface, and a Changes / Files
+  context panel. Sessions, changes, and the agent task list survive the
+  toggle.
+- **Conversation-first chat (agent mode)** — tool calls render as
+  glanceable icon chips grouped by type: exploration (reads/searches)
+  collapses into one quiet chip, while edits stand out. Click a chip to
+  expand its diff or output; click an edit chip to open the file. A
+  foldable Reasoning block renders extended thinking inline.
+- **Agent task sidebar** — TodoWrite / TaskCreate checklists surface in a
+  dedicated Tasks section beside the sessions list.
+- **Plugins** — add any Claude Code plugin marketplace by GitHub URL
+  (the official catalog or your own repo), browse the plugins it offers,
+  and install / enable / remove them. Backed by the `claude plugin` CLI.
+- **Agent Customizations modal** — one tabbed home for Instructions,
+  Skills, Plugins, MCP servers, Tool Access, Providers, and Privacy.
+- **MCP manual add** — alongside the one-click catalog, add a server by
+  stdio command, HTTP / SSE remote URL, or npm / pip / Docker package, in
+  user or project scope, with search and live install state.
+- **Skills** — manage `.claude/skills/<name>/SKILL.md` (project + user
+  scope): list, create, and edit.
+- **File popup** — clicking a file in agent mode opens it in a popup
+  editor (agent mode has no editor pane).
+- **GFM tables** in the markdown renderer (chat + split preview).
+- **Effort / thinking badges** in the composer (Claude Code) — always
+  visible, click to change.
+
+### Changed
+
+- **Plan-mode approval** — `ExitPlanMode` is now permission-gated and
+  shows a plan-review card with the plan rendered as markdown and
+  **Approve & start** / **Keep planning** actions.
+
+### Fixed
+
+- Duplicate tool rows and miscounted agent tasks caused by the Claude
+  Code stream re-emitting some tool calls.
+
 ## [0.2.0] — 2026-05-01
 
 The Claude Code integration overhaul. If you primarily use Claude Code

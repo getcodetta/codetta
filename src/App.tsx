@@ -16,6 +16,7 @@ import { onFootprintOpen } from "./footprintBus";
 import { basename } from "./pathUtils";
 import { WorkspacePicker } from "./components/WorkspacePicker";
 import { WorkspaceShell } from "./components/WorkspaceShell";
+import { AgentModeShell } from "./components/AgentModeShell";
 import { TopBar } from "./components/TopBar";
 import { ActivityBar } from "./components/ActivityBar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -38,6 +39,7 @@ import { onShortcutsOpen } from "./shortcutsBus";
 import { ToastHistoryModal } from "./components/ToastHistoryModal";
 import { onNotificationsOpen } from "./notifyBus";
 import { useZenMode } from "./zenMode";
+import { useAgentMode } from "./agentMode";
 import "./App.css";
 
 // When this document was opened as a terminal pop-out window, render only
@@ -121,6 +123,7 @@ function MainApp() {
   const activeId = useStore((s) => s.activeId);
   const loaded = useStore((s) => s.loaded);
   const zen = useZenMode();
+  const agentMode = useAgentMode();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   useEffect(() => onShortcutsOpen(() => setShortcutsOpen(true)), []);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -623,7 +626,7 @@ function MainApp() {
   }
 
   return (
-    <div className={`app ${zen ? "app-zen" : ""} ${dropOver ? "app-drop-over" : ""}`}>
+    <div className={`app ${zen ? "app-zen" : ""} ${agentMode ? "app-agent" : ""} ${dropOver ? "app-drop-over" : ""}`}>
       {!zen && <TopBar onOpenPalette={() => setPaletteOpen(true)} />}
       <div
         className="shell-stack"
@@ -631,10 +634,21 @@ function MainApp() {
           activeId ? (loaded[activeId]?.layout.sidebarSide ?? "left") : "left"
         }
       >
-        {!zen && <ActivityBar />}
+        {!zen && !agentMode && <ActivityBar />}
         <div className="workspace-area">
           {openIds.length === 0 ? (
             <WorkspacePicker />
+          ) : agentMode && activeId ? (
+            // Agent mode fully replaces the editor-centric shell (rather
+            // than overlaying it) so a given AI chat is never mounted
+            // twice — a double-mounted AIChatPanel would double-subscribe
+            // to the same session's stream events. Terminals tear down and
+            // replay backend scrollback on return, same as Zen / reload.
+            //
+            // NOT keyed by activeId: the shell stays mounted across
+            // workspace switches so its per-workspace session selection
+            // survives clicking between workspaces in the sessions list.
+            <AgentModeShell wsId={activeId} />
           ) : (
             openIds.map((id) => (
               <WorkspaceShell
