@@ -8,7 +8,7 @@
 // No closures over chat panel state, no IPC, no localStorage. Anything
 // that needs more is still in AIChatPanel.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChatMessage, ToolCall } from "../ai";
 import { balanceFences } from "../chatTextUtils";
 import { MarkdownPreview } from "./MarkdownPreview";
@@ -597,15 +597,43 @@ function parseAskQuestions(args: Record<string, unknown>): AskQuestionSpec[] {
 export function AskQuestionCard({
   call,
   onAnswer,
+  onOther,
+  onDismiss,
 }: {
   call: ToolCall;
   onAnswer?: (text: string) => void;
+  /** "Other…" picked — host should focus the chat input so the user
+   *  types a free-form answer instead. */
+  onOther?: () => void;
+  /** ✕ / Esc — hide the card and let the user just keep chatting. */
+  onDismiss?: () => void;
 }) {
   const questions = parseAskQuestions(call.function.arguments);
   const [picked, setPicked] = useState<Map<number, Set<string>>>(new Map());
   const [activeIdx, setActiveIdx] = useState(0);
   const [sent, setSent] = useState(false);
   const interactive = !!onAnswer && !sent;
+
+  // Esc dismisses the docked card — unless the user is typing in an
+  // input (the composer's own Esc behavior wins there).
+  useEffect(() => {
+    if (!onDismiss || !interactive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      )
+        return;
+      e.preventDefault();
+      onDismiss();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onDismiss, interactive]);
 
   if (questions.length === 0) {
     // Args still streaming in (or unexpected shape) — placeholder row.
@@ -688,6 +716,17 @@ export function AskQuestionCard({
           : `Claude needs your input — ${
               questions.filter((_, i) => answered(i)).length
             }/${questions.length} answered`}
+        {onDismiss && interactive && (
+          <button
+            type="button"
+            className="ai-ask-close"
+            onClick={onDismiss}
+            title="Dismiss (Esc) — you can still answer in the message box"
+            aria-label="Dismiss question card"
+          >
+            ✕
+          </button>
+        )}
       </div>
       {questions.length > 1 && (
         <div className="ai-ask-tabs" role="tablist">
@@ -752,6 +791,24 @@ export function AskQuestionCard({
               </button>
             );
           })}
+          {interactive && onOther && (
+            <button
+              type="button"
+              className="ai-ask-option ai-ask-option-other"
+              onClick={onOther}
+              title="Answer in your own words in the message box"
+            >
+              <span
+                className={`ai-ask-ind ${
+                  q.multiSelect ? "ai-ask-ind-check" : "ai-ask-ind-radio"
+                }`}
+                aria-hidden="true"
+              />
+              <span className="ai-ask-option-text">
+                <span className="ai-ask-option-label">Other…</span>
+              </span>
+            </button>
+          )}
         </div>
         {interactive &&
           q.multiSelect &&
@@ -784,6 +841,7 @@ export function AskQuestionCard({
         {interactive && (
           <span className="ai-ask-hint">
             …or just reply in the message box below.
+            {onDismiss ? " Esc to dismiss." : ""}
           </span>
         )}
         {sent && <span className="ai-ask-hint">Answer sent.</span>}

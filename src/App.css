@@ -4769,29 +4769,49 @@ input {
   font-weight: 700;
   line-height: 1;
 }
-/* Tab bar for multi-question cards: answer one, flow to the next. */
+/* Tab bar for multi-question cards: answer one, flow to the next.
+   Underline style, like the official Claude Code extension's card. */
 .ai-ask-tabs {
   display: flex;
-  gap: 4px;
+  gap: 14px;
   flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
 }
 .ai-ask-tab {
-  padding: 3px 10px;
-  border: 1px solid var(--border);
-  border-radius: 11px;
+  padding: 3px 2px 6px;
+  border: none;
+  border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: 11.5px;
   font-family: inherit;
   cursor: pointer;
+  margin-bottom: -1px;
 }
 .ai-ask-tab.active {
-  border-color: var(--accent);
   color: var(--fg);
-  background: var(--accent-soft, rgba(0, 122, 204, 0.12));
+  border-bottom-color: var(--accent);
+  font-weight: 600;
 }
 .ai-ask-tab.answered {
   color: var(--ok, #2ecc71);
+}
+.ai-ask-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.ai-ask-close:hover {
+  color: var(--fg);
+}
+.ai-ask-option-other .ai-ask-option-label {
+  color: var(--fg-muted);
+  font-weight: 500;
+  font-style: italic;
 }
 .ai-ask-next {
   align-self: flex-start;

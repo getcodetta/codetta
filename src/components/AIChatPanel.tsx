@@ -1238,6 +1238,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   // interactive card docks above the composer; the transcript shows a
   // compact one-line record. Retries produce identical calls — the
   // last one wins.
+  // Keyed by call id so dismissing one question doesn't suppress the
+  // next one Claude asks.
+  const [dismissedAskId, setDismissedAskId] = useState<string | null>(null);
   const pendingAskCall = useMemo(() => {
     if (streaming !== null || runningTools) return null;
     const last = messages[messages.length - 1];
@@ -1245,8 +1248,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     const asks = last.tool_calls.filter(
       (c) => c.function.name === "AskUserQuestion",
     );
-    return asks.length > 0 ? asks[asks.length - 1] : null;
-  }, [messages, streaming, runningTools]);
+    const call = asks.length > 0 ? asks[asks.length - 1] : null;
+    if (call && (call.id ?? "ask") === dismissedAskId) return null;
+    return call;
+  }, [messages, streaming, runningTools, dismissedAskId]);
 
   // Filter the cached workspace files by the current mention query.
   // Match against the workspace-relative path (a file's basename
@@ -3460,6 +3465,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             key={pendingAskCall.id ?? "ask"}
             call={pendingAskCall}
             onAnswer={answerQuestion}
+            onOther={() => inputRef.current?.focus()}
+            onDismiss={() => setDismissedAskId(pendingAskCall.id ?? "ask")}
           />
         </div>
       )}
