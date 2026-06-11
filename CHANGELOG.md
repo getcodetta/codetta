@@ -4,6 +4,17 @@ All notable changes to Codetta. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-06-11
+
+### Added
+
+- **First-run welcome** — a one-time window introducing the headline
+  features (bring-your-own-model, Agent Mode, plugins & MCP,
+  multi-workspace) with quick actions to open a folder or start in Agent
+  Mode.
+- **Richer empty pane** — the "Nothing open here" view now leads with
+  **New AI chat** and **Agent Mode** buttons, not just file actions.
+
 ## [0.5.0] — 2026-06-11
 
 Agent Mode — a dedicated, agent-centric workspace — plus a plugin system,

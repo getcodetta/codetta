@@ -26,6 +26,7 @@ import { revealInTree } from "../revealInTree";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Icon } from "./Icon";
 import { peekClosedTabs, subscribeClosedTabs } from "../closedTabsStack";
+import { setAgentMode } from "../agentMode";
 
 function tabLabel(
   ws: WorkspaceData,
@@ -870,6 +871,27 @@ function EmptyPane({ wsId }: { wsId: string }) {
           <Icon name="command" size={28} />
         </div>
         <div className="pane-empty-title">Nothing open here</div>
+        <div className="pane-empty-sub">
+          Start a conversation with AI, or jump back into your work.
+        </div>
+        <div className="pane-empty-primary">
+          <button
+            className="pane-empty-ai"
+            onClick={() => useStore.getState().addAIChat(wsId, "editor")}
+            title="Open a new AI chat tab"
+          >
+            <AIIcon size={15} />
+            <span>New AI chat</span>
+          </button>
+          <button
+            className="pane-empty-agent"
+            onClick={() => setAgentMode(true)}
+            title="Switch to Agent Mode (Ctrl+Shift+A)"
+          >
+            <Icon name="code" size={14} />
+            <span>Agent Mode</span>
+          </button>
+        </div>
         <div
           className="pane-empty-actions"
           style={{

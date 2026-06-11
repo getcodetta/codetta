@@ -31,6 +31,7 @@ import { useEditorState } from "./editorState";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Dialog } from "./components/Dialog";
 import { SettingsModal } from "./components/SettingsModal";
+import { WelcomeModal } from "./components/WelcomeModal";
 import { TaskManagerModal } from "./components/TaskManagerModal";
 import { FootprintModal } from "./components/FootprintModal";
 import { TerminalPopoutWindow } from "./components/TerminalPopoutWindow";
@@ -685,6 +686,7 @@ function MainApp() {
       <DiffModal />
       <Dialog />
       <SettingsModal />
+      <WelcomeModal />
       <TaskManagerModal />
       <ShortcutReferenceModal
         open={shortcutsOpen}
