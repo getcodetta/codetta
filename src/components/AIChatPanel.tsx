@@ -1176,25 +1176,55 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       return;
     }
     let cancelled = false;
+    // Built-ins that meaningfully work through -p (prompt-expanding
+    // commands, not interactive-UI ones like /login or /model).
     const builtins = [
       { name: "/compact", hint: "Claude Code — compact session context" },
       { name: "/init", hint: "Claude Code — generate CLAUDE.md" },
+      { name: "/review", hint: "Claude Code — review a pull request" },
+      {
+        name: "/security-review",
+        hint: "Claude Code — security review of current changes",
+      },
+      {
+        name: "/pr-comments",
+        hint: "Claude Code — fetch this branch's PR comments",
+      },
     ];
-    void fs
-      .listDir(`${root}/.claude/commands`)
-      .then((entries) => {
-        if (cancelled) return;
-        const custom = entries
-          .filter((e) => !e.is_dir && e.name.endsWith(".md"))
-          .map((e) => ({
-            name: `/${e.name.replace(/\.md$/, "")}`,
-            hint: "Claude Code — custom command",
-          }));
-        setCcCommands([...custom, ...builtins]);
-      })
-      .catch(() => {
-        if (!cancelled) setCcCommands(builtins);
-      });
+    const scan = async () => {
+      // Project commands win name collisions over user-level ones.
+      const sources: Array<{ dir: string; hint: string }> = [
+        { dir: `${root}/.claude/commands`, hint: "Claude Code — project command" },
+      ];
+      try {
+        const { homeDir } = await import("@tauri-apps/api/path");
+        const home = (await homeDir()).replace(/[\\/]+$/, "");
+        sources.push({
+          dir: `${home}/.claude/commands`,
+          hint: "Claude Code — user command",
+        });
+      } catch {
+        /* home dir unavailable — project scan still works */
+      }
+      const seen = new Set<string>();
+      const custom: Array<{ name: string; hint: string }> = [];
+      for (const src of sources) {
+        try {
+          const entries = await fs.listDir(src.dir);
+          for (const e of entries) {
+            if (e.is_dir || !e.name.endsWith(".md")) continue;
+            const name = `/${e.name.replace(/\.md$/, "")}`;
+            if (seen.has(name)) continue;
+            seen.add(name);
+            custom.push({ name, hint: src.hint });
+          }
+        } catch {
+          /* directory doesn't exist — fine */
+        }
+      }
+      if (!cancelled) setCcCommands([...custom, ...builtins]);
+    };
+    void scan();
     return () => {
       cancelled = true;
     };
