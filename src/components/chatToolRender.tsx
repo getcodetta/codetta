@@ -249,6 +249,75 @@ export function extractEditDiffs(call: ToolCall): EditDiff[] | null {
 
 // ---------- Components ----------
 
+/** Live tool list for the in-flight turn. Past a handful of rows the
+ *  OLDEST finished ones collapse behind a count toggle — ten expanded
+ *  Read rows were pushing the whole conversation off-screen. Running
+ *  and errored rows always stay visible. */
+export function RunningToolList({
+  entries,
+}: {
+  entries: Array<{
+    id?: string;
+    name: string;
+    detail: string;
+    preview?: string;
+    status?: "running" | "done" | "error";
+  }>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const MAX_VISIBLE = 4;
+  if (entries.length <= MAX_VISIBLE || expanded) {
+    return (
+      <>
+        {entries.map((t, i) => (
+          <RunningToolRow key={t.id ?? i} entry={t} />
+        ))}
+        {expanded && entries.length > MAX_VISIBLE && (
+          <button
+            className="ai-running-collapse"
+            onClick={() => setExpanded(false)}
+          >
+            Show fewer
+          </button>
+        )}
+      </>
+    );
+  }
+  // Hide the oldest DONE rows until only MAX_VISIBLE remain;
+  // running/error rows are never hidden.
+  const hidden = new Set<number>();
+  let toHide = entries.length - MAX_VISIBLE;
+  for (let i = 0; i < entries.length && toHide > 0; i++) {
+    if ((entries[i].status ?? "running") === "done") {
+      hidden.add(i);
+      toHide--;
+    }
+  }
+  if (hidden.size === 0) {
+    return (
+      <>
+        {entries.map((t, i) => (
+          <RunningToolRow key={t.id ?? i} entry={t} />
+        ))}
+      </>
+    );
+  }
+  return (
+    <>
+      <button
+        className="ai-running-collapse"
+        onClick={() => setExpanded(true)}
+        title="Show all tool calls from this turn"
+      >
+        ✓ {hidden.size} earlier tool call{hidden.size === 1 ? "" : "s"}
+      </button>
+      {entries.map((t, i) =>
+        hidden.has(i) ? null : <RunningToolRow key={t.id ?? i} entry={t} />,
+      )}
+    </>
+  );
+}
+
 export function RunningToolRow({
   entry,
 }: {

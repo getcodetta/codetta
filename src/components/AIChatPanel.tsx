@@ -43,7 +43,7 @@ import { SLASH_COMMANDS, type SlashCommand } from "../slashCommands";
 import {
   extractEditDiffs,
   InterleavedBlocks,
-  RunningToolRow,
+  RunningToolList,
   ToolCallRow,
   toolDetailFor,
 } from "./chatToolRender";
@@ -548,6 +548,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   // forward. Without this, a refresh during a long agentic turn would
   // strand the user with an apparently-frozen UI while the subprocess
   // kept running invisibly in the background.
+  // Latest messages for the attach guard below — the attach effect
+  // runs once per chat and must not act on a stale mount-time array.
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   useEffect(() => {
     if (!sessionId) return;
     let unlisten: (() => void) | null = null;
@@ -557,28 +564,66 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     // message_start; checked when the wrapping `assistant` event
     // arrives so we don't double-render the same text.
     let replayMsgGotDeltas = false;
+    // Replay bookkeeping mirrors the live loop: a chronological blocks
+    // log + tool calls/results so the resumed bubble renders the SAME
+    // interleaved text → tool → text flow as a never-refreshed turn.
+    // The old replay built one flat string (run-on sentences) and
+    // dumped tools into the status strip below it.
+    const replayBlocks: NonNullable<ChatMessage["blocks"]> = [];
+    const replayCalls: ToolCall[] = [];
+    const replayResults: Array<{
+      tool_use_id: string;
+      content: string;
+      is_error?: boolean;
+    }> = [];
+    let replayAcc = "";
+    // Start a fresh text block (= paragraph) for each new assistant
+    // message so narration bursts don't glue mid-sentence.
+    let breakNextText = false;
+    const appendReplayText = (t: string) => {
+      if (!t) return;
+      const last = replayBlocks[replayBlocks.length - 1];
+      if (last && last.kind === "text" && !breakNextText) {
+        last.text += t;
+      } else {
+        replayBlocks.push({ kind: "text", text: t });
+      }
+      breakNextText = false;
+      replayAcc += t;
+      setStreamingBlocks([...replayBlocks]);
+      setStreaming(replayAcc);
+    };
 
     const replayLine = (line: { kind?: string; line?: string; code?: number }) => {
       if (line.kind === "end") {
-        // Subprocess finished. Finalize: collect any accumulated streaming
-        // text + active tool calls into a real assistant message so it
-        // gets persisted. The next round will re-send a fresh system prompt.
-        setStreaming((acc) => {
-          const text = acc ?? "";
-          if (text.length > 0) {
-            const msg: ChatMessage = { role: "assistant", content: text };
-            setMessages((m) => [...m, msg]);
-          }
-          return null;
-        });
+        // Subprocess finished. Finalize: collect the replayed turn into
+        // a real assistant message (with its blocks log) so it gets
+        // persisted exactly like a live turn's commit.
+        if (replayAcc.trim().length > 0 || replayBlocks.length > 0) {
+          const msg: ChatMessage = {
+            role: "assistant",
+            content: replayAcc,
+            tool_calls: replayCalls.length > 0 ? [...replayCalls] : undefined,
+            tool_results:
+              replayResults.length > 0 ? [...replayResults] : undefined,
+            blocks: replayBlocks.length > 0 ? [...replayBlocks] : undefined,
+          };
+          setMessages((m) => [...m, msg]);
+        }
+        replayBlocks.length = 0;
+        replayCalls.length = 0;
+        replayResults.length = 0;
+        replayAcc = "";
+        setStreaming(null);
+        setStreamingBlocks([]);
+        setStreamingToolCalls([]);
+        setStreamingToolResults([]);
         setRunningTools(false);
         setActiveToolLabels([]);
         return;
       }
       if (line.kind === "stderr" && line.line) {
-        setStreaming((acc) =>
-          (acc ?? "") + `\n[claude] ${line.line}`,
-        );
+        appendReplayText(`\n[claude] ${line.line}`);
         return;
       }
       if (line.kind !== "line" || !line.line) return;
@@ -600,12 +645,13 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           const ev = obj.event;
           if (ev.type === "message_start") {
             replayMsgGotDeltas = false;
+            breakNextText = true;
           } else if (
             ev.type === "content_block_delta" &&
             ev.delta?.type === "text_delta" &&
             typeof ev.delta.text === "string"
           ) {
-            setStreaming((acc) => (acc ?? "") + ev.delta.text);
+            appendReplayText(ev.delta.text);
             replayMsgGotDeltas = true;
           }
         }
@@ -615,7 +661,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           for (const block of obj.message.content) {
             if (block.type === "text" && typeof block.text === "string") {
               if (alreadyStreamed) continue;
-              setStreaming((acc) => (acc ?? "") + block.text);
+              breakNextText = true;
+              appendReplayText(block.text);
             } else if (block.type === "tool_use") {
               const args =
                 block.input && typeof block.input === "object"
@@ -632,6 +679,19 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 preview = args.command;
               }
               const id = typeof block.id === "string" ? block.id : undefined;
+              // Mirror the live loop: tool calls join the chronological
+              // blocks log so the bubble shows them inline where they
+              // happened, not as a detached strip below all the text.
+              const call: ToolCall = {
+                id,
+                function: { name, arguments: args },
+              };
+              replayCalls.push(call);
+              setStreamingToolCalls([...replayCalls]);
+              if (id) {
+                replayBlocks.push({ kind: "tool_call", callId: id });
+                setStreamingBlocks([...replayBlocks]);
+              }
               setActiveToolLabels((labels) => {
                 const next = labels.slice(-9);
                 next.push({
@@ -647,7 +707,8 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             }
           }
         }
-        // Tool results during resume — flip the matching label to done.
+        // Tool results during resume — flip the matching label to done
+        // and record the result so the inline chip can show it.
         if (obj.type === "user" && obj.message?.content) {
           for (const block of obj.message.content) {
             if (
@@ -656,6 +717,24 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
             ) {
               const id = block.tool_use_id;
               const isError = block.is_error === true;
+              const content =
+                typeof block.content === "string"
+                  ? block.content
+                  : Array.isArray(block.content)
+                    ? block.content
+                        .map((c: { type?: string; text?: string }) =>
+                          c?.type === "text" && typeof c.text === "string"
+                            ? c.text
+                            : "",
+                        )
+                        .join("")
+                    : "";
+              replayResults.push({
+                tool_use_id: id,
+                content,
+                is_error: isError || undefined,
+              });
+              setStreamingToolResults([...replayResults]);
               setActiveToolLabels((labels) =>
                 labels.map((l) =>
                   l.id === id
@@ -678,6 +757,18 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     } | null>("claude_code_attach", { chatSessionId: sessionId })
       .then(async (att) => {
         if (cancelled || !att) return;
+        // A COMPLETED stream whose final answer already sits at the
+        // end of this chat's history must NOT replay: the Rust buffer
+        // survives until the next turn, so every page refresh was
+        // re-committing (and persisting) another copy of the same
+        // assistant message. Replay exists for the one real recovery
+        // case — a refresh while the turn was mid-flight, where the
+        // history still ends with the user's message.
+        if (att.ended != null) {
+          const cur = messagesRef.current;
+          const last = cur[cur.length - 1];
+          if (last && last.role === "assistant") return;
+        }
         // Replay everything we missed.
         for (const ln of att.lines) replayLine(ln);
         // ALWAYS subscribe for live events — even when att.ended is
@@ -2899,9 +2990,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                             ? `Finished ${total} tool${total === 1 ? "" : "s"}`
                             : `${done} of ${total} done · ${total - done} running`}
                       </span>
-                      {activeToolLabels.map((t, i) => (
-                        <RunningToolRow key={i} entry={t} />
-                      ))}
+                      <RunningToolList entries={activeToolLabels} />
                     </>
                   );
                 })()}

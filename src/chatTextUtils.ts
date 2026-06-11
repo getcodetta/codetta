@@ -104,14 +104,38 @@ export function splitThinking(content: string): {
  *     so dropping these is always safe.
  *   - "Unknown tool: X" tool rows from before we learned to skip the
  *     local tool-execution loop for agentic providers.
+ *   - Consecutive assistant messages with identical text. A refresh
+ *     during/after a Claude Code turn used to re-commit the replayed
+ *     stream on every reload, so polluted sessions hold 2-5 copies of
+ *     the same answer back to back. Two identical adjacent assistant
+ *     turns never occur legitimately (there's always a user/tool row
+ *     between real turns), so collapsing them is safe — and it heals
+ *     already-corrupted sessions on next load. The richer copy (the
+ *     one carrying a blocks log) wins.
  */
 export function cleanStaleToolMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.filter((m) => {
+  const filtered = messages.filter((m) => {
     if (m.role === "system") return false;
     if (m.role !== "tool") return true;
     if (/^Unknown tool:/i.test(m.content)) return false;
     return true;
   });
+  const out: ChatMessage[] = [];
+  for (const m of filtered) {
+    const prev = out[out.length - 1];
+    if (
+      prev &&
+      m.role === "assistant" &&
+      prev.role === "assistant" &&
+      prev.content.trim() === m.content.trim()
+    ) {
+      // Keep whichever copy has the chronological blocks log.
+      if (!prev.blocks && m.blocks) out[out.length - 1] = m;
+      continue;
+    }
+    out.push(m);
+  }
+  return out;
 }
 
 // ---------- Investigation-plan priorities ----------

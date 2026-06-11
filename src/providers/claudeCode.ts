@@ -184,6 +184,14 @@ export const claudeCodeProvider: ChatProvider = {
     // Per-flag rather than per-message-id because Claude Code's
     // stream_event records don't reliably propagate message_id.
     let currentMsgGotDeltas = false;
+    // Paragraph separation between text segments. Claude narrates in
+    // bursts between tool batches — separate content blocks (often
+    // separate assistant MESSAGES) whose deltas all concatenated into
+    // one run-on paragraph ("…where it lives.The open file is…").
+    // Track block boundaries and inject "\n\n" when a new text block
+    // starts after text has already streamed.
+    let anyTextEmitted = false;
+    const textBlocksStarted = new Set<number>();
     // Track per-content-block tool_use buffers so we can emit each
     // tool_call EAGERLY at content_block_stop — not at the trailing
     // `assistant` event. Eager emission preserves the true text →
@@ -265,6 +273,9 @@ export const claudeCodeProvider: ChatProvider = {
             currentMsgGotDeltas = false;
             toolUseBlocks.clear();
             thinkingBlocks.clear();
+            // Block indices restart per message; the cross-message
+            // anyTextEmitted flag intentionally survives.
+            textBlocksStarted.clear();
           } else if (
             ev.type === "content_block_start" &&
             ev.content_block?.type === "thinking" &&
@@ -383,7 +394,18 @@ export const claudeCodeProvider: ChatProvider = {
             typeof ev.delta.text === "string"
           ) {
             currentMsgGotDeltas = true;
-            queue.push({ kind: "content", text: ev.delta.text });
+            let text = ev.delta.text;
+            if (
+              typeof ev.index === "number" &&
+              !textBlocksStarted.has(ev.index)
+            ) {
+              textBlocksStarted.add(ev.index);
+              // First delta of a NEW text block with text already on
+              // screen → paragraph break, not mid-sentence glue.
+              if (anyTextEmitted) text = "\n\n" + text;
+            }
+            anyTextEmitted = true;
+            queue.push({ kind: "content", text });
             wake();
           }
         }
