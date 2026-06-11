@@ -2445,15 +2445,6 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     const parsed = parseQualifiedModel(selected);
     return (
       <div className="ai-header">
-        <button
-          className="ai-header-primary"
-          onClick={startNewChat}
-          title="New chat (current is saved to history)"
-          disabled={streaming !== null || runningTools}
-        >
-          <Icon name="plus" size={14} />
-          <span>New chat</span>
-        </button>
         {rulesSource && rulesPath && (
           <button
             className="ai-rules-indicator"
@@ -2505,6 +2496,20 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
               }
             }}
           />
+        )}
+        {/* Tabbed chats get "new chat" from the tab strip / rail —
+            a third button INSIDE the panel was clutter. The singleton
+            sidebar has no tab strip, so it keeps a compact + icon. */}
+        {!aiChatId && (
+          <button
+            className="ai-header-iconbtn"
+            onClick={startNewChat}
+            title="New chat (current is saved to history)"
+            disabled={streaming !== null || runningTools}
+            aria-label="New chat"
+          >
+            <Icon name="plus" size={14} />
+          </button>
         )}
         <HeaderMenu
           historyCount={sessions.length}

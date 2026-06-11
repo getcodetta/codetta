@@ -114,6 +114,10 @@
 }
 
 :root {
+  /* Chrome heights — modal backdrops start below the topbar and end
+     above the statusbar so both stay clickable while popups are open. */
+  --topbar-h: 36px;
+  --statusbar-h: 24px;
   font-family: Inter, "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
   line-height: 1.4;
@@ -949,7 +953,10 @@ input {
 /* ---------- Command palette ---------- */
 .palette-backdrop {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: var(--topbar-h);
+  bottom: var(--statusbar-h);
   background: rgba(0, 0, 0, 0.4);
   z-index: 100;
 }
@@ -3565,7 +3572,10 @@ input {
 /* ---------- Diff modal / view ---------- */
 .diff-modal {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: var(--topbar-h);
+  bottom: var(--statusbar-h);
   background: rgba(0, 0, 0, 0.5);
   z-index: 200;
   display: grid;
@@ -3626,7 +3636,10 @@ input {
 /* Settings modal */
 .settings-backdrop {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: var(--topbar-h);
+  bottom: var(--statusbar-h);
   background: rgba(0, 0, 0, 0.5);
   z-index: 250;
   display: grid;
@@ -4361,7 +4374,10 @@ input {
 /* Themed alert / confirm / prompt dialogs (replaces native window.*) */
 .dialog-backdrop {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: var(--topbar-h);
+  bottom: var(--statusbar-h);
   background: rgba(0, 0, 0, 0.5);
   z-index: 300;
   display: grid;
@@ -4541,11 +4557,28 @@ input {
   display: flex;
   gap: 6px;
   align-items: center;
-  padding: 8px 10px;
+  /* Slim strip — the big "New chat" primary button is gone (tabs/rail
+     own chat creation), so the header is just rules + sessions + menu. */
+  padding: 4px 10px;
   border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, var(--bg-alt) 0%, var(--bg) 100%);
   flex-shrink: 0;
   min-width: 0;
+}
+.ai-header-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 3px 7px !important;
+}
+.ai-header-iconbtn:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--border-strong, var(--border));
 }
 .ai-header button {
   padding: 4px 10px;
@@ -8049,7 +8082,10 @@ input {
 /* Keyboard-shortcut reference modal */
 .shortcut-modal-backdrop {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: var(--topbar-h);
+  bottom: var(--statusbar-h);
   background: rgba(0, 0, 0, 0.45);
   z-index: 1500;
   display: flex;
@@ -9183,7 +9219,10 @@ input {
 
 .git-commit-modal {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: var(--topbar-h);
+  bottom: var(--statusbar-h);
   background: rgba(0, 0, 0, 0.5);
   display: grid;
   place-items: center;
