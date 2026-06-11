@@ -209,7 +209,7 @@ export function ClaudePermissionOverlay() {
           requestId: req.request_id,
           decision: "deny",
           reason:
-            "Interactive question UI is not available in this editor. Ask the user directly in your response text instead — state the question and list the options plainly, then END YOUR TURN and wait for their reply.",
+            "The editor is showing your question to the user as clickable option buttons right now. Do NOT repeat the question or options in text. Briefly say you're waiting for their selection, then END YOUR TURN; their next message will contain the answer.",
         }).catch((err) => console.warn("ask-redirect failed", err));
         return;
       }

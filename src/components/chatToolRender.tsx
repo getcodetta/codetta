@@ -420,6 +420,69 @@ export function InterleavedBlocks({
   callsById: Map<string, ToolCall>;
   resultsById: Map<string, string>;
 }) {
+  // Claude sometimes retries AskUserQuestion after the redirect deny,
+  // which would render two identical question cards back to back.
+  // Keep only the LAST occurrence of each identical question set.
+  const askDupSkip = new Set<number>();
+  {
+    const seen = new Map<string, number>();
+    blocks.forEach((b, i) => {
+      if (b.kind !== "tool_call") return;
+      const call = callsById.get(b.callId);
+      if (!call || call.function.name !== "AskUserQuestion") return;
+      const sig = JSON.stringify(call.function.arguments?.questions ?? null);
+      const prev = seen.get(sig);
+      if (prev !== undefined) askDupSkip.add(prev);
+      seen.set(sig, i);
+    });
+  }
+  // Merge RUNS of the same read-ish tool into one grouped card: an
+  // agentic burst of 8 Reads (or 6 TaskCreate/TaskUpdate calls) was
+  // eight full-height rows saying almost nothing each. Mutating tools
+  // (Edit/Write/Bash) stay individual — each one deserves its own row.
+  const MERGEABLE = new Set([
+    "Read",
+    "Grep",
+    "Glob",
+    "ToolSearch",
+    "TaskCreate",
+    "TaskUpdate",
+    "WebSearch",
+    "WebFetch",
+  ]);
+  const groupAt = new Map<number, number[]>();
+  const inGroup = new Set<number>();
+  {
+    let run: number[] = [];
+    let runName: string | null = null;
+    const flush = () => {
+      if (run.length >= 2) {
+        groupAt.set(run[0], [...run]);
+        for (const k of run.slice(1)) inGroup.add(k);
+      }
+      run = [];
+      runName = null;
+    };
+    blocks.forEach((b, i) => {
+      if (b.kind !== "tool_call" || askDupSkip.has(i)) {
+        if (b.kind !== "text" || b.text) flush();
+        return;
+      }
+      const name = callsById.get(b.callId)?.function.name ?? "";
+      if (!MERGEABLE.has(name)) {
+        flush();
+        return;
+      }
+      if (runName === name) {
+        run.push(i);
+      } else {
+        flush();
+        runName = name;
+        run = [i];
+      }
+    });
+    flush();
+  }
   return (
     <>
       {blocks.map((b, i) => {
@@ -430,6 +493,39 @@ export function InterleavedBlocks({
               key={`t${i}`}
               content={balanceFences(b.text)}
             />
+          );
+        }
+        if (askDupSkip.has(i) || inGroup.has(i)) return null;
+        const group = groupAt.get(i);
+        if (group) {
+          const calls = group
+            .map((k) => {
+              const blk = blocks[k];
+              return blk.kind === "tool_call"
+                ? { id: blk.callId, call: callsById.get(blk.callId) }
+                : null;
+            })
+            .filter(
+              (c): c is { id: string; call: ToolCall } => !!c && !!c.call,
+            );
+          if (calls.length === 0) return null;
+          return (
+            <div
+              key={`g${i}`}
+              className="ai-tcalls ai-tcalls-inline ai-tcall-group"
+            >
+              <div className="ai-tcall-group-head">
+                {friendlyToolName(calls[0].call.function.name)} ×{" "}
+                {calls.length}
+              </div>
+              {calls.map(({ id, call }) => (
+                <ToolCallRow
+                  key={id}
+                  call={call}
+                  result={resultsById.get(id)}
+                />
+              ))}
+            </div>
           );
         }
         const call = callsById.get(b.callId);
@@ -447,6 +543,255 @@ export function InterleavedBlocks({
   );
 }
 
+interface AskQuestionSpec {
+  question: string;
+  header?: string;
+  multiSelect: boolean;
+  options: { label: string; description?: string }[];
+}
+
+/** Defensive parse of AskUserQuestion's tool input. */
+function parseAskQuestions(args: Record<string, unknown>): AskQuestionSpec[] {
+  if (!Array.isArray(args.questions)) return [];
+  const out: AskQuestionSpec[] = [];
+  for (const raw of args.questions) {
+    if (!raw || typeof raw !== "object") continue;
+    const q = raw as Record<string, unknown>;
+    if (typeof q.question !== "string" || !Array.isArray(q.options)) continue;
+    const options = q.options
+      .map((o) => {
+        if (typeof o === "string") return { label: o };
+        if (o && typeof o === "object") {
+          const oo = o as Record<string, unknown>;
+          if (typeof oo.label === "string") {
+            return {
+              label: oo.label,
+              description:
+                typeof oo.description === "string"
+                  ? oo.description
+                  : undefined,
+            };
+          }
+        }
+        return null;
+      })
+      .filter((o): o is { label: string; description?: string } => !!o);
+    if (options.length === 0) continue;
+    out.push({
+      question: q.question,
+      header: typeof q.header === "string" ? q.header : undefined,
+      multiSelect: q.multiSelect === true,
+      options,
+    });
+  }
+  return out;
+}
+
+/** Interactive question card for Claude Code's AskUserQuestion. The
+ *  hook can only allow/deny (it can't feed an ANSWER back to a waiting
+ *  tool call), so the flow is: the overlay denies the call telling the
+ *  model the user sees clickable options and to wait; this card renders
+ *  those options; a click sends the selection as the next user message,
+ *  which resumes the session. Single-choice questions send on click;
+ *  multi-select / multi-question cards collect then send. */
+export function AskQuestionCard({
+  call,
+  onAnswer,
+}: {
+  call: ToolCall;
+  onAnswer?: (text: string) => void;
+}) {
+  const questions = parseAskQuestions(call.function.arguments);
+  const [picked, setPicked] = useState<Map<number, Set<string>>>(new Map());
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [sent, setSent] = useState(false);
+  const interactive = !!onAnswer && !sent;
+
+  if (questions.length === 0) {
+    // Args still streaming in (or unexpected shape) — placeholder row.
+    return (
+      <div className="ai-tcall">
+        <div className="ai-tcall-head">
+          <span className="ai-tcall-dot" />
+          <span className="ai-tcall-name">Question</span>
+          <span className="ai-tcall-pending">
+            <span className="ai-spinner" />
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  const answered = (i: number) => (picked.get(i)?.size ?? 0) > 0;
+  const allAnswered = questions.every((_, i) => answered(i));
+
+  const answerText = (sel: Map<number, Set<string>>) =>
+    questions
+      .map((q, i) => {
+        const chosen = [...(sel.get(i) ?? [])];
+        const prefix = q.header ?? q.question;
+        return `${prefix}: ${chosen.join(", ")}`;
+      })
+      .join("\n");
+
+  // Jump to the next unanswered question, wrapping; stay put when
+  // everything is answered (Send is enabled by then).
+  const advance = (from: number, sel: Map<number, Set<string>>) => {
+    for (let step = 1; step <= questions.length; step++) {
+      const idx = (from + step) % questions.length;
+      if ((sel.get(idx)?.size ?? 0) === 0) {
+        setActiveIdx(idx);
+        return;
+      }
+    }
+  };
+
+  const choose = (qi: number, label: string) => {
+    if (!interactive) return;
+    const q = questions[qi];
+    const next = new Map(picked);
+    const cur = new Set(next.get(qi) ?? []);
+    if (q.multiSelect) {
+      if (cur.has(label)) cur.delete(label);
+      else cur.add(label);
+    } else {
+      cur.clear();
+      cur.add(label);
+    }
+    next.set(qi, cur);
+    setPicked(next);
+    if (!q.multiSelect) {
+      if (questions.length === 1) {
+        // Single question, single choice → no extra Send step.
+        setSent(true);
+        onAnswer!(answerText(next));
+      } else {
+        // Radio answered → flow straight to the next open question.
+        advance(qi, next);
+      }
+    }
+  };
+
+  const needsSendButton =
+    questions.length > 1 || questions.some((q) => q.multiSelect);
+  const idx = Math.min(activeIdx, questions.length - 1);
+  const q = questions[idx];
+
+  return (
+    <div className={`ai-ask-card ${sent ? "ai-ask-card-sent" : ""}`}>
+      <div className="ai-ask-title">
+        <span className="ai-ask-title-icon" aria-hidden="true">
+          ?
+        </span>
+        {questions.length === 1
+          ? "Claude needs your input"
+          : `Claude needs your input — ${
+              questions.filter((_, i) => answered(i)).length
+            }/${questions.length} answered`}
+      </div>
+      {questions.length > 1 && (
+        <div className="ai-ask-tabs" role="tablist">
+          {questions.map((tq, i) => (
+            <button
+              key={i}
+              type="button"
+              role="tab"
+              aria-selected={i === idx}
+              className={`ai-ask-tab ${i === idx ? "active" : ""} ${
+                answered(i) ? "answered" : ""
+              }`}
+              onClick={() => setActiveIdx(i)}
+            >
+              {answered(i) && <span aria-hidden="true">✓ </span>}
+              {tq.header ?? `Q${i + 1}`}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="ai-ask-question">
+        <div className="ai-ask-qtext">
+          {questions.length === 1 && q.header && (
+            <span className="ai-ask-header">{q.header}</span>
+          )}
+          {q.question}
+          {q.multiSelect && (
+            <span className="ai-ask-multi">select all that apply</span>
+          )}
+        </div>
+        <div
+          className="ai-ask-options"
+          role={q.multiSelect ? "group" : "radiogroup"}
+        >
+          {q.options.map((o) => {
+            const isPicked = picked.get(idx)?.has(o.label) ?? false;
+            return (
+              <button
+                key={o.label}
+                type="button"
+                role={q.multiSelect ? "checkbox" : "radio"}
+                aria-checked={isPicked}
+                className={`ai-ask-option ${isPicked ? "picked" : ""}`}
+                disabled={!interactive}
+                onClick={() => choose(idx, o.label)}
+                title={o.description}
+              >
+                <span
+                  className={`ai-ask-ind ${
+                    q.multiSelect ? "ai-ask-ind-check" : "ai-ask-ind-radio"
+                  } ${isPicked ? "on" : ""}`}
+                  aria-hidden="true"
+                />
+                <span className="ai-ask-option-text">
+                  <span className="ai-ask-option-label">{o.label}</span>
+                  {o.description && (
+                    <span className="ai-ask-option-desc">
+                      {o.description}
+                    </span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {interactive &&
+          q.multiSelect &&
+          questions.length > 1 &&
+          answered(idx) &&
+          !allAnswered && (
+            <button
+              type="button"
+              className="ai-ask-next"
+              onClick={() => advance(idx, picked)}
+            >
+              Next question →
+            </button>
+          )}
+      </div>
+      <div className="ai-ask-foot">
+        {interactive && needsSendButton && (
+          <button
+            type="button"
+            className="ai-ask-send"
+            disabled={!allAnswered}
+            onClick={() => {
+              setSent(true);
+              onAnswer!(answerText(picked));
+            }}
+          >
+            Send answer{questions.length > 1 ? "s" : ""}
+          </button>
+        )}
+        {interactive && (
+          <span className="ai-ask-hint">
+            …or just reply in the message box below.
+          </span>
+        )}
+        {sent && <span className="ai-ask-hint">Answer sent.</span>}
+      </div>
+    </div>
+  );
+}
+
 export function ToolCallRow({
   call,
   result,
@@ -458,6 +803,27 @@ export function ToolCallRow({
   // can flip between the generic and diff renders across re-renders,
   // and a conditional hook would then violate React's hook ordering.
   const [expanded, setExpanded] = useState(false);
+  // AskUserQuestion: a compact one-line record in the transcript. The
+  // INTERACTIVE card renders docked above the composer (AIChatPanel's
+  // ask-dock) while the question is pending — rendering full option
+  // lists here too duplicated the whole card. The deny reason in
+  // `result` is plumbing (the redirect instruction), never shown.
+  if (call.function.name === "AskUserQuestion") {
+    const qs = parseAskQuestions(call.function.arguments);
+    const summary =
+      qs.map((q) => q.header ?? q.question).join(" · ") || "question";
+    return (
+      <div className="ai-tcall">
+        <div className="ai-tcall-head">
+          <span className="ai-tcall-dot" />
+          <span className="ai-tcall-name">Question</span>
+          <span className="ai-tcall-detail" title={summary}>
+            {summary}
+          </span>
+        </div>
+      </div>
+    );
+  }
   // Edit / Write / MultiEdit get a richer view that shows the actual
   // diff inline, since the bare args summary ("file_path foo.ts") tells
   // the user nothing about *what changed*. Falls through to the generic
@@ -469,6 +835,11 @@ export function ToolCallRow({
   const label = friendlyToolName(call.function.name);
   const detail = primaryToolDetail(call.function.arguments);
   const hasResult = typeof result === "string";
+  // Tools like ToolSearch / TaskUpdate legitimately return no text —
+  // their effect is the side channel, not the output. Rendering the
+  // empty string as an expandable "(empty)" row read like a failure;
+  // a quiet check says "done" instead.
+  const resultIsEmpty = hasResult && result!.trim().length === 0;
   return (
     <div className="ai-tcall">
       <div className="ai-tcall-head">
@@ -480,8 +851,13 @@ export function ToolCallRow({
             <span className="ai-spinner" />
           </span>
         )}
+        {resultIsEmpty && (
+          <span className="ai-tcall-done" aria-hidden="true">
+            ✓
+          </span>
+        )}
       </div>
-      {hasResult && (
+      {hasResult && !resultIsEmpty && (
         <button
           type="button"
           className={`ai-tcall-result${expanded ? " expanded" : ""}`}

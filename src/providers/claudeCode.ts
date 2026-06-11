@@ -534,6 +534,13 @@ export const claudeCodeProvider: ChatProvider = {
 
     const onAbort = () => {
       void invoke("claude_code_kill", { id: streamId }).catch(() => {});
+      // Don't depend on the kill round-trip emitting an "end" event —
+      // when that raced (or the process was already gone) the generator
+      // parked on the waker forever, and the whole chat looked hung
+      // after Stop / "Send now". Abort ends the stream locally, period;
+      // everything already yielded survives as the partial turn.
+      done = true;
+      wake();
     };
     signal?.addEventListener("abort", onAbort);
 

@@ -4576,6 +4576,292 @@ input {
   min-width: 0;
   transition: background 0.15s;
 }
+/* Single meta row above the input: model chip + context-attachment
+   chip side by side — they used to be two full-width stacked bars. */
+.ai-composer-meta {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--border);
+  background: var(--bg-alt);
+  flex-shrink: 0;
+  min-width: 0;
+}
+.ai-composer-meta .ai-model-chip {
+  border-top: none;
+  flex: 0 1 auto;
+}
+.ai-composer-meta .ai-context-indicator {
+  border-top: none;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: inherit;
+  border-right: none;
+  border-bottom: none;
+}
+.ai-composer-meta .ai-context-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* Interactive AskUserQuestion card — clickable options inline in the
+   conversation. */
+.ai-ask-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 6px 0;
+  border: 1px solid var(--accent-soft, rgba(0, 122, 204, 0.3));
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-alt);
+}
+.ai-ask-card-sent {
+  opacity: 0.75;
+}
+.ai-ask-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ai-ask-title-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  font-size: 11px;
+  font-weight: 700;
+}
+.ai-ask-qtext {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.45;
+}
+.ai-ask-header {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--accent-soft, rgba(0, 122, 204, 0.15));
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  vertical-align: middle;
+}
+.ai-ask-multi {
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--fg-muted);
+  font-style: italic;
+}
+.ai-ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 7px;
+}
+.ai-ask-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ai-ask-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+/* Radio / checkbox indicators — single-select questions get circles,
+   multi-select get squares, mirroring native form semantics. */
+.ai-ask-ind {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1.5px solid var(--fg-muted);
+  background: transparent;
+  position: relative;
+}
+.ai-ask-ind-radio {
+  border-radius: 50%;
+}
+.ai-ask-ind-check {
+  border-radius: 3px;
+}
+.ai-ask-ind.on {
+  border-color: var(--accent);
+}
+.ai-ask-ind-radio.on::after {
+  content: "";
+  position: absolute;
+  inset: 2.5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ai-ask-ind-check.on {
+  background: var(--accent);
+}
+.ai-ask-ind-check.on::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--accent-fg, #fff);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+/* Tab bar for multi-question cards: answer one, flow to the next. */
+.ai-ask-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ai-ask-tab {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.ai-ask-tab.active {
+  border-color: var(--accent);
+  color: var(--fg);
+  background: var(--accent-soft, rgba(0, 122, 204, 0.12));
+}
+.ai-ask-tab.answered {
+  color: var(--ok, #2ecc71);
+}
+.ai-ask-next {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ai-ask-next:hover {
+  border-color: var(--accent);
+}
+.ai-ask-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* Docked card slot above the composer — same position the permission
+   card uses; scrolls internally instead of growing past half the
+   panel. */
+.ai-ask-dock {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding: 8px 10px;
+  max-height: 45%;
+  overflow-y: auto;
+  background: var(--bg-alt);
+}
+.ai-ask-dock .ai-ask-card {
+  margin: 0;
+}
+/* Grouped runs of the same read-ish tool ("Read × 8"): one bordered
+   card, slim rows inside. */
+.ai-tcall-group {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ai-tcall-group-head {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 4px 4px;
+}
+.ai-tcall-group .ai-tcall {
+  border: none;
+  background: transparent;
+  padding: 1px 4px;
+}
+.ai-tcall-done {
+  margin-left: auto;
+  color: var(--ok, #2ecc71);
+  font-size: 11px;
+  font-weight: 700;
+}
+.ai-ask-option:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.ai-ask-option.picked {
+  border-color: var(--accent);
+  background: var(--accent-soft, rgba(0, 122, 204, 0.12));
+}
+.ai-ask-option:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+.ai-ask-option-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.ai-ask-option-desc {
+  font-size: 11px;
+  color: var(--fg-muted);
+  line-height: 1.4;
+}
+.ai-ask-send {
+  align-self: flex-start;
+  padding: 5px 14px;
+  border: none;
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ai-ask-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ai-ask-hint {
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  font-style: italic;
+}
 .ai-model-chip:hover {
   background: var(--bg-elev);
   color: var(--fg);

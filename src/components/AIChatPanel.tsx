@@ -41,6 +41,7 @@ import {
 import { executeTool, TOOLS } from "../aiTools";
 import { SLASH_COMMANDS, type SlashCommand } from "../slashCommands";
 import {
+  AskQuestionCard,
   extractEditDiffs,
   InterleavedBlocks,
   RunningToolList,
@@ -560,6 +561,12 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+  // True while THIS panel instance is driving a turn through the live
+  // chatStream loop. The attach effect re-runs when sessionId settles
+  // (hydration) — if that lands after a turn started, attaching would
+  // subscribe a SECOND consumer to the same stream and double every
+  // tool row and text delta.
+  const liveTurnRef = useRef(false);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -763,6 +770,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     } | null>("claude_code_attach", { chatSessionId: sessionId })
       .then(async (att) => {
         if (cancelled || !att) return;
+        // This instance is already consuming the stream through the
+        // live loop — a second subscription would double every row.
+        if (liveTurnRef.current) return;
         // A COMPLETED stream whose final answer already sits at the
         // end of this chat's history must NOT replay: the Rust buffer
         // survives until the next turn, so every page refresh was
@@ -1016,13 +1026,11 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
       const next = queueRef.current.shift();
       setQueueLen(queueRef.current.length);
       if (!next) continue;
-      // Re-check running state — user may have hit Stop, in which
-      // case we drop the queue.
-      if (abortRef.current?.signal.aborted) {
-        queueRef.current = [];
-        setQueueLen(0);
-        return;
-      }
+      // No aborted-check here: the previous turn's controller is
+      // ALWAYS aborted/stale by drain time, and checking it silently
+      // discarded the queue — which made "⏭ Send now" (abort current
+      // turn, then drain) look like the app hung. Discarding is the
+      // queue indicator's explicit Clear button, not a side effect.
       await sendUserTextRef.current?.(next);
     }
   }, []);
@@ -1047,6 +1055,35 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     }
     await sendUserText(text);
   };
+
+  // Option clicked on the docked AskUserQuestion card — the selection
+  // goes out as a regular user message, which resumes the session.
+  const answerQuestion = (text: string) => {
+    if (!text) return;
+    if (streaming !== null || runningTools) {
+      queueRef.current.push(text);
+      setQueueLen(queueRef.current.length);
+      toastInfo(`Queued (${queueRef.current.length} pending)`);
+      return;
+    }
+    void sendUserText(text);
+  };
+
+  // A question is "pending" when the turn is over and the LAST message
+  // is the assistant's with an AskUserQuestion call — answering (or
+  // typing anything) appends a user message, which clears this. The
+  // interactive card docks above the composer; the transcript shows a
+  // compact one-line record. Retries produce identical calls — the
+  // last one wins.
+  const pendingAskCall = useMemo(() => {
+    if (streaming !== null || runningTools) return null;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant" || !last.tool_calls) return null;
+    const asks = last.tool_calls.filter(
+      (c) => c.function.name === "AskUserQuestion",
+    );
+    return asks.length > 0 ? asks[asks.length - 1] : null;
+  }, [messages, streaming, runningTools]);
 
   // Filter the cached workspace files by the current mention query.
   // Match against the workspace-relative path (a file's basename
@@ -1132,6 +1169,9 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     baseMessages: ChatMessage[] = messages,
   ) => {
     if (!text || !selected) return;
+    // Mark the live loop as the stream's owner so the attach effect
+    // can't subscribe a duplicate consumer (cleared in the finally).
+    liveTurnRef.current = true;
     if (streaming !== null || runningTools) {
       // Defensive: caller shouldn't get here, but if they do, queue
       // rather than drop.
@@ -1859,6 +1899,7 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
         return null;
       });
       abortRef.current = null;
+      liveTurnRef.current = false;
       // One-shot attach flags reset after the message goes out.
       setAttachTree(false);
       setAttachedFiles([]);
@@ -3132,20 +3173,6 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           </button>
         </div>
       )}
-      {contextLabel && (
-        <div
-          className={`ai-context-indicator ${attachContext ? "" : "off"}`}
-          title="Click to toggle whether file/selection is attached to your next message"
-          onClick={() => setAttachContext((v) => !v)}
-          role="button"
-        >
-          <span className="ai-context-dot" />
-          {contextLabel}
-          <span className="ai-context-toggle">
-            {attachContext ? "off" : "on"}
-          </span>
-        </div>
-      )}
       {mentionState && mentionMatches.length > 0 && streaming === null && (
         <div className="ai-slash-suggestions ai-mention-suggestions">
           {mentionMatches.map((m, i) => (
@@ -3186,7 +3213,39 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
           </div>
         );
       })()}
-      {renderModelChip()}
+      {/* Docked question card: when Claude's turn ended on an
+          AskUserQuestion, the interactive radio/checkbox card sits
+          right above the composer where the user is already looking —
+          not floating over the conversation. */}
+      {pendingAskCall && (
+        <div className="ai-ask-dock">
+          <AskQuestionCard
+            key={pendingAskCall.id ?? "ask"}
+            call={pendingAskCall}
+            onAnswer={answerQuestion}
+          />
+        </div>
+      )}
+      {/* One slim meta row: model picker + context-attachment chip.
+          These were two full-width stacked bars ("Sending whole file
+          index.html" + "MODEL default") eating ~50px above the input. */}
+      <div className="ai-composer-meta">
+        {renderModelChip()}
+        {contextLabel && (
+          <button
+            type="button"
+            className={`ai-context-indicator ${attachContext ? "" : "off"}`}
+            title={`${contextLabel} — click to toggle attaching it to your next message`}
+            onClick={() => setAttachContext((v) => !v)}
+          >
+            <span className="ai-context-dot" />
+            <span className="ai-context-text">{contextLabel}</span>
+            <span className="ai-context-toggle">
+              {attachContext ? "off" : "on"}
+            </span>
+          </button>
+        )}
+      </div>
       {/* Inline permission card — replaces the old full-window overlay.
           Renders nothing when there are no pending requests; otherwise
           shows the request just above the input where the user is
