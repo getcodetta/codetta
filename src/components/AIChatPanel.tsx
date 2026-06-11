@@ -278,6 +278,11 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
     status: "pending" | "in_progress" | "completed";
     activeForm?: string;
   }> | null>(null);
+  // TaskCreate/TaskUpdate (Claude Code's session task tools) feed the
+  // SAME checklist. Tasks are numbered in creation order, matching the
+  // CLI's "#N" ids, so TaskUpdate's taskId resolves to a row.
+  const taskIndexRef = useRef<Map<string, number>>(new Map());
+  const taskCounterRef = useRef(0);
   // Cumulative USD spend across every turn in this chat. Persisted
   // alongside the conversation so the running tally survives reloads.
   // Used by the spend chip in the footer + the budget-warning toast.
@@ -1661,6 +1666,68 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
                 }));
               setTodos(cleaned);
             }
+            // TaskCreate / TaskUpdate drive the same sticky checklist:
+            // created tasks appear as pending checkboxes the moment the
+            // call streams in, updates flip their status live.
+            if (ev.call.function.name === "TaskCreate") {
+              const a = ev.call.function.arguments;
+              const subject =
+                typeof a.subject === "string" && a.subject
+                  ? a.subject
+                  : typeof a.description === "string" && a.description
+                    ? a.description
+                    : "(task)";
+              const taskId = String(++taskCounterRef.current);
+              setTodos((prev) => {
+                const next = [...(prev ?? [])];
+                taskIndexRef.current.set(taskId, next.length);
+                next.push({
+                  content: subject,
+                  status: "pending" as const,
+                  activeForm:
+                    typeof a.activeForm === "string"
+                      ? a.activeForm
+                      : undefined,
+                });
+                return next;
+              });
+            }
+            if (ev.call.function.name === "TaskUpdate") {
+              const a = ev.call.function.arguments;
+              const taskId =
+                typeof a.taskId === "string"
+                  ? a.taskId
+                  : typeof a.task_id === "string"
+                    ? a.task_id
+                    : a.taskId != null
+                      ? String(a.taskId)
+                      : "";
+              const idx = taskIndexRef.current.get(taskId);
+              if (idx !== undefined) {
+                setTodos((prev) => {
+                  if (!prev || !prev[idx]) return prev;
+                  const next = [...prev];
+                  const cur = { ...next[idx] };
+                  const st = a.status;
+                  if (
+                    st === "pending" ||
+                    st === "in_progress" ||
+                    st === "completed"
+                  ) {
+                    cur.status = st;
+                  } else if (st === "cancelled" || st === "deleted") {
+                    // The 3-state checklist has no cancelled lane;
+                    // checked-off is the closest honest rendering.
+                    cur.status = "completed";
+                  }
+                  if (typeof a.subject === "string" && a.subject) {
+                    cur.content = a.subject;
+                  }
+                  next[idx] = cur;
+                  return next;
+                });
+              }
+            }
             // Live-surface the tool call in the status strip so the user
             // sees what's happening during long agentic streams (Claude
             // Code may emit many tool_use blocks before any text content).
@@ -1967,6 +2034,10 @@ export function AIChatPanel({ wsId, root, aiChatId }: Props) {
   const resetTurnTransients = () => {
     setLastUsage(null);
     setTodos(null);
+    // Task-id mapping follows the checklist's lifetime — stale indices
+    // from a previous chat would mis-route TaskUpdate calls.
+    taskIndexRef.current.clear();
+    taskCounterRef.current = 0;
     setBudgetWarned(false);
     setScrubIndex(null);
   };

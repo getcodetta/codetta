@@ -1,8 +1,9 @@
-// Composer card — shown when an agentic turn made 2+ file-modifying tool
-// calls. Aggregates them into a single header (file count + line stats)
-// with collapsible per-file diffs and quick "open file" / "revert all"
-// shortcuts. Replaces the per-call inline rows for those calls so the
-// chat doesn't sprawl into 5 separate diff cards.
+// Changed-files summary bar — shown when an agentic turn made 2+
+// file-modifying tool calls. One collapsed line (file count + line
+// stats + Open all + Revert); expanding lists the touched files with
+// per-file stats. Deliberately NO diff bodies here — the inline edit
+// chips in the transcript already show each diff on click, and
+// duplicating them made this card a screen-tall wall on big turns.
 //
 // Lives outside AIChatPanel so the chat panel doesn't have to host
 // another 200 lines of UI logic. Pure component — props in, render out;
@@ -14,7 +15,6 @@ import {
   diffStats,
   extractEditDiffs,
   pathOf,
-  UnifiedDiff,
 } from "./chatToolRender";
 import { dropSnapshot, lookupSnapshot } from "../composeSnapshots";
 import { confirm as dialogConfirm } from "../dialog";
@@ -159,7 +159,9 @@ export function ComposeCard({
   msgIndex: number;
   calls: ToolCall[];
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Collapsed by default — the bar is a summary + action strip, not
+  // the place to read diffs (the inline chips are).
+  const [collapsed, setCollapsed] = useState(true);
   // Group calls by target file, since one turn can hit the same
   // file multiple times (Edit + Edit).
   const byPath = useMemo(() => {
@@ -206,12 +208,12 @@ export function ComposeCard({
         <button
           className="ai-compose-toggle"
           onClick={() => setCollapsed((c) => !c)}
-          title={collapsed ? "Expand all diffs" : "Collapse"}
+          title={collapsed ? "List changed files" : "Collapse"}
         >
           {collapsed ? "▸" : "▾"}
         </button>
         <div className="ai-compose-title">
-          <strong>Compose</strong>
+          <strong>Files changed</strong>
           <span className="ai-compose-meta">
             {byPath.length} file{byPath.length === 1 ? "" : "s"} ·
             <span className="ai-compose-add"> +{totals.added}</span>
@@ -258,7 +260,7 @@ export function ComposeCard({
                   <button
                     className="ai-compose-path"
                     onClick={() => void openFile(path)}
-                    title={path}
+                    title={`Open ${path}`}
                   >
                     {shortPath}
                   </button>
@@ -272,21 +274,6 @@ export function ComposeCard({
                     </span>
                   </span>
                 </div>
-                {fileCalls.map((c, i) => {
-                  const diffs = extractEditDiffs(c);
-                  if (!diffs) return null;
-                  return (
-                    <div key={c.id ?? i} className="ai-compose-file-body">
-                      {diffs.map((d, k) => (
-                        <UnifiedDiff
-                          key={k}
-                          oldText={d.oldText}
-                          newText={d.newText}
-                        />
-                      ))}
-                    </div>
-                  );
-                })}
               </div>
             );
           })}
