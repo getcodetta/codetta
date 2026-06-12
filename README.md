@@ -20,7 +20,9 @@ Codetta is a small, fast desktop code editor that doesn't try to be VS Code. It 
 
 **Highlights**
 
-- **Best-in-class Claude Code integration** — uses your existing Claude Pro / Max subscription via the CLI. GUI permission cards (no more `--dangerously-skip-permissions`), session resume that hydrates the full prior transcript, branch from any past turn, MCP server browser, live spend tracking. See [What's new in v0.2.0](#whats-new-in-v020).
+- **Agent Mode** — flip the window into an agent-centric workspace: a workspace rail, a sessions list, and a conversation-first chat as the main surface. Tool calls collapse into glanceable chips (quiet "read 16 files", loud "edited run.ts"), file edits roll into a Changes review card, and the agent's task list lives in a sidebar. Toggle with the title-bar **Agent** button or `Ctrl+Shift+A`. See [What's new](#whats-new-in-v05).
+- **Best-in-class Claude Code integration** — uses your existing Claude Pro / Max subscription via the CLI. GUI permission cards (no more `--dangerously-skip-permissions`), session resume that hydrates the full prior transcript, branch from any past turn, plan-mode approval, and per-chat effort / thinking controls.
+- **Plugins & MCP** — install Claude Code plugins from any GitHub marketplace (skills, commands, subagents, hooks, MCP servers), and add MCP servers in a click — a curated catalog plus manual add (stdio / HTTP / npm / pip / Docker), user or project scope.
 - **BYOK AI panel** — Claude Code, Anthropic API, OpenAI, and local Ollama all in one chat. Switch models mid-conversation.
 - **Multi-workspace** — open several projects side by side; each has its own isolated, persistent state (open files, terminals, layout, AI chat history).
 - **Multi-terminal with pop-out** — drop terminals into the bottom panel, or pop them out into their own OS window and re-dock when done. PTY survives the move.
@@ -32,20 +34,19 @@ Codetta is a small, fast desktop code editor that doesn't try to be VS Code. It 
 
 ---
 
-## What's new in v0.2.0
+## What's new in v0.5
 
-The Claude Code integration overhaul. Full notes in [CHANGELOG.md](CHANGELOG.md):
+Agent Mode and a plugin system. Full notes in [CHANGELOG.md](CHANGELOG.md):
 
-- **GUI permission cards** replace `--dangerously-skip-permissions` — every Edit / Write / Bash / MultiEdit / NotebookEdit shows a real Allow / Allow always / Deny modal with tool-specific previews (literal command for Bash, unified diff for Edit, full content for Write). No more reaching for the unsafe bypass flag.
-- **Session continuity** — multi-turn chats actually remember context. Codetta captures Claude Code's `session_id` and passes `--resume` on every follow-up turn, slashing per-turn cost and preserving the server-side prompt cache.
-- **Session picker + transcript hydration** — browse past sessions for the workspace, click to restore the full conversation (not just an empty pane).
-- **Branch from any past turn** into a new chat tab without disturbing the current one.
-- **Timeline scrubber** — slider over past turns. The "no wrapper has this" feature.
-- **Tool result rendering + inline diff card** — see what Claude actually read / ran, with `±` line stats and an expandable unified diff for every Edit.
-- **TodoWrite checklist** sticky above the chat with live pulse on the in-progress item.
-- **Spend dashboard** — per-chat cumulative cost + budget threshold + warning toast.
-- **MCP server browser** — one-click installs for popular MCPs (filesystem, git, github, fetch, puppeteer, sqlite, postgres) per user or project scope.
-- **Stream hardening** — fixes the documented [#1920 hang](https://github.com/anthropics/claude-code/issues/1920) and large-tool-result truncation.
+- **Agent Mode** — a dedicated, agent-centric layout (workspace rail + sessions list + conversation-first chat + Changes/Files panel). Toggle with the **Agent** button or `Ctrl+Shift+A`; sessions, changes, and tasks survive the toggle.
+- **Conversation-first chat** — tool calls collapse into icon chips grouped by type; exploration (reads/searches) stays quiet, edits stand out. Click a chip to expand the diff/output, or an edit chip to open the file. Extended thinking folds inline.
+- **Plugins** — add any Claude Code plugin marketplace by GitHub URL (the official catalog or your own repo) and install the plugins it offers — skills, commands, subagents, hooks, MCP servers. Backed by the `claude plugin` CLI.
+- **Agent Customizations** — one tabbed panel for Instructions, Skills, Plugins, MCP servers, tool permissions, providers, and privacy exclusions.
+- **MCP, your way** — the one-click catalog plus manual add: a stdio command, an HTTP/SSE remote URL, or an npm / pip / Docker package, with search and live install state.
+- **Plan-mode approval** — when the agent finishes planning, review the plan in a card and **Approve & start** or **Keep planning**.
+- **First-run welcome** + a richer "Nothing open here" pane that leads with New AI chat and Agent Mode (v0.5.1).
+
+Earlier releases delivered the Claude Code integration overhaul (GUI permission cards, session resume, transcript hydration, the timeline scrubber, spend tracking) and the v0.4 power-user batch — all still here. See [CHANGELOG.md](CHANGELOG.md) for the history.
 
 ---
 
@@ -189,7 +190,7 @@ Issues and PRs welcome at [github.com/getcodetta/codetta](https://github.com/get
 
 Please follow [DCO sign-off](https://developercertificate.org/) on commits (`git commit -s`) — no CLA required.
 
-**Scope statement** — to keep Codetta lightweight and finishable, we deliberately do **not** plan to add: a full extension/plugin system, language-server protocol support, integrated debugger, telemetry, or built-in cloud sync. The goal is a fast, focused editor that does its job well.
+**Scope statement** — to keep Codetta lightweight and finishable, we deliberately do **not** plan to add a generic editor-extension API, language-server protocol support, an integrated debugger, telemetry, or built-in cloud sync. (Agent **plugins** are different — those are Claude Code plugins, installed through the agent, not a Codetta editor-extension marketplace.) The goal is a fast, focused editor that does its job well.
 
 ---
 
